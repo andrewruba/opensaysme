@@ -13,6 +13,9 @@ validation commands, and platform limitations.
   agent integrations behind small, typed interfaces.
 - Support user-supplied provider keys and direct provider calls. Keep speech and
   reasoning configuration independent.
+- Treat voice latency as a core UX requirement. Aim for immediate feedback and
+  conversational responsiveness. Measure end-to-end delays and minimize serial
+  waits; a two-call transcription/reasoning pipeline is not a fixed requirement.
 - Require deliberate activation. Gaze and context identify targets; they do not
   authorize execution. Resolve ambiguity and confirm consequential actions.
 - Prioritize the interactions in `PLAN.md`. Add abstractions when a concrete
@@ -24,6 +27,12 @@ validation commands, and platform limitations.
   user changes and follow established conventions.
 - Keep changes focused. Separate unrelated cleanup and broad formatting from
   behavior changes.
+- This is a greenfield project with no backward-compatibility commitment yet.
+  Replace obsolete internal designs directly; do not retain compatibility shims,
+  legacy paths, or speculative migrations just to preserve earlier architecture.
+  Update affected callers, tests, and docs together, and remove superseded code.
+  Add compatibility only for a concrete external requirement or an explicit user
+  request. Adapters for current OS/provider differences remain appropriate.
 - Validate configuration, provider responses, and native-helper messages at
   boundaries. Execute known, typed actions rather than arbitrary model-generated
   shell commands.
