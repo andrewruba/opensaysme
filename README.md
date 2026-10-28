@@ -6,9 +6,8 @@ A more natural way to navigate and direct AI agents using voice, context, and ga
 Speaking to an agent can feel effortless. Finding the right
 conversation, switching windows, and copying context often does not.
 
-This project explores a simpler interaction: indicate what you mean,
-say what you want, and send it to the right agent without navigating
-every step yourself.
+This project explores a simpler way to navigate and interact with
+agents: indicate what you mean and say what you want.
 
 ## What we're exploring
 
