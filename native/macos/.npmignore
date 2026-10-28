@@ -1,0 +1,3 @@
+# A local compiler output is neither a universal binary nor a signed release.
+bin/
+.build/

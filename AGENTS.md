@@ -2,7 +2,8 @@
 
 Read `README.md` for the product intent and `PLAN.md` for the current MVP scope.
 Keep both accurate as implementation decisions become concrete. This repository
-currently contains planning documents; do not assume build or test commands exist.
+contains a CLI scaffold and desktop probes. See `docs/development.md` for setup,
+validation commands, and platform limitations.
 
 ## Project direction
 

@@ -32,4 +32,19 @@ or build another coding agent.
   and explicit consent for external data transfer.
 - **Interoperability:** Work alongside existing agents through
   documented integrations rather than replace their interfaces.
-  
+
+## Development prototype
+
+The CLI scaffold and desktop-access probes are implemented. Voice commands,
+model calls, and agent integrations are not connected yet.
+
+```sh
+npm ci
+npm run build:native  # Builds the helper on macOS; requires Xcode Command Line Tools
+npm run build
+node dist/cli.js doctor
+node dist/cli.js desktop --help
+```
+
+See [development instructions](docs/development.md) for platform prerequisites,
+provider configuration, explicit desktop tests, and current limitations.

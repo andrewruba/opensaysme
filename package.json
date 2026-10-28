@@ -1,0 +1,47 @@
+{
+  "name": "opensaysme",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Navigate and interact with AI agents using voice and desktop context.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "opensaysme": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "native",
+    "scripts",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
+  "engines": {
+    "node": ">=22.20.0"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "build:native": "node scripts/build-native.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:x11": "vitest run tests/linux-live.test.ts",
+    "check": "npm run typecheck && npm run lint && npm test && npm run build",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.8.1",
+    "commander": "^15.0.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.5",
+    "eslint": "^10.13.0",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.0.5"
+  }
+}

@@ -1,0 +1,390 @@
+import AppKit
+import ApplicationServices
+import AVFoundation
+import Carbon
+import CryptoKit
+import Foundation
+
+struct Capability: Encodable {
+    let status: String
+    let detail: String
+}
+
+struct DesktopReport: Encodable {
+    let platform = "darwin"
+    let session: String
+    let capabilities: [String: Capability]
+    let notes: [String]
+}
+
+struct TestResult: Encodable {
+    let capability: String
+    let status: String
+    let detail: String
+    var metrics: [String: Double]? = nil
+}
+
+struct Window: Encodable {
+    let id: String
+    let application: String
+    let title: String?
+}
+
+struct Snapshot: Encodable {
+    let platform = "darwin"
+    let window: Window?
+    let selectedText: String?
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(platform, forKey: .platform)
+        try container.encode(window, forKey: .window)
+        try container.encodeIfPresent(selectedText, forKey: .selectedText)
+    }
+
+    private enum CodingKeys: String, CodingKey { case platform, window, selectedText }
+}
+
+struct DesktopError: Error, CustomStringConvertible {
+    let description: String
+    let code: String
+    init(_ message: String, code: String = "accessibility-unavailable") {
+        description = message
+        self.code = code
+    }
+}
+
+let permissionHelp = "Enable Accessibility for the launching terminal/helper in System Settings > Privacy & Security > Accessibility, then retry."
+
+func attribute(_ element: AXUIElement, _ name: String) throws -> CFTypeRef {
+    var value: CFTypeRef?
+    let result = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+    guard result == .success, let value else {
+        throw DesktopError("Accessibility could not read \(name) (code \(result.rawValue)); the application may not expose it.")
+    }
+    return value
+}
+
+func elementAttribute(_ element: AXUIElement, _ name: String) throws -> AXUIElement {
+    let value = try attribute(element, name)
+    guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
+        throw DesktopError("Accessibility returned an invalid element.")
+    }
+    return unsafeBitCast(value, to: AXUIElement.self)
+}
+
+func stringAttribute(_ element: AXUIElement, _ name: String) -> String? {
+    return (try? attribute(element, name)) as? String
+}
+
+func applicationElement(_ application: NSRunningApplication) -> AXUIElement {
+    let element = AXUIElementCreateApplication(application.processIdentifier)
+    AXUIElementSetMessagingTimeout(element, 1)
+    return element
+}
+
+func requireAccessibility() throws {
+    guard AXIsProcessTrusted() else { throw DesktopError(permissionHelp, code: "permission-required") }
+}
+
+// Public AX APIs do not expose a universal stable window ID. These short-lived
+// tokens fail closed when titles change, the app restarts, or windows collide.
+func targetID(_ application: NSRunningApplication, _ window: AXUIElement) throws -> String {
+    guard let launched = application.launchDate else {
+        throw DesktopError("This application's launch identity is unavailable; it cannot be targeted safely.")
+    }
+    let title = stringAttribute(window, kAXTitleAttribute) ?? ""
+    let identifier = stringAttribute(window, kAXIdentifierAttribute) ?? ""
+    let data = try JSONSerialization.data(withJSONObject: [identifier, title])
+    let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    return "mac:\(application.processIdentifier):\(Int64(launched.timeIntervalSince1970 * 1000)):\(digest)"
+}
+
+func focusedElement(_ app: AXUIElement) throws -> AXUIElement {
+    let focused = try elementAttribute(app, kAXFocusedUIElementAttribute)
+    guard stringAttribute(focused, kAXSubroleAttribute) != kAXSecureTextFieldSubrole else {
+        throw DesktopError("Selected text is unavailable in secure text fields.", code: "secure-field")
+    }
+    return focused
+}
+
+func selectedTextCapability(_ app: AXUIElement) -> Capability {
+    do {
+        let focused = try focusedElement(app)
+        var attributes: CFArray?
+        guard AXUIElementCopyAttributeNames(focused, &attributes) == .success,
+              let names = attributes as? [String], names.contains(kAXSelectedTextAttribute) else {
+            return Capability(status: "unavailable", detail: "The focused control does not expose selected text; support varies by application.")
+        }
+        return Capability(status: "available", detail: "The focused control advertises selected-text access. Text is read only with desktop inspect --selection.")
+    } catch {
+        return Capability(status: "unavailable", detail: String(describing: error))
+    }
+}
+
+func microphoneCapability() -> Capability {
+    switch AVCaptureDevice.authorizationStatus(for: .audio) {
+    case .authorized:
+        return Capability(status: "unverified", detail: "Microphone permission is granted; use desktop test-microphone to verify audio frames without retaining audio.")
+    case .notDetermined:
+        return Capability(status: "permission-required", detail: "Microphone permission has not been requested. This probe does not prompt or record.")
+    case .denied:
+        return Capability(status: "permission-required", detail: "Microphone access is denied. Enable it in System Settings > Privacy & Security > Microphone before recording.")
+    case .restricted:
+        return Capability(status: "unavailable", detail: "Microphone access is restricted by macOS.")
+    @unknown default:
+        return Capability(status: "unverified", detail: "macOS returned an unknown microphone authorization status.")
+    }
+}
+
+func probe() -> DesktopReport {
+    let permission = Capability(status: "permission-required", detail: permissionHelp)
+    var capabilities = [
+        "activeWindow": permission,
+        "focusWindow": permission,
+        "selectedText": permission,
+        "globalHotkey": Capability(status: "unverified", detail: "Use desktop test-hotkey to register and test Ctrl+Shift+Space temporarily; doctor installs no hook."),
+        "microphone": microphoneCapability(),
+    ]
+    if let application = NSWorkspace.shared.frontmostApplication {
+        if AXIsProcessTrusted() {
+            let app = applicationElement(application)
+            do {
+                let window = try elementAttribute(app, kAXFocusedWindowAttribute)
+                _ = try targetID(application, window)
+                capabilities["activeWindow"] = Capability(status: "available", detail: "Read the frontmost application's focused window through Accessibility; titles are not included in doctor output.")
+                var actions: CFArray?
+                let result = AXUIElementCopyActionNames(window, &actions)
+                let canRaise = result == .success && (actions as? [String])?.contains(kAXRaiseAction) == true
+                capabilities["focusWindow"] = Capability(status: canRaise ? "unverified" : "unavailable", detail: canRaise ? "The focused window exposes AXRaise; run an explicit desktop focus test to verify activation." : "The focused window does not expose AXRaise.")
+            } catch {
+                capabilities["activeWindow"] = Capability(status: "unavailable", detail: String(describing: error))
+                capabilities["focusWindow"] = Capability(status: "unverified", detail: "No targetable focused window is available to probe.")
+            }
+            capabilities["selectedText"] = selectedTextCapability(app)
+        }
+    } else {
+        for name in ["activeWindow", "focusWindow", "selectedText"] {
+            capabilities[name] = Capability(status: "unavailable", detail: "No frontmost application. Run inside the logged-in graphical desktop session.")
+        }
+    }
+    return DesktopReport(session: NSWorkspace.shared.frontmostApplication == nil ? "no foreground desktop" : "macOS desktop", capabilities: capabilities, notes: [
+        "Doctor does not request permissions, change focus, capture selections, or record audio.",
+        "Window tokens are temporary. Reinspect after a title change or app restart; identical titles without unique AX identifiers are ambiguous.",
+        "Accessibility and microphone permissions can depend on the launching terminal and helper signature.",
+    ])
+}
+
+func inspect(includeSelection: Bool) throws -> Snapshot {
+    try requireAccessibility()
+    guard let application = NSWorkspace.shared.frontmostApplication else {
+        return Snapshot(window: nil, selectedText: nil)
+    }
+    let app = applicationElement(application)
+    let window = try elementAttribute(app, kAXFocusedWindowAttribute)
+    var selection: String?
+    var selectionElement: AXUIElement?
+    if includeSelection {
+        let focused = try focusedElement(app)
+        guard let selectedWindow = try? elementAttribute(focused, kAXWindowAttribute), CFEqual(selectedWindow, window) else {
+            throw DesktopError("The selection cannot be tied to the inspected window. Retry with focus held steady.", code: "focus-changed")
+        }
+        guard let text = try attribute(focused, kAXSelectedTextAttribute) as? String else {
+            throw DesktopError("Accessibility returned invalid selected text.")
+        }
+        guard text.utf8.count <= 65_536 else {
+            throw DesktopError("Selection exceeds 64 KiB. Select a smaller excerpt.", code: "selection-too-large")
+        }
+        selection = text
+        selectionElement = focused
+    }
+    let title = stringAttribute(window, kAXTitleAttribute)
+    let target = Window(id: try targetID(application, window), application: application.localizedName ?? application.bundleIdentifier ?? "Unknown application", title: title)
+    if let selectionElement {
+        guard let currentElement = try? focusedElement(app), CFEqual(currentElement, selectionElement) else {
+            throw DesktopError("The focused control changed while reading the selection. Retry with focus held steady.", code: "focus-changed")
+        }
+    }
+    guard let currentWindow = try? elementAttribute(app, kAXFocusedWindowAttribute), CFEqual(currentWindow, window),
+          NSWorkspace.shared.frontmostApplication?.processIdentifier == application.processIdentifier else {
+        throw DesktopError("The focused application or window changed during inspection. Retry with focus held steady.", code: "focus-changed")
+    }
+    return Snapshot(window: target, selectedText: selection)
+}
+
+func focus(_ id: String) throws {
+    try requireAccessibility()
+    let parts = id.split(separator: ":")
+    guard parts.count == 4, parts[0] == "mac", let pid = Int32(parts[1]), pid > 0,
+          let application = NSRunningApplication(processIdentifier: pid) else {
+        throw DesktopError("Invalid or expired macOS window target. Run desktop inspect again.", code: "invalid-target")
+    }
+    let app = applicationElement(application)
+    guard let windows = try attribute(app, kAXWindowsAttribute) as? [AXUIElement] else {
+        throw DesktopError("The target application does not expose its windows.")
+    }
+    let matches = try windows.filter { try targetID(application, $0) == id }
+    guard matches.count == 1, let window = matches.first else {
+        throw DesktopError("Window target is stale or ambiguous. Run desktop inspect again; duplicate window titles may require a distinct title.", code: "stale-or-ambiguous-target")
+    }
+    guard AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success else {
+        throw DesktopError("The application rejected raising the target window.", code: "focus-rejected")
+    }
+    guard application.activate(options: []) else {
+        throw DesktopError("macOS rejected application activation.", code: "focus-rejected")
+    }
+    let deadline = Date().addingTimeInterval(1.5)
+    repeat {
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+           let current = try? elementAttribute(app, kAXFocusedWindowAttribute), CFEqual(current, window) {
+            return
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    } while Date() < deadline
+    throw DesktopError("Focus change was requested but could not be verified; macOS may have blocked activation.", code: "focus-unverified")
+}
+
+final class TestState {
+    var cancelled = false
+    var observed = false
+}
+
+// Signals are delivered on the main queue so cleanup happens outside a signal
+// handler. Every interactive test has a deadline even if its parent goes away.
+func cancellationSources(_ state: TestState) -> [DispatchSourceSignal] {
+    return [SIGINT, SIGTERM].map { number in
+        signal(number, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+        source.setEventHandler { state.cancelled = true }
+        source.resume()
+        return source
+    }
+}
+
+func testHotkey(seconds: Int) -> TestResult {
+    guard NSWorkspace.shared.frontmostApplication != nil else {
+        return TestResult(capability: "globalHotkey", status: "unavailable", detail: "Run inside the logged-in graphical desktop session to test global hotkeys.")
+    }
+    let state = TestState()
+    let signals = cancellationSources(state)
+    defer { signals.forEach { $0.cancel() } }
+    var handler: EventHandlerRef?
+    var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+    let installed = InstallEventHandler(GetApplicationEventTarget(), { _, _, context in
+        guard let context else { return OSStatus(eventNotHandledErr) }
+        Unmanaged<TestState>.fromOpaque(context).takeUnretainedValue().observed = true
+        return noErr
+    }, 1, &eventType, Unmanaged.passUnretained(state).toOpaque(), &handler)
+    guard installed == noErr, let handler else {
+        return TestResult(capability: "globalHotkey", status: "unavailable", detail: "Could not install a macOS hotkey handler (code \(installed)).")
+    }
+    defer { RemoveEventHandler(handler) }
+    var hotkey: EventHotKeyRef?
+    let registered = RegisterEventHotKey(UInt32(kVK_Space), UInt32(controlKey | shiftKey), EventHotKeyID(signature: 0x4f534d45, id: 1), GetApplicationEventTarget(), 0, &hotkey)
+    guard registered == noErr, let hotkey else {
+        return TestResult(capability: "globalHotkey", status: "unavailable", detail: "Could not register Ctrl+Shift+Space; the shortcut may be reserved (code \(registered)).")
+    }
+    defer { UnregisterEventHotKey(hotkey) }
+    let deadline = Date().addingTimeInterval(Double(seconds))
+    while !state.observed && !state.cancelled && Date() < deadline {
+        // A CLI has no NSApplication event pump. Explicitly dispatch Carbon
+        // hotkey events instead of leaving them queued in the CFRunLoop.
+        var event: EventRef?
+        if ReceiveNextEvent(1, &eventType, 0.05, true, &event) == noErr, let event {
+            SendEventToEventTarget(event, GetApplicationEventTarget())
+            ReleaseEvent(event)
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.001))
+    }
+    return TestResult(capability: "globalHotkey", status: state.observed ? "passed" : "not-observed", detail: state.observed ? "Received Ctrl+Shift+Space. The temporary hotkey has been released." : "No hotkey event received before cancellation or deadline. The temporary registration has been released.")
+}
+
+final class AudioStats {
+    private let lock = NSLock()
+    private var frames: UInt64 = 0
+    func add(_ count: AVAudioFrameCount) {
+        lock.lock()
+        frames += UInt64(count)
+        lock.unlock()
+    }
+    func total() -> UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return frames
+    }
+}
+
+func testMicrophone(seconds: Int) -> TestResult {
+    let state = TestState()
+    let signals = cancellationSources(state)
+    defer { signals.forEach { $0.cancel() } }
+    let deadline = Date().addingTimeInterval(Double(seconds))
+    if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+        AVCaptureDevice.requestAccess(for: .audio) { _ in }
+        while AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined && !state.cancelled && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+    }
+    guard !state.cancelled, Date() < deadline else {
+        return TestResult(capability: "microphone", status: "not-observed", detail: "Cancelled or timed out before capture began; no audio retained.")
+    }
+    guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+        return TestResult(capability: "microphone", status: "unavailable", detail: "Microphone permission is not granted. Check System Settings > Privacy & Security > Microphone.")
+    }
+    let engine = AVAudioEngine()
+    let input = engine.inputNode
+    let format = input.outputFormat(forBus: 0)
+    guard format.channelCount > 0, format.sampleRate > 0 else {
+        return TestResult(capability: "microphone", status: "unavailable", detail: "No usable default microphone input format was found.")
+    }
+    let stats = AudioStats()
+    input.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in
+        stats.add(buffer.frameLength)
+    }
+    defer {
+        engine.stop()
+        input.removeTap(onBus: 0)
+        engine.reset()
+    }
+    do { try engine.start() } catch {
+        return TestResult(capability: "microphone", status: "unavailable", detail: "macOS could not start the microphone engine; verify the input device and permission.")
+    }
+    while !state.cancelled && Date() < deadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    }
+    let frames = stats.total()
+    return TestResult(capability: "microphone", status: frames > 0 ? "passed" : "not-observed", detail: frames > 0 ? "Received microphone audio frames. Buffers were discarded without saving or transmitting audio; capture has stopped." : "No audio frames received before cancellation or deadline; capture has stopped.", metrics: ["frames": Double(frames), "sampleRate": format.sampleRate, "channels": Double(format.channelCount)])
+}
+
+func output<T: Encodable>(_ value: T) throws {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    FileHandle.standardOutput.write(try encoder.encode(value))
+    FileHandle.standardOutput.write(Data([10]))
+}
+
+do {
+    let arguments = Array(CommandLine.arguments.dropFirst())
+    switch arguments {
+    case ["--probe"]: try output(probe())
+    case ["--inspect"]: try output(inspect(includeSelection: false))
+    case ["--inspect-selection"]: try output(inspect(includeSelection: true))
+    case let args where args.count == 2 && args[0] == "--focus":
+        try focus(args[1])
+        try output(["ok": true])
+    case let args where args.count == 2 && ["--test-hotkey", "--test-microphone"].contains(args[0]):
+        guard let seconds = Int(args[1]), (1...30).contains(seconds) else {
+            throw DesktopError("Test duration must be an integer from 1 to 30 seconds.")
+        }
+        try output(args[0] == "--test-hotkey" ? testHotkey(seconds: seconds) : testMicrophone(seconds: seconds))
+    default:
+        throw DesktopError("Expected --probe, --inspect, --inspect-selection, --focus <target-id>, --test-hotkey <seconds>, or --test-microphone <seconds>.")
+    }
+} catch let error as DesktopError {
+    // Expected failures stay in the validated protocol, without native values or
+    // captured content. The CLI maps these codes to errors and an exit status.
+    try? output(["error": error.code])
+} catch {
+    FileHandle.standardError.write(Data("Desktop helper failed.\n".utf8))
+    exit(1)
+}

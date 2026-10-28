@@ -1,0 +1,17 @@
+# The virtual-desktop test image receives only source and its declared fixtures.
+*
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.build.json
+!src/
+!src/**
+!tests/
+!tests/**
+!native/
+!native/linux/
+!native/linux/**
+!scripts/
+!scripts/Dockerfile.x11
+**/__pycache__/
+**/*.pyc
