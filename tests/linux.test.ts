@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runCommand } from '../src/desktop/process.js';
-import { captureLinuxContext, focusLinux, inspectLinux, linuxVoiceHelper, probeLinux, testLinuxHotkey, testLinuxMicrophone } from '../src/desktop/platforms/linux.js';
+import { captureLinuxContext, captureLinuxFrame, focusLinux, inspectLinux, linuxVoiceHelper, probeLinux, testLinuxHotkey, testLinuxMicrophone } from '../src/desktop/platforms/linux.js';
 
 vi.mock('../src/desktop/process.js', () => ({ runCommand: vi.fn() }));
 const run = vi.mocked(runCommand);
@@ -118,11 +118,13 @@ describe('Linux capability detection', () => {
     expect(report.capabilities.selectedText.status).toBe('unverified');
     expect(report.capabilities.globalHotkey.status).toBe('unverified');
     expect(report.capabilities.microphone.status).toBe('unverified');
+    expect(report.capabilities.screenCapture.status).toBe('unverified');
     expect(run.mock.calls.map(([file, args]) => [file, args])).toEqual([
       ['arecord', ['--version']],
       ['xdotool', ['version']],
       ['xsel', ['--version']],
       ['python3', [expect.stringContaining('native/linux/hotkey.py'), '--probe']],
+      ['python3', [expect.stringContaining('native/linux/frame.py'), '--probe']],
       ['xdotool', ['getactivewindow']],
     ]);
   });
@@ -138,6 +140,35 @@ describe('Linux capability detection', () => {
   it('does not report malformed helper output as active-window success', async () => {
     run.mockImplementation(async (_file, args) => args[0] === 'getactivewindow' ? '123\n456' : 'version');
     expect((await probeLinux()).capabilities.activeWindow.status).toBe('unavailable');
+  });
+});
+
+describe('Linux in-memory screen capture', () => {
+  const frame = {
+    capturedAt: '2026-10-28T10:00:00.000Z',
+    display: { id: 'x11:root', bounds: { x: 0, y: 0, width: 3200, height: 1800 } },
+    image: { mimeType: 'image/jpeg', width: 1600, height: 900, data: '/9j/2Q==' }, warnings: [],
+  };
+  it('keeps source desktop bounds distinct from resized image pixels and forwards cancellation', async () => {
+    run.mockResolvedValue(JSON.stringify(frame));
+    const signal = new AbortController().signal;
+    expect(await captureLinuxFrame(signal)).toEqual(frame);
+    expect(run).toHaveBeenCalledWith('python3', [expect.stringContaining('native/linux/frame.py')], { timeoutMs: 4000, signal });
+  });
+  it('rejects Wayland or pre-cancelled capture before launching a helper', async () => {
+    await expect(captureLinuxFrame(AbortSignal.abort())).rejects.toThrow();
+    vi.stubEnv('XDG_SESSION_TYPE', 'wayland');
+    await expect(captureLinuxFrame()).rejects.toThrow('Wayland');
+    expect(run).not.toHaveBeenCalled();
+  });
+  it.each([
+    'private pixels', JSON.stringify({ error: 'screen-capture-unavailable' }),
+    JSON.stringify({ ...frame, display: { ...frame.display, id: 'unknown' } }),
+    JSON.stringify({ ...frame, image: { ...frame.image, width: 3200 } }),
+    JSON.stringify({ ...frame, image: { ...frame.image, data: 'private screenshot content' } }),
+  ])('reports malformed or missing capture without exposing image content', async (output) => {
+    run.mockResolvedValue(output);
+    await expect(captureLinuxFrame()).rejects.toThrow('Check Python Pillow');
   });
 });
 

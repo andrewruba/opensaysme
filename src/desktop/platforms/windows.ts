@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { runCommand } from '../process.js';
 import { desktopTestResultSchema, type DesktopReport, type DesktopSnapshot, type DesktopTestResult } from '../types.js';
 import { desktopContextSchema, type DesktopContext, type VoiceHelperSpec } from '../voice-types.js';
+import { screenFrameCaptureSchema, type ScreenFrameCapture } from '../visual-types.js';
 
 const helperPath = fileURLToPath(new URL('../../../native/windows/desktop.ps1', import.meta.url));
 const windowId = z.string().refine((value) => {
@@ -21,6 +22,7 @@ const probeSchema = z.object({
   operation: z.literal('probe'),
   interactive: z.boolean(),
   automation: z.boolean(),
+  screenCapture: z.boolean(),
 }).strict();
 const snapshotSchema = z.object({
   version: z.literal(1),
@@ -100,7 +102,7 @@ export async function probeWindows(): Promise<DesktopReport> {
       session: 'desktop access could not be checked',
       capabilities: {
         activeWindow: unavailable, focusWindow: unavailable, selectedText: unavailable,
-        globalHotkey: unavailable, microphone: unavailable,
+        globalHotkey: unavailable, microphone: unavailable, screenCapture: unavailable,
       },
       notes: [
         'Use native Windows Node.js and Windows PowerShell 5.1 in an unlocked, logged-in desktop session.',
@@ -135,6 +137,10 @@ export async function probeWindows(): Promise<DesktopReport> {
           : 'Global shortcuts need an unlocked, logged-in Windows desktop session.',
       },
       microphone: { status: 'unverified', detail: 'Default-device PCM adapter present. Run desktop test-microphone to test capture.' },
+      screenCapture: {
+        status: probe.interactive && probe.screenCapture ? 'unverified' : 'unavailable',
+        detail: 'Screen capture requires System.Drawing and an unlocked Windows 10 1703+ desktop. Doctor does not capture pixels.',
+      },
     },
     notes: [
       'Doctor does not change focus or read selected text.',
@@ -182,6 +188,21 @@ export async function testWindowsMicrophone(durationSeconds: number): Promise<De
 
 export async function captureWindowsContext(signal?: AbortSignal): Promise<DesktopContext> {
   return decode(contextSchema, await invoke('context', [], signal));
+}
+
+export async function captureWindowsFrame(signal?: AbortSignal): Promise<ScreenFrameCapture> {
+  signal?.throwIfAborted();
+  const output = await runCommand('powershell.exe', [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
+    fileURLToPath(new URL('../../../native/windows/frame.ps1', import.meta.url)),
+  ], { timeoutMs: 8_000, signal });
+  try {
+    const frame = screenFrameCaptureSchema.parse(JSON.parse(output.replace(/^\uFEFF/, '').trim()));
+    if (!/^\\\\\.\\DISPLAY\d+$/.test(frame.display.id)) throw new Error('invalid display');
+    return frame;
+  } catch {
+    throw new Error('Windows screen capture is unavailable or invalid. Check the unlocked desktop, System.Drawing, and Windows 10 1703+ support.');
+  }
 }
 
 export async function windowsVoiceHelper(): Promise<VoiceHelperSpec> {

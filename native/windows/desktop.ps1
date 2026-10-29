@@ -18,6 +18,7 @@ using System.Runtime.InteropServices;
 public static class OpenSaysMeDesktop {
     [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out Point point);
+    [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
     [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr handle, uint flags);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -112,10 +113,13 @@ $failureCode = 'native-failure'
 try {
     $foreground = [OpenSaysMeDesktop]::GetForegroundWindow()
     if ($Operation -eq 'probe') {
+        $drawing = $false
+        try { Add-Type -AssemblyName System.Drawing; $drawing = $true } catch { }
         Write-Response @{
             version = 1; operation = 'probe'
             interactive = [Environment]::UserInteractive -and $foreground -ne [IntPtr]::Zero
             automation = Load-Automation
+            screenCapture = $drawing
         }
         exit 0
     }
@@ -157,7 +161,9 @@ try {
             activeWindow = $null; warnings = @()
         }
         $position = New-Object OpenSaysMeDesktop+Point
-        if ([OpenSaysMeDesktop]::GetCursorPos([ref]$position)) {
+        $physical = $false
+        try { $physical = [OpenSaysMeDesktop]::SetThreadDpiAwarenessContext([IntPtr]::new(-4)) -ne [IntPtr]::Zero } catch { }
+        if ($physical -and [OpenSaysMeDesktop]::GetCursorPos([ref]$position)) {
             $pointed = [OpenSaysMeDesktop]::WindowFromPoint($position)
             if ($pointed -ne [IntPtr]::Zero) {
                 $pointed = [OpenSaysMeDesktop]::GetAncestor($pointed, 2) # GA_ROOT
@@ -165,7 +171,7 @@ try {
             $context.pointer = @{ x = $position.X; y = $position.Y; window = $null }
             try { $context.pointer.window = Read-Window $pointed }
             catch { $context.warnings += 'The window under the pointer was unavailable.' }
-        } else { $context.warnings += 'Pointer position was unavailable.' }
+        } else { $context.warnings += 'Pointer position in physical desktop coordinates was unavailable.' }
         try {
             $context.activeWindow = Read-Window $foreground
             if ($null -eq $context.activeWindow) { $context.warnings += 'No active window was available.' }

@@ -18,13 +18,13 @@ it.each(['ctrl-c', 'abort'])('restores an initially idle terminal and closes the
   const originals = new Map(Object.keys(replacement).map((key) => [key, Object.getOwnPropertyDescriptor(process.stdin, key)]));
   for (const [key, value] of Object.entries(replacement)) Object.defineProperty(process.stdin, key, { configurable: true, value });
   const close = vi.fn(async () => {});
-  mocks.adapter.mockResolvedValue({ voiceHelper: async () => ({ file: 'fixture', args: [] }), captureContext: vi.fn() });
+  mocks.adapter.mockResolvedValue({ voiceHelper: async () => ({ file: 'fixture', args: [] }), captureContext: vi.fn(), captureFrame: vi.fn() });
   mocks.start.mockImplementation((_spec: unknown, onEvent: (event: NativeVoiceEvent) => void) => {
     queueMicrotask(() => onEvent({ type: 'ready' }));
     return { ready: Promise.resolve(), done: new Promise(() => {}), send: vi.fn(), close };
   });
   try {
-    await runVoice({ version: 1, speech: { provider: 'openai', model: 'gpt-live-transcribe', apiKeyEnv: 'OPENSAYSME_TEST_KEY' } }, controller.signal, (event) => {
+    await runVoice({ version: 1, shareVisualContext: true, reasoning: { provider: 'openai', model: 'gpt-5.4-mini', apiKeyEnv: 'OPENSAYSME_TEST_KEY' }, speech: { provider: 'openai', model: 'gpt-live-transcribe', apiKeyEnv: 'OPENSAYSME_TEST_KEY' } }, controller.signal, (event) => {
       if (event.type === 'state' && event.state === 'ready') {
         if (stopMethod === 'ctrl-c') process.stdin.emit('keypress', '\x03', { ctrl: true, name: 'c' });
         else controller.abort();

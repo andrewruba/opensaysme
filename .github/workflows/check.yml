@@ -18,7 +18,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run build:native
-      - name: Test macOS audio conversion without a microphone
+      - name: Test macOS audio, pointer, and image encoding without desktop capture
         if: runner.os == 'macOS'
         run: sh native/macos/test.sh
       - name: Compile Windows helper and parse PowerShell scripts

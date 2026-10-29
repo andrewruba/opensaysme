@@ -12,7 +12,8 @@ xcrun swiftc -O \
   -target "$(uname -m)-apple-macosx12.0" \
   -module-cache-path "$helper_dir/bin/module-cache" \
   -framework AppKit -framework ApplicationServices -framework AVFoundation -framework Carbon \
+  -Xlinker -weak_framework -Xlinker ScreenCaptureKit \
   -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$helper_dir/Info.plist" \
-  "$helper_dir/Desktop.swift" "$helper_dir/Voice.swift" -o "$helper_dir/bin/opensaysme-desktop"
+  "$helper_dir/Desktop.swift" "$helper_dir/Voice.swift" "$helper_dir/Visual.swift" -o "$helper_dir/bin/opensaysme-desktop"
 
 echo "Built $helper_dir/bin/opensaysme-desktop"

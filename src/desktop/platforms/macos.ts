@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { runCommand } from '../process.js';
 import { desktopContextSchema, type DesktopContext, type VoiceHelperSpec } from '../voice-types.js';
+import { screenFrameCaptureSchema, type ScreenFrameCapture } from '../visual-types.js';
 import {
   desktopReportSchema,
   desktopSnapshotSchema,
@@ -28,6 +29,9 @@ const nativeErrors: Record<string, string> = {
   'focus-rejected': 'macOS or the application rejected the focus change.',
   'focus-unverified': 'Focus change was requested but could not be verified; macOS may have blocked activation.',
   'focus-changed': 'Desktop focus changed or the selection could not be tied to the inspected window. Retry with focus held steady.',
+  'screen-permission-required': 'Enable Screen Recording for the launching terminal/helper in System Settings > Privacy & Security, then restart the terminal.',
+  'screen-capture-unavailable': 'Screen capture requires macOS 14 or later and an active display under the pointer.',
+  'screen-capture-failed': 'macOS could not capture a screen frame. Check Screen Recording permission and the active desktop session.',
 };
 
 async function requireHelper(): Promise<void> {
@@ -84,7 +88,7 @@ export async function probeMacOS(): Promise<DesktopReport> {
     return {
       platform: 'darwin', session: 'not assessed',
       capabilities: { activeWindow: capability, focusWindow: capability, selectedText: capability,
-        globalHotkey: capability, microphone: capability },
+        globalHotkey: capability, microphone: capability, screenCapture: capability },
       notes: ['No capability was verified. Rebuild the helper for this Mac; prebuilt signed releases are not available yet.'],
     };
   }
@@ -133,6 +137,14 @@ export async function captureMacOSContext(signal?: AbortSignal): Promise<Desktop
   if (result.platform !== 'darwin' || [result.activeWindow, result.pointer?.window]
     .some((window) => window && !targetIdSchema.safeParse(window.id).success)) {
     throw new Error('The macOS desktop helper returned an invalid context target.');
+  }
+  return result;
+}
+
+export async function captureMacOSFrame(signal?: AbortSignal): Promise<ScreenFrameCapture> {
+  const result = decode(screenFrameCaptureSchema, await invoke(['--frame'], 4_000, signal));
+  if (!/^[1-9]\d{0,9}$/.test(result.display.id) || Number(result.display.id) > 0xffff_ffff) {
+    throw new Error('The macOS desktop helper returned an invalid screen display.');
   }
   return result;
 }

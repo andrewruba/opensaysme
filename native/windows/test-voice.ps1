@@ -1,6 +1,6 @@
 # Pure protocol checks: no hotkey registration, window access, or microphone use.
 $ErrorActionPreference = 'Stop'
-Add-Type -Path (Join-Path $PSScriptRoot 'voice.cs') -ReferencedAssemblies System.dll, System.Core.dll, System.Web.Extensions.dll
+Add-Type -Path (Join-Path $PSScriptRoot 'voice.cs'), (Join-Path $PSScriptRoot 'visual.cs') -ReferencedAssemblies System.dll, System.Core.dll, System.Drawing.dll, System.Web.Extensions.dll
 $static = [System.Reflection.BindingFlags]'Static,NonPublic'
 $instance = [System.Reflection.BindingFlags]'Instance,NonPublic'
 $type = [OpenSaysMeVoice]
@@ -47,3 +47,13 @@ if ($event.type -ne 'audio-stopped' -or $event.turnId -ne 'new-turn' -or $null -
 for ($i = 0; $i -lt 65; $i++) { $null = $handle.Invoke($helper, @($cancel)) }
 if ($queue.Count -ne 64 -or -not $shutdown.GetValue($helper)) { throw 'Output backpressure was not bounded.' }
 Write-Output 'Windows voice protocol checks passed (no desktop or microphone access).'
+
+# Encode a synthetic image; this never calls a screen capture API.
+$bitmap = New-Object System.Drawing.Bitmap(3200, 1600)
+try {
+    $encoded = [OpenSaysMeVisual]::Encode($bitmap)
+    if ($encoded.width -ne 1600 -or $encoded.height -ne 800) { throw 'Image bounds were not preserved.' }
+    $bytes = [Convert]::FromBase64String($encoded.data)
+    if ($bytes.Length -gt 700000 -or $bytes[0] -ne 255 -or $bytes[1] -ne 216) { throw 'JPEG encoding was invalid or unbounded.' }
+} finally { $bitmap.Dispose() }
+Write-Output 'Windows synthetic visual encoding checks passed.'

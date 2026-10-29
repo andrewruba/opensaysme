@@ -167,6 +167,7 @@ final class VoiceSession {
     private var capture: VoiceCapture?
     private var waitingForPermission = false
     private var captureDeadline: Date?
+    private var pointerSampler = PointerTrajectorySampler()
 
     func run() {
         signal(SIGPIPE, SIG_IGN)
@@ -200,6 +201,7 @@ final class VoiceSession {
         output.send(["type": "ready"])
         while running && !output.failed {
             readCommands()
+            samplePointer()
             drainAudio()
             if let deadline = captureDeadline, Date() >= deadline { fail("capture-failed") }
             var event: EventRef?
@@ -222,12 +224,16 @@ final class VoiceSession {
             MemoryLayout<EventHotKeyID>.size, nil, &key) == noErr, key.signature == 0x4f534d45 else { return OSStatus(eventNotHandledErr) }
         if GetEventKind(event) == UInt32(kEventHotKeyReleased) { down.remove(key.id); return noErr }
         guard down.insert(key.id).inserted else { return noErr }
-        if key.id == 1 { output.send(["type": "toggle"]) }
+        if key.id == 1 {
+            if turnID != nil { pointerSampler.end() }
+            output.send(["type": "toggle"])
+        }
         else if key.id == 2, turnID != nil {
             // Stop locally immediately, then retain the identity until the
             // parent's cancel command can receive an explicit acknowledgment.
             waitingForPermission = false
             captureDeadline = nil
+            pointerSampler.end()
             capture?.stop(discard: true)
             capture = nil
             output.send(["type": "cancel"])
@@ -264,6 +270,7 @@ final class VoiceSession {
         if command.type == "start" {
             guard turnID == nil else { fail("invalid-command"); return }
             turnID = command.turnID
+            pointerSampler.begin()
             guard register(key: UInt32(kVK_Escape), modifiers: 0, id: 2, ref: &escapeHotkey) else {
                 fail("hotkey-unavailable"); return
             }
@@ -282,6 +289,7 @@ final class VoiceSession {
         } else if command.turnID == turnID {
             switch command.type {
             case "stop":
+                pointerSampler.end()
                 waitingForPermission = false
                 captureDeadline = nil
                 capture?.stop(discard: false)
@@ -318,6 +326,16 @@ final class VoiceSession {
         for data in result.chunks { output.send(["type": "audio", "turnId": id, "data": data.base64EncodedString()]) }
     }
 
+    private func samplePointer() {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let id = turnID, pointerSampler.isDue(at: now),
+              let point = CGEvent(source: nil)?.location else { return }
+        let display = displayAt(point)
+        guard pointerSampler.sample(at: now, point: point, display: display) else { return }
+        output.send(["type": "pointer", "turnId": id, "capturedAt": captureTimestamp(),
+            "x": point.x, "y": point.y, "displayId": display.map { String($0) } as Any? ?? NSNull()])
+    }
+
     private func fail(_ code: String) {
         var event = ["type": "error", "code": code]
         if let turnID { event["turnId"] = turnID }
@@ -326,6 +344,7 @@ final class VoiceSession {
     }
 
     private func clearTurn(discard: Bool) {
+        pointerSampler.end()
         waitingForPermission = false
         captureDeadline = nil
         capture?.stop(discard: discard)

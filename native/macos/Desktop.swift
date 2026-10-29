@@ -137,6 +137,15 @@ func microphoneCapability() -> Capability {
     }
 }
 
+func screenCaptureCapability() -> Capability {
+    guard #available(macOS 14.0, *) else {
+        return Capability(status: "unavailable", detail: "Visual frames require macOS 14 or later for ScreenCaptureKit screenshot capture.")
+    }
+    return CGPreflightScreenCaptureAccess()
+        ? Capability(status: "unverified", detail: "Screen Recording permission is granted; frames are captured only during an activated voice turn. Doctor takes no screenshot.")
+        : Capability(status: "permission-required", detail: "Enable Screen Recording for the launching terminal/helper in System Settings > Privacy & Security, then restart the terminal. Doctor does not request access or capture the screen.")
+}
+
 func probe() -> DesktopReport {
     let permission = Capability(status: "permission-required", detail: permissionHelp)
     var capabilities = [
@@ -145,6 +154,7 @@ func probe() -> DesktopReport {
         "selectedText": permission,
         "globalHotkey": Capability(status: "unverified", detail: "Use desktop test-hotkey to register and test Ctrl+Shift+Space temporarily; doctor installs no hook."),
         "microphone": microphoneCapability(),
+        "screenCapture": screenCaptureCapability(),
     ]
     if let application = NSWorkspace.shared.frontmostApplication {
         if AXIsProcessTrusted() {
@@ -169,9 +179,9 @@ func probe() -> DesktopReport {
         }
     }
     return DesktopReport(session: NSWorkspace.shared.frontmostApplication == nil ? "no foreground desktop" : "macOS desktop", capabilities: capabilities, notes: [
-        "Doctor does not request permissions, change focus, capture selections, or record audio.",
+        "Doctor does not request permissions, change focus, capture selections or screenshots, or record audio.",
         "Window tokens are temporary. Reinspect after a title change or app restart; identical titles without unique AX identifiers are ambiguous.",
-        "Accessibility and microphone permissions can depend on the launching terminal and helper signature.",
+        "Accessibility, microphone, and Screen Recording permissions can depend on the launching terminal and helper signature.",
     ])
 }
 
@@ -247,7 +257,7 @@ struct DesktopContext: Encodable {
 // Capture is deliberately best effort: inaccessible selection or a transient
 // focus change must not stop speech. No clipboard operations or focus changes.
 func captureContext() -> DesktopContext {
-    let capturedAt = ISO8601DateFormatter().string(from: Date())
+    let capturedAt = captureTimestamp()
     let position = CGEvent(source: nil)?.location
     var warnings: [String] = []
     var active: Window?
@@ -447,6 +457,7 @@ struct DesktopMain {
             case ["--inspect"]: try output(inspect(includeSelection: false))
             case ["--inspect-selection"]: try output(inspect(includeSelection: true))
             case ["--context"]: try output(captureContext())
+            case ["--frame"]: try output(captureFrame())
             case ["--voice"]: VoiceSession().run()
             case let args where args.count == 2 && args[0] == "--focus":
                 try focus(args[1])
@@ -457,8 +468,10 @@ struct DesktopMain {
                 }
                 try output(args[0] == "--test-hotkey" ? testHotkey(seconds: seconds) : testMicrophone(seconds: seconds))
             default:
-                throw DesktopError("Expected --probe, --inspect, --inspect-selection, --context, --voice, --focus <target-id>, --test-hotkey <seconds>, or --test-microphone <seconds>.")
+                throw DesktopError("Expected --probe, --inspect, --inspect-selection, --context, --frame, --voice, --focus <target-id>, --test-hotkey <seconds>, or --test-microphone <seconds>.")
             }
+        } catch let error as VisualCaptureError {
+            try? output(["error": error.rawValue])
         } catch let error as DesktopError {
             // Expected failures stay in the validated protocol, without native values or
             // captured content. The CLI maps these codes to errors and an exit status.

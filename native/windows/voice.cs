@@ -20,6 +20,8 @@ public sealed class OpenSaysMeVoice
     private string turnId;
     private Capture capture;
     private Stopwatch recording;
+    private long pointerAt;
+    private OpenSaysMeVisual.CursorSample lastPointer;
     private sealed class CaptureCleanupException : Exception { }
 
     private sealed class Command
@@ -97,6 +99,20 @@ public sealed class OpenSaysMeVoice
     private void Emit(string type) { Emit(type, null, null, null); }
     private void Error(string code, string id) { Emit("error", id, "code", code); }
 
+    private void SamplePointer()
+    {
+        if (capture == null || recording == null || recording.ElapsedMilliseconds < pointerAt) return;
+        pointerAt = recording.ElapsedMilliseconds + 50;
+        OpenSaysMeVisual.CursorSample point = OpenSaysMeVisual.Pointer();
+        if (point == null || lastPointer != null && point.X == lastPointer.X && point.Y == lastPointer.Y && point.DisplayId == lastPointer.DisplayId) return;
+        lastPointer = point;
+        string line = new JavaScriptSerializer().Serialize(new Dictionary<string, object> {
+            { "type", "pointer" }, { "turnId", turnId }, { "capturedAt", point.CapturedAt },
+            { "x", point.X }, { "y", point.Y }, { "displayId", point.DisplayId }
+        });
+        if (!output.TryAdd(line)) shutdown = true;
+    }
+
     private void StopCapture(bool deliverTail)
     {
         if (capture == null) return;
@@ -152,6 +168,8 @@ public sealed class OpenSaysMeVoice
             {
                 capture = new Capture();
                 recording = Stopwatch.StartNew();
+                pointerAt = 0;
+                lastPointer = null;
                 Emit("audio-started", turnId, null, null);
             }
             catch (CaptureCleanupException) { throw; }
@@ -221,6 +239,7 @@ public sealed class OpenSaysMeVoice
                 }
                 if (capture != null)
                 {
+                    SamplePointer();
                     if (recording.ElapsedMilliseconds >= 120000)
                     {
                         string expiredTurn = turnId;

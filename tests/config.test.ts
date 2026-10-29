@@ -7,7 +7,8 @@ import { configPath, configSchema, providerStatus, readConfig, writeConfig, type
 const directories: string[] = [];
 const config: Config = {
   version: 1,
-  reasoning: { provider: 'anthropic', model: 'test-model', apiKeyEnv: 'ANTHROPIC_API_KEY' },
+  shareVisualContext: true,
+  reasoning: { provider: 'openai', model: 'test-model', apiKeyEnv: 'REASONING_API_KEY' },
   speech: { provider: 'openai', model: 'test-transcription', apiKeyEnv: 'OPENAI_API_KEY' },
 };
 async function path() {
@@ -33,6 +34,20 @@ describe('configuration', () => {
     expect(configSchema.safeParse({ ...config, reasoning: { ...config.reasoning, apiKeyEnv: 'sk-private' } }).success).toBe(false);
   });
 
+  it('requires explicit visual sharing and a configured supported reasoning provider', () => {
+    expect(configSchema.safeParse({ ...config, shareVisualContext: false }).success).toBe(false);
+    expect(configSchema.safeParse({ ...config, shareVisualContext: undefined }).success).toBe(false);
+    expect(configSchema.safeParse({ ...config, reasoning: undefined }).success).toBe(false);
+    expect(configSchema.safeParse({ ...config, reasoning: { ...config.reasoning, provider: 'anthropic' } }).success).toBe(false);
+  });
+
+  it('replaces configuration only when explicitly requested', async () => {
+    const file = await path(); await writeConfig(config, file);
+    const replacement = { ...config, reasoning: { ...config.reasoning, model: 'replacement' } };
+    await writeConfig(replacement, file, true);
+    expect(await readConfig(file)).toEqual(replacement);
+  });
+
   it('reports invalid configuration without including its contents', async () => {
     const file = await path();
     await writeFile(file, '{"secret":"private-token"}');
@@ -41,7 +56,7 @@ describe('configuration', () => {
   });
 
   it('reports only presence, not provider key values', () => {
-    const report = providerStatus(config, { ANTHROPIC_API_KEY: 'private-token', OPENAI_API_KEY: ' ' });
+    const report = providerStatus(config, { REASONING_API_KEY: 'private-token', OPENAI_API_KEY: ' ' });
     expect(report.reasoning?.keyPresent).toBe(true);
     expect(report.speech?.keyPresent).toBe(false);
     expect(JSON.stringify(report)).not.toContain('private-token');

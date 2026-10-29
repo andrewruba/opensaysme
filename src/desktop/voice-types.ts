@@ -21,6 +21,8 @@ export const nativeVoiceEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready') }).strict(),
   z.object({ type: z.literal('toggle') }).strict(),
   z.object({ type: z.literal('cancel') }).strict(),
+  z.object({ type: z.literal('pointer'), turnId, capturedAt: z.string().datetime(),
+    x: z.number().finite(), y: z.number().finite(), displayId: z.string().min(1).max(128).nullable() }).strict(),
   z.object({ type: z.literal('audio-started'), turnId }).strict(),
   z.object({ type: z.literal('audio'), turnId, data: z.string().min(4).max(131_072).regex(/^[A-Za-z0-9+/]+={0,2}$/) }).strict(),
   z.object({ type: z.literal('audio-stopped'), turnId }).strict(),

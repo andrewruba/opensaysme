@@ -13,7 +13,7 @@ afterEach(async () => { await Promise.all(directories.splice(0).map((directory) 
 async function configured(model = 'gpt-live-transcribe') {
   const directory = await mkdtemp(join(tmpdir(), 'opensaysme-cli-'));
   directories.push(directory);
-  await writeConfig({ version: 1, speech: { provider: 'openai', model, apiKeyEnv: 'OPENSAYSME_TEST_MISSING_KEY' } }, join(directory, 'config.json'));
+  await writeConfig({ version: 1, shareVisualContext: true, reasoning: { provider: 'openai', model: 'gpt-5.4-mini', apiKeyEnv: 'OPENSAYSME_TEST_MISSING_REASONING_KEY' }, speech: { provider: 'openai', model, apiKeyEnv: 'OPENSAYSME_TEST_MISSING_KEY' } }, join(directory, 'config.json'));
   return { ...process.env, OPENSAYSME_CONFIG_DIR: directory, OPENSAYSME_TEST_MISSING_KEY: '' };
 }
 
@@ -47,4 +47,10 @@ it('rejects unsupported streaming model configuration before native access', asy
   const env = await configured('file-model'); env.OPENSAYSME_TEST_MISSING_KEY = 'fixture-key';
   await expect(execute(process.execPath, args, { env })).rejects.toMatchObject({ code: 1,
     stderr: expect.stringContaining('Set speech.model') });
+});
+
+it('requires the independent reasoning key before desktop access', async () => {
+  const env = { ...await configured(), OPENSAYSME_TEST_MISSING_KEY: 'fixture-key', OPENSAYSME_TEST_MISSING_REASONING_KEY: '' };
+  await expect(execute(process.execPath, args, { env })).rejects.toMatchObject({ code: 1,
+    stderr: expect.stringContaining('Set OPENSAYSME_TEST_MISSING_REASONING_KEY') });
 });

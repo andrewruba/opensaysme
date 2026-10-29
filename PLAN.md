@@ -16,11 +16,12 @@ access behind platform adapters and agent-specific behavior behind integration
 adapters. Use native helpers where necessary; a graphical helper can be added
 for feedback without making it the application core.
 
-## Next slice: visual context history, cursor trajectories, and action preview
+## Current slice: visual context history, cursor trajectories, and action preview
 
-The current prototype supports tap-to-talk streaming transcription, an activation
-context snapshot, cancellation, and latency measurements. Extend it to follow
-what the user sees and indicates throughout an activated turn.
+Implemented: tap-to-talk transcription, bounded visual/context history, cursor
+trajectories, cancellation, and a structured OpenAI action preview. The current
+speech adapter has no word timestamps; alignment remains explicitly uncertain.
+Live reference accuracy and preview latency still need interactive evaluation.
 
 Treat cursor movement, selections, and later annotations and gaze as evidence of
 attention. Preserve their source and timing; let the model interpret them together

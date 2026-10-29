@@ -9,10 +9,11 @@ const modelName = z.string().trim().min(1).max(256)
 export const configSchema = z.strictObject({
   version: z.literal(1),
   reasoning: z.strictObject({
-    provider: z.enum(['openai', 'anthropic']),
+    provider: z.literal('openai'),
     model: modelName,
     apiKeyEnv: environmentName,
-  }).optional(),
+  }),
+  shareVisualContext: z.literal(true),
   speech: z.strictObject({
     provider: z.literal('openai'),
     model: modelName,
@@ -42,15 +43,15 @@ export async function readConfig(path = configPath()): Promise<Config | null> {
   try {
     return configSchema.parse(JSON.parse(content));
   } catch {
-    throw new Error(`Invalid configuration at ${path}. Use the documented schema; store key references, not keys.`);
+    throw new Error(`Invalid configuration at ${path}. Run opensaysme setup --replace or use the documented schema; store key references, not keys.`);
   }
 }
 
-export async function writeConfig(config: Config, path = configPath()): Promise<void> {
+export async function writeConfig(config: Config, path = configPath(), replace = false): Promise<void> {
   const validated = configSchema.parse(config);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   try {
-    await writeFile(path, `${JSON.stringify(validated, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+    await writeFile(path, `${JSON.stringify(validated, null, 2)}\n`, { flag: replace ? 'w' : 'wx', mode: 0o600 });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
       throw new Error(`Configuration already exists at ${path}; edit it directly to change settings.`, { cause: error });
@@ -60,9 +61,9 @@ export async function writeConfig(config: Config, path = configPath()): Promise<
 }
 
 export function providerStatus(config: Config, env = process.env) {
-  return Object.fromEntries((['reasoning', 'speech'] as const).flatMap((role) => {
+  return Object.fromEntries((['reasoning', 'speech'] as const).map((role) => {
     const provider = config[role];
-    return provider ? [[role, { provider: provider.provider, model: provider.model,
-      apiKeyEnv: provider.apiKeyEnv, keyPresent: Boolean(env[provider.apiKeyEnv]?.trim()) }]] : [];
+    return [role, { provider: provider.provider, model: provider.model,
+      apiKeyEnv: provider.apiKeyEnv, keyPresent: Boolean(env[provider.apiKeyEnv]?.trim()) }];
   }));
 }

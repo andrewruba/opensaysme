@@ -6,6 +6,7 @@ import { runCommand } from '../src/desktop/process.js';
 import {
   focusMacOS,
   captureMacOSContext,
+  captureMacOSFrame,
   macOSVoiceHelper,
   parseMacOSSnapshot,
   probeMacOS,
@@ -99,4 +100,27 @@ test('context validates pointer targets and omits private malformed response det
   await assert.rejects(captureMacOSContext(), { message: 'The macOS desktop helper returned an invalid context target.' });
   vi.mocked(runCommand).mockResolvedValueOnce('{"selectedText":"private-selection"}');
   await assert.rejects(captureMacOSContext(), { message: 'The macOS desktop helper returned an invalid response.' });
+});
+
+test('screen frames preserve display coordinates and pass cancellation without writing files', async () => {
+  const signal = new AbortController().signal;
+  const frame = {
+    capturedAt: '2026-10-28T12:00:00.123Z',
+    display: { id: '2', bounds: { x: -1920, y: -200, width: 1920, height: 1080 } },
+    image: { mimeType: 'image/jpeg', width: 1600, height: 900, data: '/9j/2Q==' }, warnings: [],
+  };
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(frame));
+  assert.deepEqual(await captureMacOSFrame(signal), frame);
+  assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.slice(1), [['--frame'], { timeoutMs: 4000, signal }]);
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify({ ...frame, display: { ...frame.display, id: 'private-display' } }));
+  await assert.rejects(captureMacOSFrame(), { message: 'The macOS desktop helper returned an invalid screen display.' });
+});
+
+test('screen frame errors explain permission and platform limits without exposing image data', async () => {
+  vi.mocked(runCommand).mockResolvedValueOnce('{"error":"screen-permission-required"}');
+  await assert.rejects(captureMacOSFrame(), /Enable Screen Recording/);
+  vi.mocked(runCommand).mockResolvedValueOnce('{"error":"screen-capture-unavailable"}');
+  await assert.rejects(captureMacOSFrame(), /macOS 14 or later/);
+  vi.mocked(runCommand).mockResolvedValueOnce('{"image":"private-pixels"}');
+  await assert.rejects(captureMacOSFrame(), { message: 'The macOS desktop helper returned an invalid response.' });
 });

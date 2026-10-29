@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, vi } from 'vitest';
 
-import { captureWindowsContext, focusWindows, parseWindowsSnapshot, probeWindows, testWindowsHotkey, testWindowsMicrophone, windowsVoiceHelper } from '../src/desktop/platforms/windows.js';
+import { captureWindowsContext, captureWindowsFrame, focusWindows, parseWindowsSnapshot, probeWindows, testWindowsHotkey, testWindowsMicrophone, windowsVoiceHelper } from '../src/desktop/platforms/windows.js';
 import { runCommand } from '../src/desktop/process.js';
 
 vi.mock('../src/desktop/process.js', () => ({ runCommand: vi.fn() }));
@@ -61,11 +61,36 @@ test('doctor reports blocked helpers without disclosing native error output', as
 });
 
 test('doctor keeps focus and capture unverified until explicitly tested', async () => {
-  vi.mocked(runCommand).mockResolvedValueOnce('{"version":1,"operation":"probe","interactive":true,"automation":true}');
+  vi.mocked(runCommand).mockResolvedValueOnce('{"version":1,"operation":"probe","interactive":true,"automation":true,"screenCapture":true}');
   const report = await probeWindows();
   assert.equal(report.capabilities.activeWindow.status, 'available');
-  for (const capability of ['focusWindow', 'selectedText', 'globalHotkey', 'microphone'] as const) {
+  for (const capability of ['focusWindow', 'selectedText', 'globalHotkey', 'microphone', 'screenCapture'] as const) {
     assert.equal(report.capabilities[capability].status, 'unverified');
+  }
+});
+
+test('screen capture preserves negative physical monitor coordinates and bounded image dimensions', async () => {
+  const frame = {
+    capturedAt: '2026-10-28T10:00:00.000Z',
+    display: { id: '\\\\.\\DISPLAY2', bounds: { x: -3200, y: 0, width: 3200, height: 1800 } },
+    image: { mimeType: 'image/jpeg', width: 1600, height: 900, data: '/9j/2Q==' }, warnings: [],
+  };
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(frame));
+  const signal = new AbortController().signal;
+  assert.deepEqual(await captureWindowsFrame(signal), frame);
+  const call = vi.mocked(runCommand).mock.lastCall!;
+  assert.match(call[1][4]!, /native[/\\]windows[/\\]frame\.ps1$/);
+  assert.equal(call[2]?.signal, signal);
+});
+
+test('screen capture rejects missing, malformed, or oversized output without echoing pixels', async () => {
+  for (const output of ['private image data', '{"error":"screen-capture-unavailable"}', JSON.stringify({
+    capturedAt: '2026-10-28T10:00:00.000Z',
+    display: { id: '\\\\.\\DISPLAY1', bounds: { x: 0, y: 0, width: 3200, height: 1800 } },
+    image: { mimeType: 'image/jpeg', width: 3200, height: 1800, data: '/9j/2Q==' }, warnings: [],
+  })]) {
+    vi.mocked(runCommand).mockResolvedValueOnce(output);
+    await assert.rejects(captureWindowsFrame(), /Windows screen capture is unavailable or invalid/);
   }
 });
 

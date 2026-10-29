@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { captureLinuxContext, focusLinux, inspectLinux, linuxVoiceHelper, probeLinux, testLinuxHotkey } from '../src/desktop/platforms/linux.js';
+import { captureLinuxContext, captureLinuxFrame, focusLinux, inspectLinux, linuxVoiceHelper, probeLinux, testLinuxHotkey } from '../src/desktop/platforms/linux.js';
 import { runCommand } from '../src/desktop/process.js';
 import { nativeVoiceEventSchema, type NativeVoiceCommand, type NativeVoiceEvent } from '../src/desktop/voice-types.js';
 
@@ -190,6 +190,45 @@ while True:
     const pid = Number(await readFile(join(fixtureDirectory, 'pid'), 'utf8'));
     expect(() => process.kill(pid, 0)).toThrow();
   }
+
+  it('captures bounded JPEG frames in virtual-root coordinates without changing focus', async () => {
+    await focusLinux(firstWindow);
+    const frame = await captureLinuxFrame();
+    expect(frame.display.id).toBe('x11:root');
+    expect(frame.display.bounds.x).toBe(0);
+    expect(frame.display.bounds.y).toBe(0);
+    expect(frame.image.width).toBeLessThanOrEqual(1600);
+    expect(frame.image.height).toBeLessThanOrEqual(1600);
+    const bytes = Buffer.from(frame.image.data, 'base64');
+    expect(bytes.subarray(0, 2)).toEqual(Buffer.from([255, 216]));
+    expect(bytes.length).toBeLessThanOrEqual(700000);
+    expect((await inspectLinux(false)).window?.id).toBe(firstWindow);
+  });
+
+  it('tracks pointer trajectories only during recording and keeps display identity consistent', async () => {
+    const helper = await voiceFixture();
+    await runCommand('xdotool', ['mousemove', '25', '30']);
+    await sleep(150);
+    expect(helper.events.some((event) => event.type === 'pointer')).toBe(false);
+    helper.send({ type: 'start', turnId: 'attention' });
+    await helper.take('audio-started', 'attention');
+    expect(await helper.take('pointer', 'attention')).toMatchObject({ x: 25, y: 30, displayId: 'x11:root' });
+    for (const [x, y] of [[120, 50], [150, 80], [120, 100]]) {
+      await runCommand('xdotool', ['mousemove', String(x), String(y)]);
+      const point = await helper.take('pointer', 'attention');
+      expect(point).toMatchObject({ x, y, displayId: 'x11:root' });
+      if (point.type === 'pointer') expect(Number.isNaN(Date.parse(point.capturedAt))).toBe(false);
+    }
+    helper.send({ type: 'stop', turnId: 'attention' });
+    await helper.take('audio-stopped', 'attention');
+    helper.events.splice(0);
+    await runCommand('xdotool', ['mousemove', '200', '200']);
+    await sleep(200);
+    expect(helper.events.some((event) => event.type === 'pointer')).toBe(false);
+    helper.send({ type: 'settled', turnId: 'attention' });
+    helper.send({ type: 'shutdown' });
+    await helper.exited;
+  }, 15_000);
 
   it('streams PCM, suppresses held-hotkey repeats, and retains Escape until transcription settles', async () => {
     const helper = await voiceFixture();

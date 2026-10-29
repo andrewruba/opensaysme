@@ -3,9 +3,11 @@ import { z } from 'zod';
 import { runCommand } from '../process.js';
 import { desktopTestResultSchema, type Capability, type DesktopReport, type DesktopSnapshot, type DesktopTestResult } from '../types.js';
 import { desktopContextSchema, type DesktopContext, type VoiceHelperSpec } from '../voice-types.js';
+import { screenFrameCaptureSchema, type ScreenFrameCapture } from '../visual-types.js';
 
 const hotkeyHelperPath = fileURLToPath(new URL('../../../native/linux/hotkey.py', import.meta.url));
 const voiceHelperPath = fileURLToPath(new URL('../../../native/linux/voice.py', import.meta.url));
+const frameHelperPath = fileURLToPath(new URL('../../../native/linux/frame.py', import.meta.url));
 
 type Session = 'x11' | 'wayland' | 'headless';
 
@@ -86,6 +88,7 @@ export async function probeLinux(): Promise<DesktopReport> {
         ? 'A Wayland GlobalShortcuts portal adapter is not implemented; no keyboard hook is installed.'
         : 'No X11 desktop session is available for global shortcut registration.'),
       microphone: unavailable('Install arecord (alsa-utils) to enable an explicit microphone test. No recording was attempted.'),
+      screenCapture: unavailable(desktopDetail),
     },
     notes: [],
   };
@@ -97,13 +100,19 @@ export async function probeLinux(): Promise<DesktopReport> {
   }
   if (current !== 'x11') return report;
 
-  const [hasXdotool, hasXsel, hasHotkeyHelper] = await Promise.all([
+  const [hasXdotool, hasXsel, hasHotkeyHelper, hasScreenHelper] = await Promise.all([
     isInstalled('xdotool', ['version']),
     isInstalled('xsel', ['--version']),
     runCommand('python3', [hotkeyHelperPath, '--probe'], { timeoutMs: 3000 })
       .then((output) => z.object({ available: z.boolean() }).strict().parse(JSON.parse(output)).available)
       .catch(() => false),
+    runCommand('python3', [frameHelperPath, '--probe'], { timeoutMs: 3000 })
+      .then((output) => z.object({ available: z.boolean() }).strict().parse(JSON.parse(output)).available)
+      .catch(() => false),
   ]);
+  report.capabilities.screenCapture = hasScreenHelper
+    ? { status: 'unverified', detail: 'Pillow XCB support is present. Activated turns can capture the X11 virtual desktop; doctor does not capture pixels.' }
+    : unavailable('Install Python Pillow with XCB support (python3-pil on Debian/Ubuntu) for in-memory X11 screenshots.');
   report.capabilities.globalHotkey = hasHotkeyHelper
     ? { status: 'unverified', detail: 'Python 3 and libX11 are available. Run desktop test-hotkey to register Ctrl+Shift+Space temporarily; doctor does not register it.' }
     : unavailable('Install Python 3 and libX11 to enable an explicit X11 Ctrl+Shift+Space test.');
@@ -269,8 +278,7 @@ export async function captureLinuxContext(signal?: AbortSignal): Promise<Desktop
     if (!name) throw new Error('Missing application class');
     return { id, application: name, title: checkedText(title.replace(/\r?\n$/, ''), 'Window title', 8192) };
   };
-  // IDs and coordinates are captured once, before metadata lookup. Neither voice
-  // nor a later pointer movement changes which windows this turn refers to.
+  // Each context sample keeps the identities observed before metadata lookup.
   const [active, pointer, selection] = await Promise.allSettled([
     activeWindowId(signal).then((id) => id ? metadata(id) : null),
     runCommand('python3', [voiceHelperPath, '--pointer'], options).then(async (output) => {
@@ -292,4 +300,21 @@ export async function captureLinuxContext(signal?: AbortSignal): Promise<Desktop
     context.warnings.push('Selected text comes from X11 PRIMARY and may belong to a different window.');
   } else context.warnings.push('X11 PRIMARY selected text is unavailable.');
   return desktopContextSchema.parse(context);
+}
+
+export async function captureLinuxFrame(signal?: AbortSignal): Promise<ScreenFrameCapture> {
+  requireX11();
+  signal?.throwIfAborted();
+  const output = await runCommand('python3', [frameHelperPath], { timeoutMs: 4_000, signal });
+  try {
+    const value: unknown = JSON.parse(output);
+    if (z.object({ error: z.literal('screen-capture-unavailable') }).strict().safeParse(value).success) {
+      throw new Error('unavailable');
+    }
+    const frame = screenFrameCaptureSchema.parse(value);
+    if (frame.display.id !== 'x11:root' || frame.display.bounds.x !== 0 || frame.display.bounds.y !== 0) throw new Error('invalid display');
+    return frame;
+  } catch {
+    throw new Error('X11 screen capture is unavailable or invalid. Check Python Pillow with XCB support and DISPLAY authorization.');
+  }
 }

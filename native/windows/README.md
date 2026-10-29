@@ -5,6 +5,8 @@ C# declarations are compiled by `Add-Type`; users do not install a separate
 compiler or download native packages. Run in an unlocked, logged-in desktop.
 PowerShell must permit these local scripts. Execution policy and enterprise
 restrictions are respected, never changed by the tool.
+Visual capture and physical cursor coordinates require Windows 10 version 1703
+or newer for per-monitor DPI awareness; unsupported capture is reported explicitly.
 
 - `desktop.ps1` reads the foreground Win32 window, focuses a verified window
   handle, and optionally reads selection through UI Automation `TextPattern`.
@@ -25,6 +27,16 @@ restrictions are respected, never changed by the tool.
   lines and pipe queues are bounded. EOF, shutdown, and capture failure clean up
   registrations and audio handles. The parent sends audio to its configured
   transcription provider; desktop context is not included in that request.
+- `visual.cs` / `frame.ps1` capture the monitor under the pointer into an in-memory
+  JPEG, reduced to at most 1600 pixels on the longest edge and 700,000 bytes. Native
+  source bounds and pointer samples use physical desktop pixels, including negative
+  coordinates on secondary monitors. Display device IDs associate cursor paths
+  with frames; image dimensions describe the resized pixels. Protected content or
+  secure desktops may be absent. No screenshot files are created.
+- During recording, `voice.cs` emits changed pointer coordinates at up to 20 Hz
+  with capture time and display ID. Sampling stops with microphone stop/cancellation;
+  there is no drawing overlay or gesture categorization. The parent separately
+  controls visual history bounds and sharing with the reasoning provider.
 - `input.ps1` / `input.cs` test Ctrl+Shift+Space registration and default microphone
   input for at most 30 seconds. Audio is counted in memory and discarded; only
   byte counts and recording format are returned. Cleanup unregisters the hotkey
@@ -49,7 +61,7 @@ shortcut, change focus, or capture audio or selected text:
 ```powershell
 $ErrorActionPreference = 'Stop'
 Add-Type -Path ./native/windows/input.cs
-Add-Type -Path ./native/windows/voice.cs -ReferencedAssemblies System.dll, System.Core.dll, System.Web.Extensions.dll
+Add-Type -Path ./native/windows/voice.cs, ./native/windows/visual.cs -ReferencedAssemblies System.dll, System.Core.dll, System.Drawing.dll, System.Web.Extensions.dll
 foreach ($file in Get-ChildItem ./native/windows/*.ps1) {
     $tokens = $null
     $parseErrors = $null
@@ -62,7 +74,7 @@ powershell.exe -NoLogo -NoProfile -NonInteractive -File ./native/windows/test-vo
 ```
 
 The last command checks protocol validation, cancellation acknowledgments, stale
-turn isolation, and output backpressure without calling any Windows desktop or
+turn isolation, output backpressure, and JPEG encoding of a synthetic bitmap without calling any Windows desktop or
 microphone APIs. Native capture and hotkey delivery still require manual Windows
 verification; compiling on another OS does not establish that they work.
 
@@ -72,3 +84,5 @@ The implementation follows Microsoft's documentation for
 [global shortcuts](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey),
 [pointer targeting](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-windowfrompoint), and
 [audio buffer cleanup](https://learn.microsoft.com/en-us/windows/win32/api/mmeapi/nf-mmeapi-waveinreset).
+Visual capture uses `System.Drawing.Graphics.CopyFromScreen` with
+[per-thread DPI awareness](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setthreaddpiawarenesscontext).

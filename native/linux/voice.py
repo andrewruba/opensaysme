@@ -4,6 +4,7 @@
 import argparse
 import base64
 import collections
+from datetime import datetime, timezone
 import json
 import os
 import re
@@ -28,6 +29,8 @@ class Voice:
         self.output = collections.deque()
         self.output_bytes = 0
         self.running = True
+        self.pointer_at = 0
+        self.last_pointer = None
 
     def emit(self, kind, **fields):
         line = (json.dumps({"type": kind, **fields}, separators=(",", ":")) + "\n").encode()
@@ -91,6 +94,22 @@ class Voice:
             return
         self.capture_at = time.monotonic()
         self.started = False
+        self.pointer_at = 0
+        self.last_pointer = None
+
+    def sample_pointer(self):
+        if not self.recorder or self.stopping_at is not None:
+            return
+        now = time.monotonic()
+        if now - self.pointer_at < 0.05:
+            return
+        self.pointer_at = now
+        captured_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        point = self.desktop.pointer_position()
+        if point is not None and point != self.last_pointer:
+            self.last_pointer = point
+            self.emit("pointer", turnId=self.turn, capturedAt=captured_at,
+                      x=point[0], y=point[1], displayId="x11:root")
 
     def command(self, value):
         if not isinstance(value, dict):
@@ -185,6 +204,7 @@ class Voice:
             if writable:
                 self.flush()
             if self.recorder:
+                self.sample_pointer()
                 now = time.monotonic()
                 if self.stopping_at is not None and now - self.stopping_at > 1:
                     self.fail("capture-failed")

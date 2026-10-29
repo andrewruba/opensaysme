@@ -4,7 +4,7 @@ $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 try {
-    Add-Type -Path (Join-Path $PSScriptRoot 'voice.cs') -ReferencedAssemblies System.dll, System.Core.dll, System.Web.Extensions.dll
+    Add-Type -Path (Join-Path $PSScriptRoot 'voice.cs'), (Join-Path $PSScriptRoot 'visual.cs') -ReferencedAssemblies System.dll, System.Core.dll, System.Drawing.dll, System.Web.Extensions.dll
     [OpenSaysMeVoice]::Run()
 } catch {
     # Never expose native exception text or command payloads.

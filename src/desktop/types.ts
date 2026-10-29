@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import type { DesktopContext, VoiceHelperSpec } from './voice-types.js';
+import type { ScreenFrameCapture } from './visual-types.js';
 
 export const capabilityNames = [
-  'activeWindow', 'focusWindow', 'selectedText', 'globalHotkey', 'microphone',
+  'activeWindow', 'focusWindow', 'selectedText', 'globalHotkey', 'microphone', 'screenCapture',
 ] as const;
 
 export const capabilitySchema = z.object({
@@ -20,6 +21,7 @@ export const desktopReportSchema = z.object({
     selectedText: capabilitySchema,
     globalHotkey: capabilitySchema,
     microphone: capabilitySchema,
+    screenCapture: capabilitySchema,
   }),
   notes: z.array(z.string()),
 });
@@ -52,4 +54,5 @@ export interface DesktopAdapter {
   testMicrophone(durationSeconds: number): Promise<DesktopTestResult>;
   voiceHelper(): Promise<VoiceHelperSpec>;
   captureContext(signal?: AbortSignal): Promise<DesktopContext>;
+  captureFrame(signal?: AbortSignal): Promise<ScreenFrameCapture>;
 }

@@ -44,6 +44,9 @@ def load_x11():
         "XOpenDisplay": ([c.c_char_p], c.c_void_p),
         "XCloseDisplay": ([c.c_void_p], c.c_int),
         "XDefaultRootWindow": ([c.c_void_p], c.c_ulong),
+        "XDefaultScreen": ([c.c_void_p], c.c_int),
+        "XDisplayWidth": ([c.c_void_p, c.c_int], c.c_int),
+        "XDisplayHeight": ([c.c_void_p, c.c_int], c.c_int),
         "XConnectionNumber": ([c.c_void_p], c.c_int),
         "XKeysymToKeycode": ([c.c_void_p, c.c_ulong], c.c_ubyte),
         "XGetModifierMapping": ([c.c_void_p], pointer(ModifierMap)),
@@ -200,6 +203,14 @@ class Desktop:
         if self.errors:
             raise OSError("Window changed during capture")
         return {"x": coordinates[0], "y": coordinates[1], "windowId": str(owner or fallback) if owner or fallback else None}
+
+    def pointer_position(self):
+        # One cheap round trip; window ancestry is resolved by the slower context
+        # sampler rather than on the audio loop's trajectory sampling path.
+        root, child, rx, ry, x, y, mask = c.c_ulong(), c.c_ulong(), c.c_int(), c.c_int(), c.c_int(), c.c_int(), c.c_uint()
+        if not self.x11.XQueryPointer(self.display, self.root, c.byref(root), c.byref(child), c.byref(rx), c.byref(ry), c.byref(x), c.byref(y), c.byref(mask)):
+            return None
+        return (rx.value, ry.value)
 
     def bell(self):
         self.x11.XBell(self.display, 0)
