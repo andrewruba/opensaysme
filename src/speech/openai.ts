@@ -2,6 +2,7 @@ import WebSocket from 'ws';
 import { z } from 'zod';
 import { PhraseSegmenter, type PhraseInterval } from './phrases.js';
 import type { TranscriptionOptions, TranscriptionSession } from './types.js';
+import type { DiagnosticEvent } from '../diagnostics.js';
 
 export const streamingModel = 'gpt-live-transcribe';
 const endpoint = 'wss://api.openai.com/v1/realtime?intent=transcription';
@@ -38,6 +39,9 @@ function joinText(parts: string[]): string {
 
 // Injectable transport exercises actual item ordering without credentials.
 export function createTranscriptionSession(options: TranscriptionOptions, connect: () => WebSocket): TranscriptionSession {
+  const report = (event: string, data?: DiagnosticEvent['data']) => {
+    try { options.onDiagnostic?.({ component: 'speech', event, data }); } catch { /* Keep diagnostics optional. */ }
+  };
   let socket: WebSocket;
   let ended = false;
   let configured = false;
@@ -63,7 +67,7 @@ export function createTranscriptionSession(options: TranscriptionOptions, connec
   const finished = new Promise<string>((resolve, reject) => { resolveFinished = resolve; rejectFinished = reject; });
   void ready.catch(() => {});
   void finished.catch(() => {});
-  const connectionDeadline = setTimeout(() => fail('Speech provider did not become ready within 8 seconds.'), 8_000);
+  const connectionDeadline = setTimeout(() => fail('Speech provider did not become ready within 8 seconds.', 'ready-timeout'), 8_000);
 
   function nextSegment(): Segment {
     const segment = { sentAudio: false, committed: false };
@@ -81,17 +85,21 @@ export function createTranscriptionSession(options: TranscriptionOptions, connec
     awaitingAck.length = 0;
     items.clear();
     lastPartial = '';
-    if (socket && socket.readyState !== WebSocket.CLOSED) socket.terminate();
+    if (socket && socket.readyState !== WebSocket.CLOSED) {
+      report('connection-terminating');
+      socket.terminate();
+    }
   }
-  function fail(message: string) {
+  function fail(message: string, code = 'stream-failed') {
     if (ended) return;
     ended = true;
+    report(code === 'cancelled' ? 'transcription-cancelled' : code.endsWith('-timeout') ? 'transcription-timed-out' : 'transcription-failed', { code });
     const error = new Error(message);
     rejectReady(error);
     rejectFinished(error);
     cleanup();
   }
-  function abort() { fail('Transcription cancelled.'); }
+  function abort() { fail('Transcription cancelled.', 'cancelled'); }
   function send(value: unknown) {
     if (ended) return;
     const payload = JSON.stringify(value);
@@ -116,7 +124,9 @@ export function createTranscriptionSession(options: TranscriptionOptions, connec
     if (ended) return;
     segment.committed = true;
     awaitingAck.push(segment);
-    segment.deadline = setTimeout(() => fail('Speech provider did not finalize a phrase within 15 seconds.'), 15_000);
+    segment.deadline = setTimeout(() => fail('Speech provider did not finalize a phrase within 15 seconds.', 'phrase-timeout'), 15_000);
+    if (segment.interval) report('phrase-committed', { startSample: segment.interval.startSample, endSample: segment.interval.endSample,
+      boundary: segment.interval.boundary });
     send({ type: 'input_audio_buffer.commit' });
   }
   function commitInterval(interval: PhraseInterval) {
@@ -173,27 +183,35 @@ export function createTranscriptionSession(options: TranscriptionOptions, connec
       clearTimeout(segment.deadline);
       publishedPhrases++;
       options.onPhrase({ id: segment.itemId, text: value.final, ...segment.interval });
+      report('phrase-finalized', { startSample: segment.interval.startSample, endSample: segment.interval.endSample,
+        boundary: segment.interval.boundary, characters: value.final.length });
       if (ended) return;
     }
     if (stopping && publishedPhrases === segments.filter((segment) => segment.interval).length) {
       const text = joinText(segments.flatMap((segment) => segment.itemId ? [items.get(segment.itemId)!.final!] : []));
       ended = true;
+      report('transcription-completed', { samples: totalBytes / 2, phrases: publishedPhrases });
       resolveFinished(text);
       cleanup();
     }
   }
   try {
     if (options.signal.aborted) throw new Error('cancelled');
+    report('connection-started');
     socket = connect();
     options.signal.addEventListener('abort', abort, { once: true });
-    socket.on('open', () => send({
-      type: 'session.update',
-      session: { type: 'transcription', audio: { input: {
-        format: { type: 'audio/pcm', rate: 24_000 },
-        transcription: { model: options.model, delay: 'low' },
-        turn_detection: null,
-      } } },
-    }));
+    socket.on('open', () => {
+      if (ended) return;
+      report('connection-opened');
+      send({
+        type: 'session.update',
+        session: { type: 'transcription', audio: { input: {
+          format: { type: 'audio/pcm', rate: 24_000 },
+          transcription: { model: options.model, delay: 'low' },
+          turn_detection: null,
+        } } },
+      });
+    });
     socket.on('message', (raw) => {
       if (ended) return;
       try {
@@ -208,6 +226,7 @@ export function createTranscriptionSession(options: TranscriptionOptions, connec
             }) }) }) }).parse(event);
             if (configured) break;
             configured = true;
+            report('session-ready', { model: options.model, sampleRate: 24_000 });
             clearTimeout(connectionDeadline);
             for (const entry of pending) {
               if (ended) break;
@@ -253,14 +272,17 @@ export function createTranscriptionSession(options: TranscriptionOptions, connec
           }
           case 'error':
           case 'conversation.item.input_audio_transcription.failed':
-            fail('Speech provider rejected the request. Check the API key, model access, quota, and network.');
+            fail('Speech provider rejected the request. Check the API key, model access, quota, and network.', 'provider-rejected');
             break;
         }
-      } catch { fail('Speech provider returned an invalid transcription event.'); }
+      } catch { fail('Speech provider returned an invalid transcription event.', 'invalid-event'); }
     });
-    socket.on('error', () => fail('Speech connection failed. Check the API key, model access, and network.'));
-    socket.on('close', () => { if (!ended) fail('Speech connection closed before transcription finished.'); });
-  } catch { fail(options.signal.aborted ? 'Transcription cancelled.' : 'Could not open the speech connection.'); }
+    socket.on('error', () => fail('Speech connection failed. Check the API key, model access, and network.', 'connection-error'));
+    socket.on('close', (code: number) => {
+      report('connection-closed', Number.isInteger(code) ? { code } : undefined);
+      if (!ended) fail('Speech connection closed before transcription finished.', 'unexpected-close');
+    });
+  } catch { fail(options.signal.aborted ? 'Transcription cancelled.' : 'Could not open the speech connection.', options.signal.aborted ? 'cancelled' : 'connection-error'); }
 
   return {
     ready, finished,
@@ -293,6 +315,6 @@ export function createTranscriptionSession(options: TranscriptionOptions, connec
       }
       if (!ended) publish();
     },
-    close() { if (!ended) fail('Transcription cancelled.'); },
+    close() { if (!ended) fail('Transcription cancelled.', 'cancelled'); },
   };
 }

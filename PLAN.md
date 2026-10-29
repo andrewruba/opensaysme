@@ -43,7 +43,9 @@ content categories, or a required outcome for every phrase.
    text without a fixed action enum. Keep clean images available for reading details.
    There are no crops, on-screen overlays, or executed actions. Defer the structure
    for future answers and executable actions until concrete integrations need it.
-4. **Bound work and evaluate.** Keep images in memory only for the active turn.
+4. **Bound work and evaluate.** Keep images in memory only for the active turn by
+   default; an explicit `--debug` flag saves context, model inputs/responses, and
+   timed session diagnostics for inspection.
    Limit local rendering and retain clean images plus coordinates if a trail copy
    is unavailable. Measure preparation, reasoning, and stop-to-response latency;
    test rapid navigation, multiple referents, incidental movement, and cancellation.

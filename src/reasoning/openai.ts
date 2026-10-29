@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { screenFrameCaptureSchema } from '../desktop/visual-types.js';
 import type { ReasoningFactory, ReasoningInput } from './types.js';
+import type { DiagnosticEvent, PreparedReasoningRequest } from '../diagnostics.js';
 
 export const defaultReasoningModel = 'gpt-5.4-mini';
 const endpoint = 'https://api.openai.com/v1/responses';
@@ -68,22 +69,34 @@ function requestBody(model: string, input: ReasoningInput): string {
     ...context, hasTrailImage: image !== null,
   })) } });
   if (Buffer.byteLength(metadata) > metadataLimit) throw new Error('Reasoning context exceeded its metadata limit.');
-  const content: Array<Record<string, unknown>> = [{ type: 'input_text', text: metadata }];
+  const content: PreparedReasoningRequest['input'][number]['content'] = [{ type: 'input_text', text: metadata }];
+  const imageFiles: string[] = [];
   for (const frame of history.frames) {
     const view = visual.frames.find((candidate) => candidate.context.frameId === frame.id)!;
     const speech = history.transcript.filter((phrase) => view.context.phraseIds.includes(phrase.id))
       .map(({ id, text, startMs, endMs, timing }) => ({ id, text, startMs, endMs, timing }));
     content.push({ type: 'input_text', text: `Clean historical full screen frame ${frame.id}; display ${frame.display.id}; capture ${frame.atMs}ms. Nearby interval ${view.context.startMs}–${view.context.endMs}ms. Overlapping speech (phrase envelopes, not word timestamps): ${JSON.stringify(speech)}.` });
     content.push({ type: 'input_image', image_url: `data:image/jpeg;base64,${frame.image.data}`, detail: 'high' });
+    imageFiles.push(`images/${frame.id}-clean.jpg`);
     if (view.image) {
       content.push({ type: 'input_text', text: `Same full frame ${frame.id} with attention marks; trail interval ${view.context.startMs}–${view.context.endMs}ms. Use its clean image to read any obscured content. Exact point times and speech associations are in visual metadata.` });
       content.push({ type: 'input_image', image_url: `data:image/jpeg;base64,${view.image.data}`, detail: 'high' });
+      imageFiles.push(`images/${frame.id}-trail.jpg`);
     }
   }
-  const body = JSON.stringify({ model, instructions, store: false,
+  const request: PreparedReasoningRequest = { model, instructions, store: false,
     input: [{ role: 'user', content }], max_output_tokens: 2500,
-  });
+  };
+  const body = JSON.stringify(request);
   if (Buffer.byteLength(body) > requestLimit) throw new Error('Reasoning context exceeded its request limit.');
+  if (input.onRequest) {
+    let imageIndex = 0;
+    // Derive the exported request from the same content after wire serialization.
+    // Only image URLs change; a diagnostic hook cannot mutate the actual request.
+    const exported: PreparedReasoningRequest = { ...request, input: [{ role: 'user', content: content.map((part) =>
+      part.type === 'input_image' ? { ...part, image_url: imageFiles[imageIndex++]! } : { ...part }) }] };
+    try { input.onRequest(exported); } catch { /* Debugging must not interrupt a provider request. */ }
+  }
   return body;
 }
 
@@ -148,16 +161,29 @@ export function openAIReasoning(
     throw new Error('The configured reasoning model is invalid.');
   }
   return async (input) => {
-    if (input.signal.aborted) throw new Error('Reasoning request cancelled.');
-    if (!input.transcript.trim()) return 'No spoken request was captured. What would you like to know or do?';
-    const body = requestBody(options.model, input);
+    const started = performance.now();
+    const report = (event: string, data?: DiagnosticEvent['data']) => {
+      try { input.onDiagnostic?.({ component: 'reasoning', event, data }); } catch { /* Keep diagnostics optional. */ }
+    };
+    if (input.signal.aborted) { report('request-cancelled'); throw new Error('Reasoning request cancelled.'); }
+    if (!input.transcript.trim()) {
+      report('request-skipped', { code: 'empty-transcript' });
+      return 'No spoken request was captured. What would you like to know or do?';
+    }
+    let body: string;
+    try { body = requestBody(options.model, input); }
+    catch (error) { report('request-failed', { code: 'invalid-input' }); throw error; }
+    report('request-prepared', { model: options.model, bytes: Buffer.byteLength(body) });
     const deadline = new AbortController();
     const signal = AbortSignal.any([input.signal, deadline.signal]);
     const timer = setTimeout(() => deadline.abort(), options.timeoutMs ?? 20_000);
     try {
+      signal.throwIfAborted();
+      report('request-started');
       const response = await fetcher(endpoint, { method: 'POST', headers: {
         Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json',
       }, body, signal, redirect: 'error' });
+      report('response-received', { status: response.status });
       if (!response.ok) {
         void response.body?.cancel().catch(() => {});
         throw new ReasoningFailure(`Reasoning provider rejected the request (HTTP ${response.status}). Check the reasoning key, model access, and quota.`);
@@ -173,8 +199,11 @@ export function openAIReasoning(
       if (message.content.some((part) => part.type === 'refusal')) throw new ReasoningFailure('Reasoning provider declined this request.');
       const output = message.content.filter((part) => part.type === 'output_text');
       if (output.length !== 1 || !output[0]!.text.trim()) throw new Error('Expected one nonempty text response.');
+      report('request-completed', { durationMs: Math.round(performance.now() - started) });
       return output[0]!.text;
     } catch (error) {
+      report(input.signal.aborted ? 'request-cancelled' : deadline.signal.aborted ? 'request-timed-out' : 'request-failed',
+        { code: error instanceof ReasoningFailure ? 'provider-response' : 'network-or-invalid-response', durationMs: Math.round(performance.now() - started) });
       throw sanitizedFailure(error, input.signal.aborted, deadline.signal.aborted);
     } finally { clearTimeout(timer); }
   };

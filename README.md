@@ -57,5 +57,10 @@ executed. Run `npm ci` after updating to install the image-processing dependency
 existing visual-sharing configuration and keys still work. macOS screen capture
 requires Screen Recording permission.
 
+To inspect a session, run `npm run dev -- --debug` (optionally followed by a
+directory). This saves captured context, clean screenshots and trail copies,
+prepared model requests, responses, and timed diagnostics locally. Files remain
+until you delete them; normal runs keep this data in memory.
+
 See [development instructions](docs/development.md) for platform prerequisites,
 provider configuration, explicit desktop tests, and current limitations.

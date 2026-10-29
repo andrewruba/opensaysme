@@ -166,13 +166,56 @@ reasoning provider. Setup explains and asks to enable this sharing. Provider
 charges and data policies apply. The Responses request uses `store: false`;
 provider retention policies still apply.
 
-Screenshots and audio stay in memory locally; no files or application logs are
-created. Frame/context history is released on completion or cancellation. Screen
+By default, screenshots and audio stay in memory locally; no files or application
+logs are created. Frame/context history is released on completion or cancellation. Screen
 image payloads are never printed. Results are JSON on stdout; state, transcript,
 and response feedback appear on stderr. Text and attention metadata can contain
 private content and remain in terminal scrollback or user-created redirects.
 Cancellation aborts requests; data already sent cannot be recalled. `doctor`
 checks key presence only, without authentication, paid requests, or device capture.
+
+## Inspect a debug session
+
+Opt in for the current process only:
+
+```sh
+npm run dev -- --debug
+npm run dev -- --debug ./my-captures
+```
+
+Without a directory argument, debug sessions go under `.opensaysme-debug/` in the
+current directory (ignored by Git). The CLI prints the unique session directory;
+turn results include their `debugDirectory`. Custom output paths are not automatically
+ignored by Git. This flag does not change setup or configuration.
+
+Each session contains `session.jsonl` and a `turns/<turn-id>/` directory for each turn:
+
+- `context.json`: transcript, phrase timing, window/selection context, cursor history,
+  frame bounds, and visual alignment.
+- `request.json`: the prepared prompt and model settings, with image URLs replaced
+  by local file paths. Images remain the exact JPEG bytes prepared for the provider.
+- `result.json`: response, latency, and completed/failed/cancelled/interrupted status.
+- `images/f1-clean.jpg`, `images/f1-trail.jpg`: retained clean frames and available
+  annotated copies, with corresponding files for the other frame IDs.
+
+The session log records startup, capabilities, helper and provider lifecycle,
+request state, failures, cancellation, and cleanup. Entries include a wall timestamp,
+monotonic session time, and a turn ID where applicable. A saved request means it was
+prepared; dispatch and completion events distinguish what happened afterward.
+
+Diagnostic text redacts configured provider keys; authorization headers and raw
+audio are not saved. Screenshot pixels remain unchanged; screenshots and captured
+context can contain private content.
+Completed records remain until you delete them, including failed or cancelled turns.
+Unfinished writes are cleaned up where possible. Directories/files request owner-only
+access on systems supporting Unix permissions; Windows uses inherited directory ACLs.
+
+Debug writes run alongside the voice flow, with a 32 MiB pending queue and an
+8 MiB/10,000-entry session log limit. Disk failures or limits warn and disable or
+skip logging without failing the turn. The destination must support hardlinks
+(standard APFS, ext4, and NTFS do). Shutdown waits at most two seconds to flush;
+slow filesystem operations may settle and clean up later. Delete the debug
+directory when finished.
 
 ## Latency measurements
 

@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 import { createTranscriptionSession, openAITranscription } from '../src/speech/openai.js';
 import { PhraseSegmenter } from '../src/speech/phrases.js';
 import type { TranscriptionPhrase } from '../src/speech/types.js';
+import type { DiagnosticSink } from '../src/diagnostics.js';
 
 class Socket extends EventEmitter {
   readyState: number = WebSocket.OPEN;
@@ -18,11 +19,11 @@ const resolvedSession = { type: 'transcription', audio: { input: {
 } } };
 const cleanups: Array<() => void> = [];
 afterEach(() => { cleanups.splice(0).forEach((fn) => fn()); vi.useRealTimers(); });
-function fixture() {
+function fixture(onDiagnostic?: DiagnosticSink) {
   const socket = new Socket(); const controller = new AbortController(); const partials: string[] = [];
   const phrases: TranscriptionPhrase[] = [];
   const session = createTranscriptionSession({ apiKey: 'fixture-private-key', model: 'gpt-live-transcribe',
-    signal: controller.signal, onPartial: (text) => partials.push(text), onPhrase: (phrase) => phrases.push(phrase) }, () => socket as unknown as WebSocket);
+    signal: controller.signal, onPartial: (text) => partials.push(text), onPhrase: (phrase) => phrases.push(phrase), onDiagnostic }, () => socket as unknown as WebSocket);
   cleanups.push(() => session.close());
   socket.emit('open');
   const ready = () => socket.receive({ type: 'session.updated', session: resolvedSession });
@@ -69,6 +70,53 @@ describe('phrase segmentation', () => {
 });
 
 describe('streaming transcription protocol', () => {
+  it('records connection and phrase timing diagnostics without audio, keys, or transcript text', async () => {
+    const diagnostic = vi.fn<DiagnosticSink>();
+    const f = fixture(diagnostic); f.ready(); await f.session.ready;
+    const audio = pcm(300);
+    f.session.append(audio); f.session.commit();
+    f.socket.receive(commitAck('one')); f.socket.receive(completion('one', 'private transcript'));
+    await expect(f.session.finished).resolves.toBe('private transcript');
+    const events = diagnostic.mock.calls.map(([event]) => event);
+    expect(events.map(({ event }) => event)).toEqual([
+      'connection-started', 'connection-opened', 'session-ready', 'phrase-committed', 'phrase-finalized',
+      'transcription-completed', 'connection-terminating', 'connection-closed',
+    ]);
+    expect(events[3]).toEqual({ component: 'speech', event: 'phrase-committed', data: { startSample: 0, endSample: 7200, boundary: 'stop' } });
+    const serialized = JSON.stringify(events);
+    expect(serialized).not.toMatch(/private transcript|fixture-private-key|Authorization|input_audio_buffer|"audio"|"pcm"/);
+    expect(serialized).not.toContain(audio.toString('base64'));
+  });
+
+  it('diagnoses provider errors, connection errors, cancellation, and timeout using safe metadata only', async () => {
+    const diagnostic = vi.fn<DiagnosticSink>();
+    const provider = fixture(diagnostic); provider.ready();
+    provider.socket.receive({ type: 'error', error: { message: 'fixture-private-key raw provider payload' } });
+    await expect(provider.session.finished).rejects.toThrow('rejected');
+    const connection = fixture(diagnostic);
+    connection.socket.emit('error', new Error('fixture-private-key raw connection error'));
+    await expect(connection.session.finished).rejects.toThrow('connection failed');
+    const cancelled = fixture(diagnostic); cancelled.controller.abort();
+    await expect(cancelled.session.finished).rejects.toThrow('cancelled');
+    vi.useFakeTimers(); const timedOut = fixture(diagnostic);
+    const pending = expect(timedOut.session.finished).rejects.toThrow('within 8 seconds');
+    await vi.advanceTimersByTimeAsync(8000); await pending;
+    const events = diagnostic.mock.calls.map(([event]) => event);
+    expect(events).toContainEqual({ component: 'speech', event: 'transcription-failed', data: { code: 'provider-rejected' } });
+    expect(events).toContainEqual({ component: 'speech', event: 'transcription-failed', data: { code: 'connection-error' } });
+    expect(events).toContainEqual({ component: 'speech', event: 'transcription-cancelled', data: { code: 'cancelled' } });
+    expect(events).toContainEqual({ component: 'speech', event: 'transcription-timed-out', data: { code: 'ready-timeout' } });
+    expect(JSON.stringify(events)).not.toMatch(/fixture-private-key|raw provider|raw connection/);
+  });
+
+  it('continues transcription when the optional diagnostic sink throws', async () => {
+    const f = fixture(() => { throw new Error('diagnostic disk failure'); }); f.ready();
+    await f.session.ready;
+    f.session.append(pcm(100)); f.session.commit();
+    f.socket.receive(commitAck('one')); f.socket.receive(completion('one', 'still works'));
+    await expect(f.session.finished).resolves.toBe('still works');
+  });
+
   it('buffers connection startup, streams before commit, and matches completion to its item', async () => {
     const f = fixture();
     expect(f.socket.sent[0]).toEqual({ type: 'session.update', session: {

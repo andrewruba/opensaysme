@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Command, InvalidArgumentError } from 'commander';
 import { configPath, providerStatus, readConfig } from './config.js';
 import { desktopAdapter } from './desktop/index.js';
@@ -35,13 +36,19 @@ const program = new Command()
   .name('opensaysme')
   .description('Tap-to-talk with visual context and attention history')
   .version(version)
+  .option('--debug [directory]', 'Save local context, model inputs, responses, and diagnostics (default: .opensaysme-debug)', (value: string) => {
+    if (!value.trim()) throw new InvalidArgumentError('Enter a nonempty debug directory.');
+    return resolve(value);
+  })
   .showHelpAfterError()
-  .action(async () => {
+  .action(async (options: { debug?: true | string }) => {
     const config = await readConfig();
     if (!config) throw new Error('Run opensaysme setup first. Desktop probes work without provider configuration.');
     process.stderr.write('OpenSaysMe voice mode. Ctrl+Shift+Space starts/stops; Escape cancels; Ctrl+C quits.\n');
     process.stderr.write('Activated audio streams to OpenAI. Screen/context and cursor history are captured while recording.\n');
     process.stderr.write('After stopping, selected frames and context go to your reasoning provider for a response. No actions are executed.\n');
+    const debugDirectory = options.debug === true ? resolve('.opensaysme-debug') : options.debug;
+    if (debugDirectory) process.stderr.write(`Debug enabled: ${safeText(debugDirectory)}. Context, transcripts, screenshots, prompts, responses, and session diagnostics remain until you delete them.\n`);
     await runVoice(config, stop.signal, (event) => {
       if (event.type === 'state') {
         if (event.state === 'listening' && process.stderr.isTTY) process.stderr.write('\x07');
@@ -55,8 +62,10 @@ const program = new Command()
         json(event);
       }
       else if (event.type === 'cancelled') process.stderr.write('Cancelled.\n');
+      else if (event.type === 'debug') process.stderr.write(`Debug files: ${safeText(event.directory)}\n`);
+      else if (event.type === 'warning') process.stderr.write(`Warning: ${safeText(event.message)}\n`);
       else process.stderr.write(`Error: ${safeText(event.message)}\n`);
-    });
+    }, { debugDirectory });
     console.log('Stopped.');
   });
 

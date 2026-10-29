@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import sharp from 'sharp';
 import type { ReasoningFactory } from '../src/reasoning/types.js';
+import type { DebugSession, DebugTurnInput, DebugTurnResult, DiagnosticEvent, PreparedReasoningRequest } from '../src/diagnostics.js';
 import { VoiceRuntime, type VoiceOutput } from '../src/runtime.js';
 import type { NativeVoiceCommand, DesktopContext } from '../src/desktop/voice-types.js';
 import type { ScreenFrameCapture } from '../src/desktop/visual-types.js';
@@ -15,11 +16,32 @@ function deferred<T>() {
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
+function mockDebugSession() {
+  const events: DiagnosticEvent[] = [];
+  const inputs: Array<{ turnId: string; input: DebugTurnInput }> = [];
+  const requests: Array<{ turnId: string; request: PreparedReasoningRequest }> = [];
+  const results: Array<{ turnId: string; result: DebugTurnResult }> = [];
+  const debug = {
+    directory: '/debug/session',
+    event: vi.fn<DebugSession['event']>((event) => { events.push(structuredClone(event)); }),
+    input: vi.fn<DebugSession['input']>((turnId, input) => { inputs.push({ turnId, input: structuredClone(input) }); }),
+    request: vi.fn<DebugSession['request']>((turnId, request) => { requests.push({ turnId, request: structuredClone(request) }); }),
+    result: vi.fn<DebugSession['result']>((turnId, result) => { results.push({ turnId, result: structuredClone(result) }); }),
+    turnDirectory: (turnId: string) => `/debug/session/turns/${turnId}`,
+    close: vi.fn<DebugSession['close']>(() => new Promise(() => {})),
+  } satisfies DebugSession;
+  return { debug, events, inputs, requests, results };
+}
+const preparedRequest: PreparedReasoningRequest = {
+  model: 'fixture-reasoning', instructions: 'Use the captured desktop context.', store: false, max_output_tokens: 100,
+  input: [{ role: 'user', content: [{ type: 'input_text', text: 'What is this?' }] }],
+};
 const reason: ReasoningFactory = async () => 'Which window?';
 const runtimes: VoiceRuntime[] = [];
 afterEach(() => { for (const runtime of runtimes.splice(0)) runtime.close(); vi.useRealTimers(); });
 function fixture(capture: (signal: AbortSignal) => Promise<DesktopContext> = async () => ({ ...structuredClone(context), capturedAt: new Date().toISOString() }),
-  interpret: ReasoningFactory = reason, captureFrame: () => Promise<ScreenFrameCapture> = async () => { throw new Error('no screen'); }) {
+  interpret: ReasoningFactory = reason, captureFrame: () => Promise<ScreenFrameCapture> = async () => { throw new Error('no screen'); },
+  debug?: DebugSession) {
   let clock = 0;
   const commands: NativeVoiceCommand[] = [];
   const outputs: VoiceOutput[] = [];
@@ -28,7 +50,7 @@ function fixture(capture: (signal: AbortSignal) => Promise<DesktopContext> = asy
   const runtime = new VoiceRuntime({
     input: { ready: Promise.resolve(), done: new Promise(() => {}), send: (command) => commands.push(command), close: async () => {} },
     apiKey: 'fixture-key', model: 'fixture-model', captureContext: capture,
-    captureFrame, reason: interpret,
+    captureFrame, reason: interpret, debug,
     now: () => clock, emit: (output) => outputs.push(output),
     transcribe: (options): TranscriptionSession => {
       const ready = deferred<void>(); const final = deferred<string>();
@@ -44,7 +66,101 @@ function fixture(capture: (signal: AbortSignal) => Promise<DesktopContext> = asy
 const flush = async () => { for (let i = 0; i < 16; i++) await Promise.resolve(); };
 
 describe('live voice turn lifecycle', () => {
+  it('leaves diagnostic callbacks and bundle paths absent by default', async () => {
+    const interpret = vi.fn<ReasoningFactory>(async () => 'The answer.');
+    const f = fixture(undefined, interpret);
+    f.runtime.toggle(); const id = f.id(); await flush();
+    f.runtime.toggle(); f.runtime.handle({ type: 'audio-stopped', turnId: id });
+    f.sessions[0]!.final.resolve('What is this?'); await flush();
+    expect(f.sessions[0]!.options.onDiagnostic).toBeUndefined();
+    expect(interpret.mock.calls[0]![0].onRequest).toBeUndefined();
+    expect(interpret.mock.calls[0]![0].onDiagnostic).toBeUndefined();
+    expect(f.outputs.find((output) => output.type === 'result')).not.toHaveProperty('debugDirectory');
+    expect(f.outputs.some((output) => output.type === 'debug')).toBe(false);
+  });
+
+  it('records context, prepared request, and response without awaiting diagnostic disk work', async () => {
+    const d = mockDebugSession(); const response = deferred<string>();
+    const interpret = vi.fn<ReasoningFactory>((input) => {
+      input.onRequest?.(preparedRequest);
+      input.onDiagnostic?.({ component: 'reasoning', event: 'request-started' });
+      return response.promise;
+    });
+    const f = fixture(undefined, interpret, undefined, d.debug);
+    f.runtime.toggle(); const id = f.id(); await flush();
+    f.time(20); f.runtime.handle({ type: 'audio-started', turnId: id });
+    const audio = Buffer.alloc(4800, 7).toString('base64');
+    f.time(30); f.runtime.handle({ type: 'audio', turnId: id, capturedAt: new Date().toISOString(),
+      startSample: 0, timing: 'estimated', data: audio });
+    f.time(100); f.runtime.toggle(); f.runtime.handle({ type: 'audio-stopped', turnId: id });
+    f.time(170); f.sessions[0]!.final.resolve('What is this?'); await flush();
+    expect(interpret).toHaveBeenCalledOnce();
+    expect(d.inputs).toMatchObject([{ turnId: id, input: { transcript: 'What is this?',
+      history: { contexts: [{ context: { selectedText: 'original selection' } }], audio: { samples: 2400 } }, visual: { frames: [] } } }]);
+    expect(d.requests).toEqual([{ turnId: id, request: preparedRequest }]);
+    expect(d.events).toContainEqual({ component: 'desktop', event: 'first-audio', turnId: id, data: { startSample: 0, timing: 'estimated' } });
+    expect(d.events).toContainEqual({ component: 'reasoning', event: 'request-started', turnId: id, data: undefined });
+    expect(JSON.stringify(d.events)).not.toContain(audio);
+    expect(JSON.stringify(d.inputs)).not.toContain(audio);
+    f.time(200); response.resolve('The answer.'); await flush();
+    const result = f.outputs.find((output) => output.type === 'result');
+    expect(result).toMatchObject({ response: 'The answer.', debugDirectory: d.debug.turnDirectory(id),
+      latency: { reasoningMs: 30, stopToResponseMs: 100, stopToResultMs: 100 } });
+    expect(d.results).toEqual([{ turnId: id, result: { status: 'completed', response: 'The answer.',
+      latency: result?.type === 'result' ? result.latency : undefined } }]);
+    expect(d.debug.close).not.toHaveBeenCalled();
+    expect(f.outputs.at(-1)).toMatchObject({ type: 'state', state: 'ready' });
+    // Queued diagnostics keep their snapshot after normal turn cleanup empties the live history.
+    expect(d.inputs[0]!.input.history.contexts).toHaveLength(1);
+    expect(interpret.mock.calls[0]![0].history.contexts).toEqual([]);
+  });
+
+  it('snapshots partial context and cancellation before model-input preparation', async () => {
+    const d = mockDebugSession(); const f = fixture(undefined, undefined, undefined, d.debug);
+    f.runtime.toggle(); const id = f.id(); await flush();
+    f.sessions[0]!.options.onPartial('unfinished request');
+    f.runtime.cancel(); f.runtime.handle({ type: 'audio-stopped', turnId: id });
+    f.sessions[0]!.final.resolve('late final transcript'); await flush();
+    expect(d.inputs).toMatchObject([{ turnId: id, input: { transcript: 'unfinished request',
+      history: { contexts: [{ context: { selectedText: 'original selection' } }] }, visual: undefined } }]);
+    expect(d.requests).toEqual([]);
+    expect(d.results).toMatchObject([{ turnId: id, result: { status: 'cancelled' } }]);
+    expect(f.outputs.some((output) => output.type === 'result')).toBe(false);
+    expect(f.outputs.at(-1)).toMatchObject({ type: 'state', state: 'ready' });
+  });
+
+  it('retains prepared inputs and records a failed reasoning turn', async () => {
+    const d = mockDebugSession();
+    const f = fixture(undefined, async (input) => { input.onRequest?.(preparedRequest); throw new Error('Reasoning provider unavailable.'); }, undefined, d.debug);
+    f.runtime.toggle(); const id = f.id(); await flush();
+    f.runtime.toggle(); f.runtime.handle({ type: 'audio-stopped', turnId: id });
+    f.sessions[0]!.final.resolve('What is this?'); await flush();
+    f.runtime.handle({ type: 'audio-stopped', turnId: id });
+    expect(d.inputs).toHaveLength(1);
+    expect(d.inputs[0]!.input.transcript).toBe('What is this?');
+    expect(d.inputs[0]!.input.history.contexts).toHaveLength(1);
+    expect(d.requests).toEqual([{ turnId: id, request: preparedRequest }]);
+    expect(d.results).toMatchObject([{ turnId: id, result: { status: 'failed', error: { message: 'Reasoning provider unavailable.' } } }]);
+    expect(f.outputs.some((output) => output.type === 'result')).toBe(false);
+    expect(f.outputs.at(-1)).toMatchObject({ type: 'state', state: 'ready' });
+  });
+
+  it('records an interrupted active turn on close and ignores later speech events', async () => {
+    const d = mockDebugSession(); const f = fixture(undefined, undefined, undefined, d.debug);
+    f.runtime.toggle(); const id = f.id(); await flush();
+    f.sessions[0]!.options.onPartial('unfinished request');
+    f.runtime.close();
+    f.sessions[0]!.options.onPartial('late text');
+    f.sessions[0]!.final.resolve('late final'); await flush();
+    expect(d.inputs).toMatchObject([{ turnId: id, input: { transcript: 'unfinished request' } }]);
+    expect(d.results).toMatchObject([{ turnId: id, result: { status: 'interrupted' } }]);
+    expect(d.events.filter((event) => event.event === 'turn-interrupted')).toHaveLength(1);
+    expect(d.debug.close).not.toHaveBeenCalled(); // runVoice owns the bounded session flush.
+    expect(f.outputs.some((output) => output.type === 'result')).toBe(false);
+  });
+
   it('pairs a complete phrase with full-frame trails, publishes text and metadata, and releases images', async () => {
+    const d = mockDebugSession();
     const data = (await sharp({ create: { width: 100, height: 100, channels: 3, background: 'white' } }).jpeg().toBuffer()).toString('base64');
     const epoch = Date.parse('2026-10-28T12:00:00Z');
     vi.useFakeTimers({ now: epoch });
@@ -56,7 +172,7 @@ describe('live voice turn lifecycle', () => {
       expect(input.history.frames[0]?.image.data).toBe(data);
       return 'The number is 42.';
     }, async () => ({ capturedAt: new Date().toISOString(), display: { id: 'display', bounds: { x: 0, y: 0, width: 200, height: 200 } },
-      image: { mimeType: 'image/jpeg', width: 100, height: 100, data }, warnings: [] }));
+      image: { mimeType: 'image/jpeg', width: 100, height: 100, data }, warnings: [] }), d.debug);
     f.runtime.toggle(); const id = f.id(); await flush();
     f.runtime.handle({ type: 'audio-started', turnId: id });
     for (const atMs of [100, 200]) {
@@ -78,6 +194,9 @@ describe('live voice turn lifecycle', () => {
     expect(JSON.stringify(result)).not.toContain(received?.frames[0]?.image?.data);
     expect(request?.visual.frames).toEqual([]);
     expect(request?.history.frames).toEqual([]);
+    expect(d.inputs[0]!.input.history.frames[0]!.image.data).toBe(data);
+    expect(d.inputs[0]!.input.visual).toEqual(received);
+    expect(d.results).toMatchObject([{ result: { status: 'completed', response: 'The number is 42.' } }]);
   });
 
   it('starts only on activation, streams before stop, and measures the full turn', async () => {
@@ -193,9 +312,10 @@ describe('live voice turn lifecycle', () => {
   });
 
   it('cancels a pending reasoning request, discards attention, and ignores its late response', async () => {
+    const d = mockDebugSession();
     const final = deferred<Awaited<ReturnType<ReasoningFactory>>>();
     let request: Parameters<ReasoningFactory>[0] | undefined;
-    const f = fixture(undefined, async (input) => { request = input; return final.promise; });
+    const f = fixture(undefined, async (input) => { request = input; input.onRequest?.(preparedRequest); return final.promise; }, undefined, d.debug);
     f.runtime.toggle(); const id = f.id(); await flush();
     f.runtime.toggle(); f.runtime.handle({ type: 'audio-stopped', turnId: id });
     f.sessions[0]!.final.resolve('use this'); await flush();
@@ -208,6 +328,9 @@ describe('live voice turn lifecycle', () => {
     final.resolve(await reason(request!)); await flush();
     expect(f.outputs.some((output) => output.type === 'result')).toBe(false);
     expect(f.outputs.at(-1)).toMatchObject({ type: 'state', state: 'ready' });
+    expect(d.inputs).toHaveLength(1);
+    expect(d.requests).toEqual([{ turnId: id, request: preparedRequest }]);
+    expect(d.results).toMatchObject([{ turnId: id, result: { status: 'cancelled' } }]);
   });
 
   it('bounds response latency and remains cancellable if interpretation stalls', async () => {

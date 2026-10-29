@@ -1,6 +1,7 @@
 node_modules/
 dist/
 coverage/
+.opensaysme-debug/
 .env
 .env.*
 !.env.example

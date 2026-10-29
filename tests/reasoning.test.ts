@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AttentionHistory } from '../src/attention.js';
 import { openAIReasoning } from '../src/reasoning/openai.js';
 import type { ReasoningInput } from '../src/reasoning/types.js';
+import type { DiagnosticSink, PreparedReasoningRequest } from '../src/diagnostics.js';
 
 afterEach(() => { vi.useRealTimers(); });
 function history(): AttentionHistory {
@@ -41,6 +42,61 @@ function fixture(fetcher = vi.fn<typeof fetch>().mockResolvedValue(response())) 
 }
 
 describe('natural desktop response', () => {
+  it('exports the exact prepared prompt/settings with file references before dispatch, without headers or image bytes', async () => {
+    const f = fixture();
+    const requests: PreparedReasoningRequest[] = [];
+    const diagnostic = vi.fn<DiagnosticSink>();
+    f.input.onRequest = (request) => requests.push(request);
+    f.input.onDiagnostic = diagnostic;
+    await f.reason(f.input);
+    expect(requests).toHaveLength(1);
+    const wire = JSON.parse(String(f.fetcher.mock.calls[0]![1]!.body));
+    const content = wire.input[0].content as PreparedReasoningRequest['input'][number]['content'];
+    const localImages = ['images/frame-1-clean.jpg', 'images/frame-1-trail.jpg'];
+    let image = 0;
+    for (const part of content) if (part.type === 'input_image') part.image_url = localImages[image++]!;
+    expect(requests[0]).toEqual(wire);
+    expect(JSON.stringify(requests)).not.toMatch(/fixture-secret-value|Authorization|data:image|base64|\/9j\//);
+    const events = diagnostic.mock.calls.map(([entry]) => entry);
+    expect(events.map(({ event }) => event)).toEqual(['request-prepared', 'request-started', 'response-received', 'request-completed']);
+    expect(events[2]).toMatchObject({ component: 'reasoning', data: { status: 200 } });
+    expect(diagnostic.mock.invocationCallOrder[1]).toBeLessThan(f.fetcher.mock.invocationCallOrder[0]!);
+  });
+
+  it('isolates diagnostic mutations and exceptions from the real provider request', async () => {
+    const f = fixture();
+    f.input.onRequest = (request) => {
+      request.model = 'changed by debug callback';
+      request.input[0]!.content.length = 0;
+      throw new Error('debug sink failed');
+    };
+    f.input.onDiagnostic = () => { throw new Error('debug sink failed'); };
+    await expect(f.reason(f.input)).resolves.toContain('42');
+    const wire = JSON.parse(String(f.fetcher.mock.calls[0]![1]!.body));
+    expect(wire.model).toBe('gpt-5.4-mini');
+    expect(wire.input[0].content).toHaveLength(5);
+  });
+
+  it('records rejected and skipped requests without provider bodies, headers, or private errors', async () => {
+    const diagnostic = vi.fn<DiagnosticSink>();
+    const f = fixture(vi.fn<typeof fetch>().mockResolvedValue(new Response('fixture-secret-value private body', {
+      status: 429, headers: { 'x-request-id': 'fixture-secret-value', Authorization: 'fixture-secret-value' },
+    })));
+    f.input.onDiagnostic = diagnostic;
+    await expect(f.reason(f.input)).rejects.toThrow('HTTP 429');
+    expect(diagnostic.mock.calls.map(([entry]) => entry.event)).toContain('request-failed');
+    expect(diagnostic.mock.calls).toContainEqual([{ component: 'reasoning', event: 'response-received', data: { status: 429 } }]);
+    const g = fixture(); g.input.transcript = ' '; g.input.onDiagnostic = diagnostic; g.input.onRequest = vi.fn();
+    await g.reason(g.input);
+    expect(g.input.onRequest).not.toHaveBeenCalled();
+    expect(diagnostic.mock.calls.at(-1)?.[0]).toMatchObject({ event: 'request-skipped', data: { code: 'empty-transcript' } });
+    const h = fixture(); h.input.visual.frames = []; h.input.onDiagnostic = diagnostic; h.input.onRequest = vi.fn();
+    await expect(h.reason(h.input)).rejects.toThrow();
+    expect(h.input.onRequest).not.toHaveBeenCalled();
+    expect(diagnostic.mock.calls.at(-1)?.[0]).toMatchObject({ event: 'request-failed', data: { code: 'invalid-input' } });
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toMatch(/fixture-secret-value|private body|Authorization|x-request-id/);
+  });
+
   it('pairs clean frames, full-size trail images, speech, and timed normalized paths in one request', async () => {
     const f = fixture();
     await expect(f.reason(f.input)).resolves.toBe('The indicated number is 42 (frame-1).');
@@ -185,20 +241,27 @@ describe('natural desktop response', () => {
 
   it('cancels before dispatch and while waiting, and clears its timeout', async () => {
     vi.useFakeTimers();
+    const diagnostic = vi.fn<DiagnosticSink>();
     const before = fixture(); before.controller.abort();
+    before.input.onDiagnostic = diagnostic;
     await expect(before.reason(before.input)).rejects.toThrow('cancelled');
     expect(before.fetcher).not.toHaveBeenCalled();
     const waiting = vi.fn<typeof fetch>((_url, init) => new Promise((_resolve, reject) => {
       init!.signal!.addEventListener('abort', () => reject(new Error('private abort reason')), { once: true });
     }));
     const during = fixture(waiting);
+    during.input.onDiagnostic = diagnostic;
     const cancel = expect(during.reason(during.input)).rejects.toThrow('cancelled');
     during.controller.abort(); await cancel;
     expect(vi.getTimerCount()).toBe(0);
     const timeout = fixture(waiting);
+    timeout.input.onDiagnostic = diagnostic;
     const pending = expect(timeout.reason(timeout.input)).rejects.toThrow('timed out');
     await vi.advanceTimersByTimeAsync(1000); await pending;
     expect(vi.getTimerCount()).toBe(0);
+    expect(diagnostic.mock.calls.filter(([entry]) => entry.event === 'request-cancelled')).toHaveLength(2);
+    expect(diagnostic.mock.calls.at(-1)?.[0].event).toBe('request-timed-out');
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private abort reason');
   });
 
   it('cancels an unfinished response body and releases its reader', async () => {

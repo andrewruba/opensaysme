@@ -1,3 +1,5 @@
+import type { DiagnosticSink } from '../diagnostics.js';
+
 export interface TranscriptionSession {
   ready: Promise<void>;
   finished: Promise<string>;
@@ -22,5 +24,6 @@ export interface TranscriptionOptions {
   /** Full ordered text so completed phrases can correct earlier streaming text. */
   onPartial: (text: string) => void;
   onPhrase: (phrase: TranscriptionPhrase) => void;
+  onDiagnostic?: DiagnosticSink;
 }
 export type TranscriptionFactory = (options: TranscriptionOptions) => TranscriptionSession;
