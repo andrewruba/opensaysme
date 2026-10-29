@@ -10,6 +10,9 @@ desktop probes. See
 
 - Build a cross-platform, CLI-first tool that runs locally and complements
   existing agents. Keep setup in the terminal and desktop feedback minimal.
+- Center the experience on spoken requests and available desktop context.
+  Pointing and selection can clarify references. Keep future inputs such as gaze
+  optional; the core interaction must work without them.
 - Use TypeScript and Node.js for the core. Isolate OS access, provider APIs, and
   agent integrations behind small, typed interfaces.
 - Support user-supplied provider keys and direct provider calls. Keep speech and
@@ -17,8 +20,8 @@ desktop probes. See
 - Treat voice latency as a core UX requirement. Aim for immediate feedback and
   conversational responsiveness. Measure end-to-end delays and minimize serial
   waits; a two-call transcription/reasoning pipeline is not a fixed requirement.
-- Require deliberate activation. Gaze and context identify targets; they do not
-  authorize execution. Resolve ambiguity and confirm consequential actions.
+- Require deliberate activation. Captured context helps interpret requests but
+  does not authorize execution. Resolve ambiguity and confirm consequential actions.
 - Prioritize the interactions in `PLAN.md`. Add abstractions when a concrete
   integration needs them; avoid speculative frameworks and unrelated features.
 

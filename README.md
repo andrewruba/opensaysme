@@ -1,5 +1,5 @@
 # OpenSaysMe
-A more natural way to navigate and direct AI agents using voice, context, and gaze tracking.
+A more natural way to navigate and direct AI agents using voice and desktop context.
 
 ## Why
 
@@ -7,18 +7,19 @@ Speaking to an agent can feel effortless. Finding the right
 conversation, switching windows, and copying context often does not.
 
 This project explores a simpler way to navigate and interact with
-agents: indicate what you mean and say what you want.
+agents: say what you want, with context from what you're working on.
 
 ## What we're exploring
 
-- Look at or select a terminal error:
+- With a terminal error visible, say:
   “Send this to the debugging agent.”
 - Say: “Switch to the agent working on authentication.”
 - Say: “Show me the agent waiting for my input, then take me back here.”
 
-Voice expresses the request. Selections, pointer position, application
-context, and gaze help identify the target. A hotkey or
-other deliberate action initiates the interaction.
+Voice expresses the request. Screen content and application state provide context;
+pointing or selecting can help clarify what you mean. Gaze could supplement that
+context later as an optional input. A hotkey or other deliberate action initiates
+the interaction.
 
 The goal is to complement the mouse and keyboard—not replace them
 or build another coding agent.
@@ -26,7 +27,7 @@ or build another coding agent.
 ## Design goals
 
 - **User control:** Explicit activation, visible targets, and
-  confirmation for consequential actions. Looking alone never
+  confirmation for consequential actions. Context alone never
   authorizes execution.
 - **Privacy:** Local processing where practical, minimal retention,
   and explicit consent for external data transfer.
@@ -39,7 +40,7 @@ The CLI supports tap-to-talk transcription and natural-language responses ground
 in desktop history. Full screenshots are paired with nearby speech phrases and
 timed cursor trails, preserving attention without assigning gestures fixed meanings.
 Trail copies are model input only: there are no crops or on-screen overlays.
-Action execution and gaze capture remain future work.
+Action execution remains future work.
 
 ```sh
 npm ci

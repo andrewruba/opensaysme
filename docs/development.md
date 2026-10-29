@@ -1,9 +1,11 @@
-# Developing the visual attention prototype
+# Developing the voice and desktop context prototype
 
-The CLI records speech with visual context history and timed cursor trajectories,
-then produces a natural-language response. Gestures indicate attention; there are
-no predefined gesture commands, content categories, or required response types.
-Execution, on-screen overlays, and gaze capture remain future work.
+The CLI records a spoken request with desktop context, then produces a
+natural-language response. Screens and application history provide context;
+selections and timed cursor paths can help clarify references. Gestures have no
+predefined command meanings, content categories, or required response types.
+Execution and on-screen overlays remain future work. Gaze may later supplement
+context as an optional input.
 
 Use Node.js 22.20+ and npm:
 
@@ -32,7 +34,8 @@ configuration and provider keys are unchanged.
 ## Voice interaction
 
 - Keep the CLI running and work in another app. Tap **Ctrl+Shift+Space** to begin.
-- Wait for `listening` and its terminal bell, then speak and indicate content.
+- Wait for `listening` and its terminal bell, then say your request. Point or select
+  content when useful; existing desktop context is captured either way.
   Terminal bell behavior depends on terminal settings; no overlay is installed.
 - Tap **Ctrl+Shift+Space** again to stop audio and freeze visual capture. No hold
   is needed. Silence does not automatically finish a turn.
@@ -336,9 +339,10 @@ Linux container, including rendering and X11 integration. A synthetic twelve-fra
 not provider latency. Windows rendering and live provider reference accuracy remain
 unverified. These checks made no paid requests or physical desktop captures.
 
-Manual acceptance: ask about content while moving the pointer around it, then try
-a request spanning several windows. Inspect `visualContext.frames` and compare
-phrase, cursor, and frame times with the response. Repeat during rapid navigation,
+Manual acceptance: ask about visible content using existing context, then try
+pointing or selecting to clarify a reference and a request spanning several windows.
+Inspect `visualContext.frames` and compare phrase, cursor, and frame times with
+the response. Repeat during rapid navigation,
 scrolling, incidental movement, missing screen permission, and multiple displays.
 Try both paused and continuous speech: energy-based phrase boundaries can include
 several referents. Cancel during capture and interpretation, disconnect/retry, and

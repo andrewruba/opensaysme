@@ -1,8 +1,8 @@
 # CLI-first MVP implementation plan
 
 Build a local tool that makes existing agents easier to navigate and interact
-with. Launch it from a terminal, activate it with a hotkey, and use voice plus
-desktop context to express intent and identify what the user means.
+with. Launch it from a terminal, activate it with a hotkey, and speak a request.
+Available desktop context helps resolve what the user means.
 
 ```sh
 opensaysme setup    # Configure providers, keys, hotkey, and agent targets
@@ -16,17 +16,18 @@ access behind platform adapters and agent-specific behavior behind integration
 adapters. Use native helpers where necessary; a graphical helper can be added
 for feedback without making it the application core.
 
-## Current slice: aligned visual attention and natural responses
+## Current slice: aligned speech and desktop context
 
 Implemented: tap-to-talk transcription, bounded full-screen history, timed cursor
 trails, cancellation, and a natural-language OpenAI response. Audio capture clocks
 map final phrases onto the desktop timeline. These are phrase envelopes, not word
 timestamps. Live reference accuracy and response latency need further evaluation.
 
-Treat cursor movement, selections, and later annotations and gaze as evidence of
-attention. Preserve their source and timing; let the model interpret them with the
-whole spoken request and visible content. Avoid gesture-to-command mappings,
-content categories, or a required outcome for every phrase.
+The spoken request carries intent; screen and application history provide context.
+Cursor movement and selections can help clarify references without requiring a
+deliberate gesture. Preserve their source and timing, and interpret them with the
+whole request and visible content. Avoid gesture-to-command mappings, content
+categories, or a required outcome for every phrase.
 
 1. **Retain full visual history.** Keep bounded captures, including repeated images
    that may accompany later speech or movement, plus window/selection changes and
@@ -50,10 +51,11 @@ content categories, or a required outcome for every phrase.
    is unavailable. Measure preparation, reasoning, and stop-to-response latency;
    test rapid navigation, multiple referents, incidental movement, and cancellation.
 
-Acceptance: ask about content while indicating it, then try a request spanning
-multiple windows. Check whether the response uses the relevant historical frames
-and speech intervals, and acknowledges uncertainty where evidence is insufficient.
-No gesture or region needs a predefined semantic category.
+Acceptance: ask about visible content using existing context, then try pointing or
+selecting to clarify a reference and a request spanning multiple windows. Check
+whether the response uses the relevant historical frames and speech intervals,
+and acknowledges uncertainty where evidence is insufficient. No gesture or region
+needs a predefined semantic category.
 
 ## Follow-up: permission setup
 
@@ -114,10 +116,10 @@ restarted. See [the current workaround](docs/development.md#macos-screen-recordi
    parsing, action routing, cancellation, and focus restoration. Manually verify
    the complete hotkey-to-action flow in each supported desktop environment.
 
-Defer the drawing overlay and gaze integration until visual context and cursor
-attention work well. Future gaze should contribute to the same attention timeline
-and remain optional for the MVP. Also defer background-service installation, local
-transcription, broad agent coverage, and general OS automation.
+Keep drawing overlays and gaze as optional future sources of context on the same
+timeline. Prioritize the core voice and desktop context interaction. Also defer
+background-service installation, local transcription, broad agent coverage, and
+general OS automation.
 
 Retain the MIT license and prefer permissive dependencies. Before redistribution,
 audit bundled binaries and model weights separately. The image renderer uses

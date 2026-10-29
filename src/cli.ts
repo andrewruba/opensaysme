@@ -34,7 +34,7 @@ function printReport(report: DesktopReport): void {
 
 const program = new Command()
   .name('opensaysme')
-  .description('Tap-to-talk with visual context and attention history')
+  .description('Tap-to-talk with desktop context')
   .version(version)
   .option('--debug [directory]', 'Save local context, model inputs, responses, and diagnostics (default: .opensaysme-debug)', (value: string) => {
     if (!value.trim()) throw new InvalidArgumentError('Enter a nonempty debug directory.');
