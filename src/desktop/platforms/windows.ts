@@ -2,15 +2,16 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 import { runCommand } from '../process.js';
-import { desktopTestResultSchema, type DesktopReport, type DesktopSnapshot, type DesktopTestResult } from '../types.js';
+import { desktopTestResultSchema, windowInventorySchema, type DesktopReport, type DesktopSnapshot, type DesktopTestResult, type WindowInventory } from '../types.js';
 import { desktopContextSchema, type DesktopContext, type VoiceHelperSpec } from '../voice-types.js';
 import { screenFrameCaptureSchema, type ScreenFrameCapture } from '../visual-types.js';
 
 const helperPath = fileURLToPath(new URL('../../../native/windows/desktop.ps1', import.meta.url));
 const windowId = z.string().refine((value) => {
-  if (!/^win32:[1-9]\d{0,9}:[1-9]\d{0,18}$/.test(value)) return false;
-  const [, processId, handle] = value.split(':');
-  return BigInt(processId!) <= 4_294_967_295n && BigInt(handle!) <= 9_223_372_036_854_775_807n;
+  if (!/^win32:[1-9]\d{0,9}:[1-9]\d{0,18}:[1-9]\d{0,18}$/.test(value)) return false;
+  const [, processId, handle, started] = value.split(':');
+  return BigInt(processId!) <= 4_294_967_295n && BigInt(handle!) <= 9_223_372_036_854_775_807n
+    && BigInt(started!) <= 3_155_378_975_999_999_999n;
 }, 'Invalid Windows window identifier');
 const windowSchema = z.object({
   id: windowId,
@@ -57,7 +58,8 @@ const helperErrorSchema = z.object({
   code: z.enum(['native-failure', 'invalid-target', 'focus-denied', 'selection-unavailable', 'selection-too-large', 'focus-changed']),
 }).strict();
 
-async function invoke(operation: 'probe' | 'inspect' | 'focus' | 'context', args: string[] = [], signal?: AbortSignal): Promise<string> {
+async function invoke(operation: 'probe' | 'inspect' | 'focus' | 'context' | 'list-windows', args: string[] = [], signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   return runCommand('powershell.exe', [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-File', helperPath,
     '-Operation', operation, ...args,
@@ -150,18 +152,27 @@ export async function probeWindows(): Promise<DesktopReport> {
   };
 }
 
-export async function inspectWindows(includeSelection: boolean): Promise<DesktopSnapshot> {
-  const snapshot = parseWindowsSnapshot(await invoke('inspect', includeSelection ? ['-IncludeSelection'] : []));
+export async function listWindowsWindows(signal?: AbortSignal): Promise<WindowInventory> {
+  const response = decode(z.object({ version: z.literal(1), operation: z.literal('list-windows'),
+    inventory: windowInventorySchema }).strict(), await invoke('list-windows', [], signal));
+  if (response.inventory.windows.some((window) => !windowId.safeParse(window.id).success)) {
+    throw new Error('The Windows desktop helper returned an invalid window target.');
+  }
+  return response.inventory;
+}
+
+export async function inspectWindows(includeSelection: boolean, signal?: AbortSignal): Promise<DesktopSnapshot> {
+  const snapshot = parseWindowsSnapshot(await invoke('inspect', includeSelection ? ['-IncludeSelection'] : [], signal));
   if (includeSelection && snapshot.selectedText === undefined) {
     throw new Error('Selected text is unavailable from the current Windows control.');
   }
   return snapshot;
 }
 
-export async function focusWindows(targetId: string): Promise<void> {
+export async function focusWindows(targetId: string, signal?: AbortSignal): Promise<void> {
   const parsed = windowId.safeParse(targetId);
   if (!parsed.success) throw new Error('Use a Windows window ID returned by desktop inspect.');
-  decode(focusSchema, await invoke('focus', ['-TargetId', parsed.data]));
+  decode(focusSchema, await invoke('focus', ['-TargetId', parsed.data], signal));
 }
 
 async function testInput(capability: 'globalHotkey' | 'microphone', durationSeconds: number): Promise<DesktopTestResult> {

@@ -42,9 +42,9 @@ The goal is to complement the mouse and keyboard, not replace them or build anot
 
 ## Status
 
-Early development prototype (macOS). Today it supports tap-to-talk transcription and natural-language responses grounded in desktop history. Full screenshots are paired with nearby speech phrases and timed cursor trails, preserving attention without assigning gestures fixed meanings. Trail copies are model input only: there are no crops or on-screen overlays.
+Early development prototype. Tap-to-talk combines speech with desktop history and a local tool loop: the agent can discover windows, inspect current context, capture the current screen, and focus a verified target. You do not need to name windows or define routing rules. Full screenshots remain paired with nearby speech phrases and timed cursor trails.
 
-History is captured only during an activated turn. Agent integrations and action execution remain future work.
+The voice agent calls desktop tools directly within the local runtime. Background-window inspection, clicking, and agent-specific integrations are future additions; the agent can currently distinguish windows using titles and available desktop context.
 
 <!-- demo video goes here -->
 
@@ -59,7 +59,9 @@ node dist/cli.js setup
 node dist/cli.js       # Requires the API-key environment variable chosen in setup
 ```
 
-Tap Ctrl+Shift+Space to start and stop; Escape cancels. Activated audio streams to OpenAI using your key. After stopping, selected screen frames and attention history go to your independently configured reasoning model for a response. Nothing is executed. Run `npm ci` after updating to install the image-processing dependency; existing visual-sharing configuration and keys still work. macOS screen capture requires Screen Recording permission.
+Tap Ctrl+Shift+Space to start and stop; Escape cancels. Activated audio streams to OpenAI using your key. After stopping, the agent can gather additional evidence and switch windows to fulfill your request. Context and tool results go to your independently configured reasoning provider. macOS screen capture requires Screen Recording permission.
+
+Run `npm run dev -- tools` to inspect the catalog without reading the desktop. See [the tool framework](docs/tools.md) for how to add capabilities.
 
 ## Debugging a session
 

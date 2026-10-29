@@ -1,16 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFile } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import { runCommand } from '../src/desktop/process.js';
-import { captureLinuxContext, captureLinuxFrame, focusLinux, inspectLinux, linuxVoiceHelper, probeLinux, testLinuxHotkey, testLinuxMicrophone } from '../src/desktop/platforms/linux.js';
+import { captureLinuxContext, captureLinuxFrame, focusLinux, inspectLinux, listLinuxWindows, linuxVoiceHelper, probeLinux, testLinuxHotkey, testLinuxMicrophone } from '../src/desktop/platforms/linux.js';
 
+vi.mock('node:fs/promises', () => ({ readFile: vi.fn() }));
 vi.mock('../src/desktop/process.js', () => ({ runCommand: vi.fn() }));
 const run = vi.mocked(runCommand);
+const owner = () => `_NET_WM_PID(CARDINAL) = 77\nWM_CLIENT_MACHINE(STRING) = ${JSON.stringify(hostname())}\n`;
+const stat = (start = '999') => `77 (fixture process) ${['S', ...Array(18).fill('0'), start].join(' ')}`;
+const target = (id = '12345') => `x11:${id}:77:999`;
 
 beforeEach(() => {
   vi.stubEnv('XDG_SESSION_TYPE', 'x11');
   vi.stubEnv('WAYLAND_DISPLAY', '');
   vi.stubEnv('DISPLAY', ':0');
   run.mockReset();
+  vi.mocked(readFile).mockReset().mockResolvedValue(stat());
   run.mockImplementation(async (file, args) => {
+    if (file === 'xprop' && args[0] === '-root') return '_NET_CLIENT_LIST_STACKING(WINDOW): window id # 0x3039, 0x10932\n';
+    if (file === 'xprop' && args[2] === '_NET_WM_PID') return owner();
     if (args[0] === 'version' || args[0] === '--version') return 'installed';
     if (args[0] === 'getactivewindow') return '12345\n';
     if (args[0] === 'getwindowclassname') return 'AgentTerminal\n';
@@ -44,8 +53,8 @@ describe('Linux voice startup and context', () => {
   it('freezes distinct active and pointer window IDs and labels PRIMARY honestly', async () => {
     const signal = new AbortController().signal;
     const context = await captureLinuxContext(signal);
-    expect(context.activeWindow?.id).toBe('12345');
-    expect(context.pointer).toEqual({ x: 45, y: 70, window: { id: '67890', application: 'AgentTerminal', title: 'Example agent' } });
+    expect(context.activeWindow?.id).toBe(target());
+    expect(context.pointer).toEqual({ x: 45, y: 70, window: { id: target('67890'), application: 'AgentTerminal', title: 'Example agent' } });
     expect(context.selectedText).toBe('selected text\n');
     expect(context.warnings).toEqual([expect.stringContaining('may belong to a different window')]);
     expect(Number.isNaN(Date.parse(context.capturedAt))).toBe(false);
@@ -61,7 +70,7 @@ describe('Linux voice startup and context', () => {
       return implementation(file, args, options);
     });
     const context = await captureLinuxContext();
-    expect(context.activeWindow?.id).toBe('12345');
+    expect(context.activeWindow?.id).toBe(target());
     expect(context.pointer).toBeUndefined();
     expect(context.selectedText).toBeUndefined();
     expect(context.warnings).toHaveLength(2);
@@ -74,7 +83,7 @@ describe('Linux voice startup and context', () => {
       ? Promise.resolve('x'.repeat(65537)) : implementation(file, args, options));
     const context = await captureLinuxContext();
     expect(context.selectedText).toBeUndefined();
-    expect(context.pointer?.window?.id).toBe('67890');
+    expect(context.pointer?.window?.id).toBe(target('67890'));
   });
 
   it('honors cancellation before starting any context subprocess', async () => {
@@ -93,7 +102,7 @@ describe('Linux capability detection', () => {
     expect(run.mock.calls.map(([file]) => file)).toEqual(['arecord']);
     run.mockClear();
     await expect(inspectLinux(false)).rejects.toThrow('Wayland');
-    await expect(focusLinux('12345')).rejects.toThrow('Wayland');
+    await expect(focusLinux(target())).rejects.toThrow('Wayland');
     expect(run).not.toHaveBeenCalled();
   });
 
@@ -126,6 +135,7 @@ describe('Linux capability detection', () => {
       ['python3', [expect.stringContaining('native/linux/hotkey.py'), '--probe']],
       ['python3', [expect.stringContaining('native/linux/frame.py'), '--probe']],
       ['xdotool', ['getactivewindow']],
+      ['xprop', ['-id', '12345', '_NET_WM_PID', 'WM_CLIENT_MACHINE']],
     ]);
   });
 
@@ -216,9 +226,9 @@ describe('Linux explicit inspection', () => {
   it('reads metadata without touching selection by default', async () => {
     expect(await inspectLinux(false)).toEqual({
       platform: 'linux',
-      window: { id: '12345', application: 'AgentTerminal', title: 'Example agent' },
+      window: { id: target(), application: 'AgentTerminal', title: 'Example agent' },
     });
-    expect(run.mock.calls.every(([file]) => file === 'xdotool')).toBe(true);
+    expect(run.mock.calls.every(([file]) => ['xdotool', 'xprop'].includes(file))).toBe(true);
   });
 
   it('reads PRIMARY only when requested and preserves selection whitespace', async () => {
@@ -236,6 +246,7 @@ describe('Linux explicit inspection', () => {
     run.mockImplementation(async (file, args) => {
       if (args[0] === 'getactivewindow') return '12345';
       if (args[0] === 'getwindowname') return 'Example agent';
+      if (file === 'xprop' && args[2] === '_NET_WM_PID') return owner();
       if (file === 'xprop') return 'WM_CLASS(STRING) = "agent-terminal", "AgentTerminal"\n';
       throw new Error('Unknown xdotool command');
     });
@@ -254,26 +265,105 @@ describe('Linux explicit inspection', () => {
 });
 
 describe('Linux focus', () => {
-  it.each(['0', '-1', '0x123', '123;echo unsafe', '--help', '4294967296', '12\n34'])('rejects invalid target %s before starting a process', async (target) => {
-    await expect(focusLinux(target)).rejects.toThrow('positive decimal X11 window ID');
+  it.each(['0', '-1', '12345', '0x123', '123;echo unsafe', '--help', '4294967296', '12\n34'])('rejects invalid target %s before starting a process', async (target) => {
+    await expect(focusLinux(target)).rejects.toThrow('X11 window token');
     expect(run).not.toHaveBeenCalled();
   });
 
   it('uses bounded activation and verifies the active window', async () => {
-    await expect(focusLinux('12345')).resolves.toBeUndefined();
+    await expect(focusLinux(target())).resolves.toBeUndefined();
     expect(run.mock.calls).toEqual([
+      ['xprop', ['-id', '12345', '_NET_WM_PID', 'WM_CLIENT_MACHINE'], { timeoutMs: 3000 }],
       ['xdotool', ['windowactivate', '--sync', '12345'], { timeoutMs: 5000 }],
       ['xdotool', ['getactivewindow'], { timeoutMs: 3000 }],
+      ['xprop', ['-id', '12345', '_NET_WM_PID', 'WM_CLIENT_MACHINE'], { timeoutMs: 3000 }],
     ]);
   });
 
   it('reports a rejected focus request even if the helper exits successfully', async () => {
-    await expect(focusLinux('54321')).rejects.toThrow('Could not activate');
+    await expect(focusLinux(target('54321'))).rejects.toThrow('Could not activate');
   });
 
   it('propagates bounded helper failure without reporting focus success', async () => {
     run.mockRejectedValue(new Error('Timed out'));
-    await expect(focusLinux('12345')).rejects.toThrow('Could not activate');
+    await expect(focusLinux(target())).rejects.toThrow('Could not activate');
     expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Linux window discovery and ownership', () => {
+  it('enumerates windows with local process identities without focus or selection', async () => {
+    const signal = new AbortController().signal;
+    const inventory = await listLinuxWindows(signal);
+    expect(inventory.windows.map(({ id }) => id).sort()).toEqual([target(), target('67890')].sort());
+    expect(inventory.warnings).toEqual([]);
+    expect(run.mock.calls.some(([file, args]) => file === 'xsel' || args[0] === 'windowactivate')).toBe(false);
+    expect(run.mock.calls.every(([, , options]) => options?.signal instanceof AbortSignal)).toBe(true);
+  });
+
+  it('reports inaccessible windows as omitted and rejects unavailable EWMH inventory', async () => {
+    const implementation = run.getMockImplementation()!;
+    run.mockImplementation((file, args, options) => args[1] === '67890'
+      ? Promise.reject(new Error('private window failure')) : implementation(file, args, options));
+    expect(await listLinuxWindows()).toMatchObject({ windows: [{ id: target() }], warnings: [expect.stringContaining('omitted')] });
+    run.mockResolvedValue('_NET_CLIENT_LIST_STACKING: not found.');
+    await expect(listLinuxWindows()).rejects.toThrow('EWMH');
+  });
+
+  it('treats an empty window list as valid and deduplicates IDs', async () => {
+    const implementation = run.getMockImplementation()!;
+    run.mockImplementation((file, args, options) => args[0] === '-root'
+      ? Promise.resolve('_NET_CLIENT_LIST_STACKING(WINDOW): window id # 0x3039, 0x3039') : implementation(file, args, options));
+    expect((await listLinuxWindows()).windows).toHaveLength(1);
+    run.mockResolvedValue('_NET_CLIENT_LIST_STACKING(WINDOW): window id # ');
+    expect(await listLinuxWindows()).toEqual({ windows: [], warnings: [] });
+  });
+
+  it('bounds discovery and reports truncation instead of reading every window', async () => {
+    const implementation = run.getMockImplementation()!;
+    run.mockImplementation((file, args, options) => args[0] === '-root'
+      ? Promise.resolve(`_NET_CLIENT_LIST_STACKING(WINDOW): window id # ${Array.from({ length: 130 }, (_, i) => `0x${(i + 1).toString(16)}`).join(', ')}`)
+      : implementation(file, args, options));
+    const inventory = await listLinuxWindows();
+    expect(inventory.windows).toHaveLength(128);
+    expect(inventory.warnings).toEqual([expect.stringContaining('128-window limit')]);
+    expect(run.mock.calls.filter(([, args]) => args[0] === 'getwindowname')).toHaveLength(128);
+  });
+
+  it('refuses remote process hints and malformed inventory without exposing native text', async () => {
+    const implementation = run.getMockImplementation()!;
+    run.mockImplementation((file, args, options) => args[2] === '_NET_WM_PID'
+      ? Promise.resolve('_NET_WM_PID(CARDINAL) = 77\nWM_CLIENT_MACHINE(STRING) = "remote-host"') : implementation(file, args, options));
+    await expect(focusLinux(target())).rejects.toThrow('unavailable or stale');
+    expect(run.mock.calls.some(([, args]) => args[0] === 'windowactivate')).toBe(false);
+    for (const output of ['private data', '_NET_CLIENT_LIST_STACKING(WINDOW): window id # 0xfffffffff']) {
+      run.mockResolvedValue(output);
+      await expect(listLinuxWindows()).rejects.toThrow('Could not list X11 windows');
+    }
+  });
+
+  it('refuses stale ownership before activation and does not trust missing process hints', async () => {
+    vi.mocked(readFile).mockResolvedValue(stat('1000'));
+    await expect(focusLinux(target())).rejects.toThrow('stale');
+    expect(run.mock.calls.some(([, args]) => args[0] === 'windowactivate')).toBe(false);
+    run.mockResolvedValue('_NET_WM_PID: not found.');
+    await expect(inspectLinux(false)).rejects.toThrow('local ownership');
+    const report = await probeLinux();
+    expect(report.capabilities.activeWindow.status).toBe('unavailable');
+  });
+
+  it('passes cancellation through metadata and focus, without falling back after abort', async () => {
+    const controller = new AbortController();
+    const implementation = run.getMockImplementation()!;
+    run.mockImplementation((file, args, options) => {
+      if (args[0] === 'getwindowclassname') { controller.abort(); return Promise.reject(new Error('cancel')); }
+      return implementation(file, args, options);
+    });
+    await expect(inspectLinux(false, controller.signal)).rejects.toThrow();
+    expect(run.mock.calls.some(([, args]) => args[2] === 'WM_CLASS')).toBe(false);
+    run.mockClear();
+    await expect(listLinuxWindows(AbortSignal.abort())).rejects.toThrow();
+    await expect(focusLinux(target(), AbortSignal.abort())).rejects.toThrow();
+    expect(run).not.toHaveBeenCalled();
   });
 });

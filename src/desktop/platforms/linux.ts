@@ -1,7 +1,9 @@
 import { fileURLToPath } from 'node:url';
+import { readFile } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import { z } from 'zod';
 import { runCommand } from '../process.js';
-import { desktopTestResultSchema, type Capability, type DesktopReport, type DesktopSnapshot, type DesktopTestResult } from '../types.js';
+import { desktopTestResultSchema, windowInventorySchema, type Capability, type DesktopReport, type DesktopSnapshot, type DesktopTestResult, type WindowInventory } from '../types.js';
 import { desktopContextSchema, type DesktopContext, type VoiceHelperSpec } from '../voice-types.js';
 import { screenFrameCaptureSchema, type ScreenFrameCapture } from '../visual-types.js';
 
@@ -37,6 +39,28 @@ function windowId(value: string): string {
   return normalized;
 }
 
+const targetIdSchema = z.string().regex(/^x11:[1-9]\d{0,9}:[1-9]\d{0,9}:(?:0|[1-9]\d{0,19})$/)
+  .refine((value) => {
+    const [, id, pid, started] = value.split(':');
+    return Number(id) <= 0xffffffff && Number(pid) <= 2_147_483_647 && BigInt(started!) <= 0xffff_ffff_ffff_ffffn;
+  });
+
+async function windowTargetId(id: string, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
+  const output = await runCommand('xprop', ['-id', id, '_NET_WM_PID', 'WM_CLIENT_MACHINE'], { timeoutMs: 3000, ...(signal ? { signal } : {}) });
+  const owner = /^_NET_WM_PID\(CARDINAL\) = ([1-9]\d{0,9})\r?\nWM_CLIENT_MACHINE\(STRING\) = ("(?:\\.|[^"\\])*")\s*$/.exec(output);
+  if (!owner || Number(owner[1]) > 2_147_483_647 || JSON.parse(owner[2]!) !== hostname()) throw new Error('Missing local X11 window ownership.');
+  signal?.throwIfAborted();
+  const pid = owner[1]!;
+  const stat = await readFile(`/proc/${pid}/stat`, { encoding: 'utf8', signal });
+  signal?.throwIfAborted();
+  // comm can contain spaces and closing parentheses. Starttime is field 22.
+  const fields = stat.slice(stat.lastIndexOf(') ') + 2).trim().split(/\s+/);
+  if (stat.length > 8192 || !stat.startsWith(`${pid} (`) || !/^[RSDTtKWPI]$/.test(fields[0] ?? '')
+    || !/^(?:0|[1-9]\d{0,19})$/.test(fields[19] ?? '')) throw new Error('Missing X11 process identity.');
+  return targetIdSchema.parse(`x11:${id}:${pid}:${fields[19]}`);
+}
+
 async function activeWindowId(signal?: AbortSignal): Promise<string | null> {
   const output = await runCommand('xdotool', ['getactivewindow'], { timeoutMs: 3000, ...(signal ? { signal } : {}) });
   return output.trim() === '0' ? null : windowId(output);
@@ -54,12 +78,65 @@ async function windowApplication(id: string, signal?: AbortSignal): Promise<stri
   try {
     return await runCommand('xdotool', ['getwindowclassname', id], options);
   } catch {
+    signal?.throwIfAborted();
     // Stable distributions can ship xdotool versions predating getwindowclassname.
     const output = await runCommand('xprop', ['-id', id, 'WM_CLASS'], options);
     const match = /^WM_CLASS\(STRING\) = "(?:\\.|[^"\\])*", ("(?:\\.|[^"\\])*")\s*$/.exec(output);
     if (!match?.[1]) throw new Error('The X11 window has no valid WM_CLASS property.');
     return z.string().parse(JSON.parse(match[1]));
   }
+}
+
+async function windowMetadata(id: string, signal?: AbortSignal): Promise<WindowInventory['windows'][number]> {
+  signal?.throwIfAborted();
+  const results = await Promise.allSettled([
+    windowApplication(id, signal),
+    runCommand('xdotool', ['getwindowname', id], { timeoutMs: 3000, ...(signal ? { signal } : {}) }),
+    windowTargetId(id, signal),
+  ]);
+  signal?.throwIfAborted();
+  const [application, title, targetId] = results.map((result) => {
+    if (result.status === 'rejected') throw result.reason;
+    return result.value;
+  });
+  const name = checkedText(application!.trim(), 'Window application', 1024);
+  if (!name) throw new Error('Missing application class.');
+  return { id: targetId!, application: name, title: checkedText(title!.replace(/\r?\n$/, ''), 'Window title', 8192) };
+}
+
+export async function listLinuxWindows(signal?: AbortSignal): Promise<WindowInventory> {
+  requireX11(); signal?.throwIfAborted();
+  const deadline = new AbortController();
+  const combined = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
+  const timer = setTimeout(() => deadline.abort(), 3000);
+  try {
+    const output = await runCommand('xprop', ['-root', '_NET_CLIENT_LIST_STACKING'], { timeoutMs: 3000, signal: combined });
+    const match = /^_NET_CLIENT_LIST_STACKING\(WINDOW\): window id #\s*([^\r\n]*)\s*$/.exec(output);
+    if (!match) throw new Error('Missing EWMH inventory.');
+    const raw = match[1]!.trim();
+    const ids = raw ? raw.split(/,\s*/).map((id) => {
+      if (!/^0x[0-9a-f]{1,8}$/i.test(id)) throw new Error('Invalid X11 window inventory.');
+      return windowId(String(Number.parseInt(id, 16)));
+    }).reverse() : [];
+    const candidates = [...new Set(ids)].slice(0, 128);
+    const windows: WindowInventory['windows'] = [];
+    let index = 0, omitted = false;
+    await Promise.all(Array.from({ length: Math.min(4, candidates.length) }, async () => {
+      while (index < candidates.length && !combined.aborted) {
+        const id = candidates[index++]!;
+        try { windows.push(await windowMetadata(id, combined)); }
+        catch { signal?.throwIfAborted(); omitted = true; }
+      }
+    }));
+    signal?.throwIfAborted();
+    const warnings = [];
+    if (omitted) warnings.push('Some inaccessible windows or windows without local process ownership were omitted.');
+    if (ids.length > 128 || deadline.signal.aborted) warnings.push('Window discovery reached its time or 128-window limit; some windows may be missing.');
+    return windowInventorySchema.parse({ windows, warnings });
+  } catch {
+    signal?.throwIfAborted();
+    throw new Error('Could not list X11 windows. Check xprop, EWMH window-manager support, local ownership hints, and readable /proc identity.');
+  } finally { clearTimeout(timer); }
 }
 
 async function isInstalled(file: string, args: string[]): Promise<boolean> {
@@ -119,15 +196,16 @@ export async function probeLinux(): Promise<DesktopReport> {
   if (hasXdotool) {
     try {
       const id = await activeWindowId();
+      if (id) await windowTargetId(id);
       report.capabilities.activeWindow = id
-        ? { status: 'available', detail: 'Read an active X11 window ID using xdotool.' }
+        ? { status: 'available', detail: 'Read an active X11 window with verified local process identity.' }
         : { status: 'unverified', detail: 'X11 responded, but no window is currently active. Focus a window and retry.' };
       report.capabilities.focusWindow = {
         status: 'unverified',
-        detail: 'xdotool is installed. Use the explicit focus command to verify window-manager activation; doctor does not change focus.',
+        detail: 'Focus requires xdotool, xprop, local ownership hints, and readable /proc identity. Use desktop focus to verify activation; doctor does not change focus.',
       };
     } catch {
-      const detail = 'xdotool could not read a valid active window. Check DISPLAY, X11 authorization, and EWMH window-manager support.';
+      const detail = 'Could not read an active window with local process identity. Check xdotool/xprop, DISPLAY, _NET_WM_PID and WM_CLIENT_MACHINE hints, and readable /proc identity.';
       report.capabilities.activeWindow = unavailable(detail);
       report.capabilities.focusWindow = unavailable(detail);
     }
@@ -148,47 +226,45 @@ export async function probeLinux(): Promise<DesktopReport> {
   return report;
 }
 
-export async function inspectLinux(includeSelection: boolean): Promise<DesktopSnapshot> {
+export async function inspectLinux(includeSelection: boolean, signal?: AbortSignal): Promise<DesktopSnapshot> {
   requireX11();
+  signal?.throwIfAborted();
   const snapshot: DesktopSnapshot = { platform: 'linux', window: null };
   let id: string | null;
   try {
-    id = await activeWindowId();
-    if (id) {
-      const [application, title] = await Promise.all([
-        windowApplication(id),
-        runCommand('xdotool', ['getwindowname', id], { timeoutMs: 3000 }),
-      ]);
-      const applicationName = checkedText(application.trim(), 'Window application', 8192);
-      if (!applicationName) throw new Error('The active window has no application class.');
-      snapshot.window = {
-        id,
-        application: applicationName,
-        title: checkedText(title.replace(/\r?\n$/, ''), 'Window title', 8192),
-      };
-    }
+    id = await activeWindowId(signal);
+    if (id) snapshot.window = await windowMetadata(id, signal);
   } catch (cause) {
-    throw new Error('Could not inspect the X11 active window. Check doctor and install xprop (x11-utils) if your xdotool lacks getwindowclassname.', { cause });
+    signal?.throwIfAborted();
+    throw new Error('Could not inspect the X11 active window. Check xdotool/xprop, local ownership hints, and readable /proc identity.', { cause });
   }
+  signal?.throwIfAborted();
   if (includeSelection) {
     try {
-      const selection = await runCommand('xsel', ['--primary', '--output', '--selectionTimeout', '2000'], { timeoutMs: 3000 });
+      const selection = await runCommand('xsel', ['--primary', '--output', '--selectionTimeout', '2000'], { timeoutMs: 3000, ...(signal ? { signal } : {}) });
       snapshot.selectedText = checkedText(selection, 'Selected text', 65536);
     } catch (cause) {
+      signal?.throwIfAborted();
       throw new Error('Could not read X11 PRIMARY text. Check that xsel is installed and a text selection is available (maximum 64 KiB).', { cause });
     }
   }
   return snapshot;
 }
 
-export async function focusLinux(targetId: string): Promise<void> {
-  const id = windowId(targetId);
+export async function focusLinux(targetId: string, signal?: AbortSignal): Promise<void> {
+  if (!targetIdSchema.safeParse(targetId).success) throw new Error('Use an X11 window token returned by desktop inspect.');
+  const id = targetId.split(':')[1]!;
   requireX11();
+  signal?.throwIfAborted();
   try {
-    await runCommand('xdotool', ['windowactivate', '--sync', id], { timeoutMs: 5000 });
-    if (await activeWindowId() !== id) throw new Error('The requested window did not become active.');
+    if (await windowTargetId(id, signal) !== targetId) throw new Error('Stale X11 window token.');
+    signal?.throwIfAborted();
+    await runCommand('xdotool', ['windowactivate', '--sync', id], { timeoutMs: 5000, ...(signal ? { signal } : {}) });
+    signal?.throwIfAborted();
+    if (await activeWindowId(signal) !== id || await windowTargetId(id, signal) !== targetId) throw new Error('The requested window did not become active.');
   } catch (cause) {
-    throw new Error('Could not activate the requested X11 window. It may have closed or the window manager may have rejected focus.', { cause });
+    signal?.throwIfAborted();
+    throw new Error('Could not activate the requested X11 window. Its local process identity may be unavailable or stale, or the window manager rejected focus.', { cause });
   }
 }
 
@@ -269,15 +345,7 @@ export async function captureLinuxContext(signal?: AbortSignal): Promise<Desktop
   const capturedAt = new Date().toISOString();
   const options = { timeoutMs: 3000, ...(signal ? { signal } : {}) };
   const context: DesktopContext = { platform: 'linux', capturedAt, activeWindow: null, warnings: [] };
-  const metadata = async (id: string): Promise<NonNullable<DesktopContext['activeWindow']>> => {
-    const [application, title] = await Promise.all([
-      windowApplication(id, signal),
-      runCommand('xdotool', ['getwindowname', id], options),
-    ]);
-    const name = checkedText(application.trim(), 'Window application', 1024);
-    if (!name) throw new Error('Missing application class');
-    return { id, application: name, title: checkedText(title.replace(/\r?\n$/, ''), 'Window title', 8192) };
-  };
+  const metadata = (id: string) => windowMetadata(id, signal);
   // Each context sample keeps the identities observed before metadata lookup.
   const [active, pointer, selection] = await Promise.allSettled([
     activeWindowId(signal).then((id) => id ? metadata(id) : null),
@@ -292,7 +360,7 @@ export async function captureLinuxContext(signal?: AbortSignal): Promise<Desktop
   ]);
   signal?.throwIfAborted();
   if (active.status === 'fulfilled') context.activeWindow = active.value;
-  else context.warnings.push('Active-window context is unavailable; check xdotool and xprop.');
+  else context.warnings.push('Active-window context is unavailable; check xdotool/xprop and local process identity.');
   if (pointer.status === 'fulfilled') context.pointer = pointer.value;
   else context.warnings.push('Pointer context is unavailable or changed during capture.');
   if (selection.status === 'fulfilled') {

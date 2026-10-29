@@ -1,5 +1,11 @@
 # Windows desktop and voice helpers
 
+Window discovery enumerates visible top-level windows without changing focus or
+reading selections. It retains up to 128 titled windows and reports omissions.
+Targets include process ID, HWND, and process-start ticks; focus verifies their
+ownership before activation. Tokens are temporary: same-process HWND reuse and
+the check/activation race remain limitations, and inaccessible processes are omitted.
+
 The adapter uses Windows PowerShell 5.1 and the installed .NET Framework. Small
 C# declarations are compiled by `Add-Type`; users do not install a separate
 compiler or download native packages. Run in an unlocked, logged-in desktop.
@@ -8,7 +14,7 @@ restrictions are respected, never changed by the tool.
 Visual capture and physical cursor coordinates require Windows 10 version 1703
 or newer for per-monitor DPI awareness; unsupported capture is reported explicitly.
 
-- `desktop.ps1` reads the foreground Win32 window, focuses a verified window
+- `desktop.ps1` lists windows, reads the foreground Win32 window, focuses a verified window
   handle, and optionally reads selection through UI Automation `TextPattern`.
   Selection is unavailable for controls without that pattern and password fields.
   Selections over 16,384 characters are rejected instead of silently truncated.

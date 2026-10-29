@@ -21,6 +21,11 @@ second reads the current selection; secure fields are rejected. `--focus <id>`
 uses an ID from inspection, raises the matched window, and verifies its focus.
 It never simulates copy/paste or changes the clipboard.
 
+`--list-windows` lists accessible windows of regular applications without raising
+them or reading selections. It retains up to 128 windows, stops discovery after
+three seconds, and reports inaccessible, ambiguous, or truncated results. Rebuild
+the helper after updating to make this operation available.
+
 Window IDs combine process launch identity with a hash of the window's title and
 AX identifier. They are temporary: title changes and app restarts invalidate
 them, and identical windows fail as ambiguous. Applications vary in Accessibility

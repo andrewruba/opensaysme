@@ -18,7 +18,7 @@ access behind platform adapters and agent-specific behavior behind integration
 adapters. Use native helpers where necessary; a graphical helper can be added
 for feedback without making it the application core.
 
-## Current slice: aligned speech and desktop context
+## Implemented: aligned speech and desktop context
 
 Implemented: tap-to-talk transcription, bounded full-screen history, timed cursor
 trails, cancellation, and a natural-language OpenAI response. Audio capture clocks
@@ -42,10 +42,10 @@ categories, or a required outcome for every phrase.
    word times from phrase envelopes.
 3. **Respond naturally.** On the second tap, freeze capture and prepare optional
    full-size trail copies alongside clean screenshots. One independently configured
-   BYOK reasoning call receives the transcript and attention history, then returns
-   text without a fixed action enum. Keep clean images available for reading details.
-   There are no crops, on-screen overlays, or executed actions. Defer the structure
-   for future answers and executable actions until concrete integrations need it.
+   BYOK reasoning loop receives the transcript and attention history, can use
+   available tools, and returns natural text. Keep clean images available for
+   reading details. There are no crops or on-screen overlays; tools describe
+   concrete capabilities without prescribing an outcome for each request.
 4. **Bound work and evaluate.** Keep images in memory only for the active turn by
    default; an explicit `--debug` flag saves context, model inputs/responses, and
    timed session diagnostics for inspection.
@@ -58,6 +58,31 @@ selecting to clarify a reference and a request spanning multiple windows. Check
 whether the response uses the relevant historical frames and speech intervals,
 and acknowledges uncertainty where evidence is insufficient. No gesture or region
 needs a predefined semantic category.
+
+## Current slice: agent tools and evidence gathering
+
+Give the agent capabilities, not user-maintained window names or routing rules.
+For "switch to the frontend," it should discover available windows, examine the
+evidence, and choose a supported target. Gather useful information before asking
+the user; clarify when material ambiguity remains after available inspection.
+
+- Use a typed, validated tool host directly within the local voice runtime.
+  Adding a capability should not require rewriting the provider loop.
+- Start with window discovery, current desktop inspection, current-screen capture,
+  and verified focus. Targets are discovered automatically and rechecked before
+  acting. Keep platform access behind adapters and report limitations explicitly.
+- Let the model choose tools and consume their results until it can respond.
+  Bound requests, tool calls, payloads, and elapsed time. Preserve cancellation,
+  measure tool time, and include each exchange in opt-in debug bundles.
+- Keep ordinary answers free-form. Captured content is evidence, not authority;
+  consequential operations need concrete execution/confirmation policies when added.
+
+Acceptance: with two editor windows, a mocked agent discovers them and selects
+the one whose title/context supports the spoken request, without a configured
+alias. Verify stale targets, cancellation, errors, and ordinary answers.
+Live target inference still needs evaluation. Background-window screenshots and
+accessibility inspection come next for cases where titles are insufficient;
+pointing/clicking and agent integrations can follow through the same interface.
 
 ## Follow-up: permission setup
 
@@ -103,8 +128,8 @@ restarted. See [the current workaround](docs/development.md#macos-screen-recordi
    keep informational responses unrestricted by an action enum.
    Keep context in memory by default and send only the context needed for the request.
 
-4. **Connect useful agent interactions.** Candidate slices include switching to a
-   named agent, returning to the previous window, and providing dictated text or
+4. **Connect useful agent interactions.** Build on discovered windows and context.
+   Candidate slices include inspecting background windows and providing dictated text or
    relevant context to an agent input. Start with a small, documented integration
    available across platforms. Let the request and available capabilities determine
    whether to answer, clarify, navigate, or act. Use supported APIs or links where

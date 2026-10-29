@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, vi } from 'vitest';
 
-import { captureWindowsContext, captureWindowsFrame, focusWindows, parseWindowsSnapshot, probeWindows, testWindowsHotkey, testWindowsMicrophone, windowsVoiceHelper } from '../src/desktop/platforms/windows.js';
+import { captureWindowsContext, captureWindowsFrame, focusWindows, inspectWindows, listWindowsWindows, parseWindowsSnapshot, probeWindows, testWindowsHotkey, testWindowsMicrophone, windowsVoiceHelper } from '../src/desktop/platforms/windows.js';
 import { runCommand } from '../src/desktop/process.js';
 
 vi.mock('../src/desktop/process.js', () => ({ runCommand: vi.fn() }));
@@ -10,7 +10,7 @@ test('parses Windows handles and preserves optional selection without guessing',
   const response = {
     version: 1,
     operation: 'inspect',
-    window: { id: 'win32:123:456', application: 'Terminal', title: 'A terminal' },
+    window: { id: 'win32:123:456:638000000000000000', application: 'Terminal', title: 'A terminal' },
     selectedText: 'selected context',
   };
   assert.deepEqual(parseWindowsSnapshot(JSON.stringify(response)), {
@@ -34,7 +34,7 @@ test('rejects malformed helper output without echoing captured content', () => {
 });
 
 test('rejects untrusted focus IDs before launching PowerShell', async () => {
-  for (const id of ['123', 'win32:1:0', 'win32:1:3; calc.exe', 'win32:4294967296:1', 'win32:1:9999999999999999999']) {
+  for (const id of ['123', 'win32:1:0', 'win32:1:3; calc.exe', 'win32:4294967296:1', 'win32:1:9999999999999999999:638000000000000000', 'win32:123:456', 'win32:1:2:3155378976000000000']) {
     await assert.rejects(focusWindows(id), { message: 'Use a Windows window ID returned by desktop inspect.' });
   }
 });
@@ -97,9 +97,9 @@ test('screen capture rejects missing, malformed, or oversized output without ech
 test('captures separate foreground and pointer windows without losing selection whitespace', async () => {
   const snapshot = {
     platform: 'win32', capturedAt: '2026-10-28T10:00:00.000Z',
-    activeWindow: { id: 'win32:123:456', application: 'Terminal', title: 'Agent' },
+    activeWindow: { id: 'win32:123:456:638000000000000000', application: 'Terminal', title: 'Agent' },
     selectedText: '  selected context\n',
-    pointer: { x: -100, y: 20, window: { id: 'win32:456:789', application: 'Browser', title: 'Reference' } },
+    pointer: { x: -100, y: 20, window: { id: 'win32:456:789:638000000000000000', application: 'Browser', title: 'Reference' } },
     warnings: [],
   };
   vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(snapshot));
@@ -139,4 +139,37 @@ test('persistent helper uses a fixed PowerShell script and respects execution po
   assert.deepEqual(helper.args.slice(0, 4), ['-NoLogo', '-NoProfile', '-NonInteractive', '-File']);
   assert.match(helper.args[4]!, /native[/\\]windows[/\\]voice\.ps1$/);
   assert.equal(helper.args.length, 5);
+});
+
+test('Windows inventory validates the native operation and retains separate project windows', async () => {
+  const inventory = { windows: [456, 789].map((handle) => ({ id: `win32:123:${handle}:638000000000000000`, application: 'Code', title: `Project ${handle}` })), warnings: [] };
+  const signal = new AbortController().signal;
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify({ version: 1, operation: 'list-windows', inventory }));
+  assert.deepEqual(await listWindowsWindows(signal), inventory);
+  const call = vi.mocked(runCommand).mock.lastCall!;
+  assert.deepEqual(call[1].slice(-2), ['-Operation', 'list-windows']);
+  assert.equal(call[2]?.signal, signal);
+});
+
+test('Windows inventory rejects duplicates, oversized output, and invalid identities', async () => {
+  const window = { id: 'win32:123:456:638000000000000000', application: 'Code' };
+  for (const windows of [[window, window], Array(129).fill(window), [{ ...window, id: 'private invalid target' }]]) {
+    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify({ version: 1, operation: 'list-windows', inventory: { windows, warnings: [] } }));
+    await assert.rejects(listWindowsWindows(), /invalid/);
+  }
+});
+
+test('Windows inspection and focus pass cancellation and never launch after abort', async () => {
+  const signal = new AbortController().signal;
+  vi.mocked(runCommand).mockResolvedValueOnce('{"version":1,"operation":"inspect","window":null}');
+  await inspectWindows(false, signal);
+  assert.equal(vi.mocked(runCommand).mock.lastCall?.[2]?.signal, signal);
+  vi.mocked(runCommand).mockResolvedValueOnce('{"version":1,"operation":"focus","focused":true}');
+  await focusWindows('win32:123:456:638000000000000000', signal);
+  assert.equal(vi.mocked(runCommand).mock.lastCall?.[2]?.signal, signal);
+  const previous = vi.mocked(runCommand).mock.calls.length;
+  for (const operation of [() => listWindowsWindows(AbortSignal.abort()), () => inspectWindows(false, AbortSignal.abort()), () => focusWindows('win32:123:456:638000000000000000', AbortSignal.abort())]) {
+    await assert.rejects(operation());
+  }
+  assert.equal(vi.mocked(runCommand).mock.calls.length, previous);
 });

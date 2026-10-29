@@ -48,16 +48,50 @@ function input(): DebugTurnInput {
     pointer: { x: 0.25, y: 0.4, atMs: 400 }, warnings: [] },
   image: { mimeType: 'image/jpeg', width: 1600, height: 900, data: trail.toString('base64') } }], warnings: [] } };
 }
-function request(): PreparedReasoningRequest {
-  return { model: 'test-model', instructions: `Instruction ${key}`, store: false, max_output_tokens: 2500,
+function request() {
+  return { model: 'test-model', instructions: `Instruction ${key}`, store: false as const, max_output_tokens: 2500,
     input: [{ role: 'user', content: [{ type: 'input_text', text: JSON.stringify({ transcript: `Say ${key}`,
       nested: JSON.stringify({ selectedText: `Selected ${key}`, authorization: 'omit authorization', rawAudio: 'omit PCM' }),
       headers: { Authorization: 'omit headers' }, env: { PRIVATE: 'omit environment' }, apiKey: 'omit key',
       audio: { sampleRate: 24000, samples: 4, data: 'omit audio chunk', unknown: 'omit unknown audio' },
       image: { data: `data:image/jpeg;base64,${clean.toString('base64')}` } }) },
     { type: 'input_image', image_url: 'images/f1-clean.jpg', detail: 'high' },
-    { type: 'input_image', image_url: 'images/f1-trail.jpg', detail: 'high' }] }] };
+    { type: 'input_image', image_url: 'images/f1-trail.jpg', detail: 'high' }] }] } satisfies PreparedReasoningRequest;
 }
+
+it('saves each tool exchange and replay request with image files and no opaque reasoning or credentials', async () => {
+  const debug = await createDebugSession(await root(), { secrets: [key] });
+  const event = { callId: 'call/with/path', name: 'capture_screen', arguments: { label: key, authorization: 'omit auth' },
+    effect: 'read' as const, phase: 'started' as const };
+  debug.request('turn', request(), 1);
+  debug.tool!('turn', event);
+  debug.tool!('turn', { ...event, phase: 'completed', durationMs: 15,
+    result: { content: [{ type: 'text', text: 'Current desktop.' }, { type: 'image', mimeType: 'image/jpeg', data: clean.toString('base64') }] } });
+  const replay: PreparedReasoningRequest = { ...request(), input: [
+    { type: 'reasoning', id: 'r1', encrypted_content: 'opaque reasoning that must not be saved', summary: [] },
+    { type: 'function_call_output', call_id: event.callId, output: [
+      { type: 'input_text', text: key },
+      { type: 'input_image', image_url: `data:image/jpeg;base64,${clean.toString('base64')}`, detail: 'high' },
+    ] },
+  ], tools: [{ type: 'function', name: 'capture_screen', description: 'Capture current display.', strict: true,
+    parameters: { type: 'object', properties: {}, required: [], additionalProperties: false } }],
+  tool_choice: 'auto', parallel_tool_calls: false, include: ['reasoning.encrypted_content'] };
+  debug.request('turn', replay, 2); await debug.close();
+  const dir = debug.turnDirectory('turn');
+  const tool = JSON.parse(await readFile(join(dir, 'tool-1-completed.json'), 'utf8'));
+  expect(tool).toMatchObject({ callId: event.callId, arguments: { label: '[REDACTED]' }, durationMs: 15,
+    result: { content: [{ type: 'text' }, { type: 'image', file: 'images/tool-1-completed-image-1.jpg' }] } });
+  expect(await readFile(join(dir, 'images/tool-1-completed-image-1.jpg'))).toEqual(clean);
+  const saved = await readFile(join(dir, 'request-2.json'), 'utf8');
+  expect(saved).not.toMatch(/opaque reasoning|fixture-secret-value|omit auth/);
+  expect(JSON.parse(saved)).toMatchObject({ tools: replay.tools, input: [
+    { type: 'reasoning', id: 'r1' }, { type: 'function_call_output', output: [
+      { text: '[REDACTED]' }, { image_url: 'images/request-2-image-1.jpg' },
+    ] },
+  ] });
+  expect(await readFile(join(dir, 'images/request-2-image-1.jpg'))).toEqual(clean);
+  expect(await readdir(dir)).toEqual(expect.arrayContaining(['request.json', 'request-2.json', 'tool-1-started.json', 'tool-1-completed.json']));
+});
 
 it('exports exact images, full input/request/result, and a timestamped redacted event log', async () => {
   const debug = await createDebugSession(await root(), { secrets: [key] });

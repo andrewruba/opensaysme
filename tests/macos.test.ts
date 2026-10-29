@@ -9,6 +9,8 @@ import {
   captureMacOSFrame,
   macOSVoiceHelper,
   parseMacOSSnapshot,
+  inspectMacOS,
+  listMacOSWindows,
   probeMacOS,
   testMacOSHotkey,
   testMacOSMicrophone,
@@ -123,4 +125,40 @@ test('screen frame errors explain permission and platform limits without exposin
   await assert.rejects(captureMacOSFrame(), /macOS 14 or later/);
   vi.mocked(runCommand).mockResolvedValueOnce('{"image":"private-pixels"}');
   await assert.rejects(captureMacOSFrame(), { message: 'The macOS desktop helper returned an invalid response.' });
+});
+
+test('macOS inventory preserves distinct windows and forwards cancellation without focusing', async () => {
+  const inventory = { windows: ['a', 'b'].map((digest) => ({
+    id: `mac:123:1700000000000:${digest.repeat(64)}`, application: 'Code', title: `${digest} project`,
+  })), warnings: ['Some inaccessible or ambiguous windows were omitted.'] };
+  const signal = new AbortController().signal;
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(inventory));
+  assert.deepEqual(await listMacOSWindows(signal), inventory);
+  assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.slice(1), [['--list-windows'], { timeoutMs: 4000, signal }]);
+});
+
+test('macOS inventory rejects duplicate, excessive, or invalid native targets', async () => {
+  const window = { id: `mac:123:1700000000000:${'a'.repeat(64)}`, application: 'Code' };
+  for (const windows of [[window, window], Array(129).fill(window), [{ ...window, id: 'private invalid target' }]]) {
+    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify({ windows, warnings: [] }));
+    await assert.rejects(listMacOSWindows(), /invalid/);
+  }
+  vi.mocked(runCommand).mockResolvedValueOnce('{"error":"permission-required"}');
+  await assert.rejects(listMacOSWindows(), /Enable Accessibility/);
+});
+
+test('macOS inspection and focus pass cancellation and never launch after abort', async () => {
+  const id = `mac:123:1700000000000:${'a'.repeat(64)}`;
+  const signal = new AbortController().signal;
+  vi.mocked(runCommand).mockResolvedValueOnce('{"platform":"darwin","window":null}');
+  await inspectMacOS(false, signal);
+  assert.equal(vi.mocked(runCommand).mock.lastCall?.[2]?.signal, signal);
+  vi.mocked(runCommand).mockResolvedValueOnce('{"ok":true}');
+  await focusMacOS(id, signal);
+  assert.equal(vi.mocked(runCommand).mock.lastCall?.[2]?.signal, signal);
+  const previous = vi.mocked(runCommand).mock.calls.length;
+  for (const operation of [() => listMacOSWindows(AbortSignal.abort()), () => inspectMacOS(false, AbortSignal.abort()), () => focusMacOS(id, AbortSignal.abort())]) {
+    await assert.rejects(operation());
+  }
+  assert.equal(vi.mocked(runCommand).mock.calls.length, previous);
 });

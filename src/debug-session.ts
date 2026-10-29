@@ -5,6 +5,7 @@ import { performance } from 'node:perf_hooks';
 import { z } from 'zod';
 import { screenFrameCaptureSchema, type ScreenFrameCapture } from './desktop/visual-types.js';
 import type { DebugSession, DebugTurnInput, PreparedReasoningRequest } from './diagnostics.js';
+import type { ToolEvent } from './tools/types.js';
 
 const identifier = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const time = z.number().finite().nonnegative();
@@ -18,22 +19,31 @@ const alignmentSchema = z.object({
 const requestSchema = z.object({
   model: z.string().min(1).max(256), instructions: z.string().max(65_536), store: z.literal(false),
   max_output_tokens: z.number().int().positive().max(32_768),
-  input: z.array(z.object({ role: z.literal('user'), content: z.array(z.union([
-    z.object({ type: z.literal('input_text'), text: z.string().max(1024 * 1024) }),
-    z.object({ type: z.literal('input_image'), image_url: z.string().regex(/^images\/[A-Za-z0-9_-]{1,128}-(clean|trail)\.jpg$/), detail: z.literal('high') }),
-  ])).max(64) })).max(1),
+  tools: z.array(z.object({ type: z.literal('function'), name: identifier, description: z.string().max(4096),
+    parameters: z.record(z.string(), z.unknown()), strict: z.literal(true) })).max(32).optional(),
+  tool_choice: z.enum(['auto', 'none']).optional(), parallel_tool_calls: z.literal(false).optional(),
+  include: z.array(z.string().max(128)).max(8).optional(),
+  input: z.array(z.record(z.string(), z.unknown())).max(128),
+});
+const toolEventSchema = z.object({
+  callId: z.string().min(1).max(512), name: identifier, arguments: z.record(z.string(), z.unknown()),
+  effect: z.enum(['read', 'focus']), phase: z.enum(['started', 'completed']), durationMs: time.optional(),
+  result: z.object({ isError: z.boolean().optional(), content: z.array(z.union([
+    z.object({ type: z.literal('text'), text: z.string().max(512 * 1024) }),
+    z.object({ type: z.literal('image'), mimeType: z.literal('image/jpeg'), data: z.string().max(1_400_000) }),
+  ])).max(8) }).optional(),
 });
 const resultSchema = z.object({
   status: z.enum(['completed', 'cancelled', 'failed', 'interrupted']), response: z.string().max(65_536).optional(),
   error: z.object({ component: z.string().max(128).optional(), code: z.string().max(128).optional(), message: z.string().max(4096).optional() }).optional(),
   latency: z.record(z.string().max(128), z.number().finite().optional()).optional(),
 });
-const reserved = /^(?:api.?key(?:env)?|secret|credential.*|authorization|auth|headers?|environment|env|raw.?audio|audio.?data|pcm|token|access.?token|refresh.?token|password|cookie|stack|cause)$/i;
+const reserved = /^(?:api.?key(?:env)?|secret|credential.*|authorization|auth|headers?|environment|env|raw.?audio|audio.?data|pcm|token|access.?token|refresh.?token|password|cookie|stack|cause|encrypted_content)$/i;
 const eventFields = new Set(['state', 'phase', 'code', 'message', 'status', 'provider', 'model', 'durationMs', 'elapsedMs',
   'atMs', 'receivedAtMs', 'bytes', 'samples', 'startSample', 'endSample', 'sampleRate', 'timing', 'count', 'frames',
   'frameCount', 'contextCount', 'cursorCount', 'phraseCount', 'textLength', 'boundary', 'attempt', 'httpStatus', 'reason', 'size',
   'kind', 'phraseId', 'startMs', 'endMs', 'characters', 'trailCopies', 'requestId', 'capability', 'platform', 'session',
-  'speechModel', 'reasoningModel', 'speechKeyPresent', 'reasoningKeyPresent', 'phrases']);
+  'speechModel', 'reasoningModel', 'speechKeyPresent', 'reasoningKeyPresent', 'phrases', 'step', 'tool', 'callId', 'effect']);
 const pendingLimit = 32 * 1024 * 1024;
 const audioFields = new Set(['sampleRate', 'samples', 'durationMs', 'firstCapturedAtMs', 'lastCapturedAtMs', 'firstReceivedAtMs', 'maxDeliveryLagMs', 'timing']);
 type File = { name: string; data: Buffer | string };
@@ -76,6 +86,38 @@ function imageBytes(image: ScreenFrameCapture['image']): Buffer {
   if (bytes.length > 1_000_000 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff
     || bytes.toString('base64') !== parsed.data) throw new Error('Invalid debug image.');
   return bytes;
+}
+
+/** Preserve tool images as files, including images replayed in later requests. */
+function snapshotToolData(value: unknown, prefix: string): { metadata: unknown; images: File[] } {
+  const images: File[] = [];
+  let bytes = 0;
+  const save = (data: string) => {
+    const image = imageBytes({ mimeType: 'image/jpeg', width: 1, height: 1, data });
+    bytes += image.length;
+    if (bytes > 16 * 1024 * 1024) throw new Error('Debug tool image limit exceeded.');
+    const name = `images/${prefix}-image-${images.length + 1}.jpg`;
+    images.push({ name, data: image }); return name;
+  };
+  const visit = (item: unknown, depth: number): unknown => {
+    if (depth > 24) throw new Error('Debug tool nesting limit exceeded.');
+    if (Array.isArray(item)) return item.map((entry) => visit(entry, depth + 1));
+    if (!item || typeof item !== 'object') return item;
+    const entry = item as Record<string, unknown>;
+    if (entry.type === 'image' && entry.mimeType === 'image/jpeg' && typeof entry.data === 'string') {
+      return { type: 'image', mimeType: 'image/jpeg', file: save(entry.data) };
+    }
+    const result = Object.fromEntries(Object.entries(entry).filter(([key]) => !reserved.test(key))
+      .map(([key, child]) => [key, visit(child, depth + 1)]));
+    if (result.type === 'input_image') {
+      const url = result.image_url;
+      if (typeof url !== 'string') throw new Error('Invalid debug image reference.');
+      if (url.startsWith('data:image/jpeg;base64,')) result.image_url = save(url.slice('data:image/jpeg;base64,'.length));
+      else if (!/^images\/[A-Za-z0-9_-]{1,128}\.jpg$/.test(url)) throw new Error('Invalid debug image reference.');
+    }
+    return result;
+  };
+  return { metadata: visit(value, 0), images };
 }
 
 function snapshotInput(input: DebugTurnInput) {
@@ -149,6 +191,7 @@ function session(directory: string, options: { secrets?: string[]; onWarning?: (
   const started = performance.now(), abort = new AbortController();
   const secrets = [...new Set(options.secrets?.filter(Boolean))].sort((a, b) => b.length - a.length);
   const queue: Job[] = [], records = new Set<string>(), temporary = new Set<string>();
+  const calls = new Map<string, Map<string, number>>();
   let accepting = true, disabled = false, warned = false, pendingBytes = 0, logBytes = 0, events = 0;
   let draining: Promise<void> | undefined, closing: Promise<void> | undefined;
   const warning = () => {
@@ -228,7 +271,28 @@ function session(directory: string, options: { secrets?: string[]; onWarning?: (
       const { metadata, images } = snapshotInput(input);
       return [...images, { name: 'context.json', data: json(metadata) }];
     }),
-    request: (turnId, request: PreparedReasoningRequest) => record(turnId, 'request', () => [{ name: 'request.json', data: json(requestSchema.parse(request)) }]),
+    request: (turnId, request: PreparedReasoningRequest, step = 1) => record(turnId, `request-${step}`, () => {
+      z.number().int().min(1).max(6).parse(step);
+      const { metadata, images } = snapshotToolData(requestSchema.parse(request), `request-${step}`);
+      return [...images, { name: step === 1 ? 'request.json' : `request-${step}.json`, data: json(metadata) }];
+    }),
+    tool: (turnId, event: ToolEvent) => {
+      if (!accepting || disabled) return;
+      try {
+        identifier.parse(turnId);
+        const parsed = toolEventSchema.parse(event);
+        const turnCalls = calls.get(turnId) ?? new Map<string, number>();
+        calls.set(turnId, turnCalls);
+        const number = turnCalls.get(parsed.callId) ?? turnCalls.size + 1;
+        if (number > 5) throw new Error('Debug tool count exceeded.');
+        turnCalls.set(parsed.callId, number);
+        const name = `tool-${number}-${parsed.phase}`;
+        record(turnId, name, () => {
+          const { metadata, images } = snapshotToolData(parsed, name);
+          return [...images, { name: `${name}.json`, data: json(metadata) }];
+        });
+      } catch { warning(); }
+    },
     result: (turnId, result) => record(turnId, 'result', () => [{ name: 'result.json', data: json(resultSchema.parse(result)) }]),
     close: () => closing ??= (async () => {
       accepting = false;

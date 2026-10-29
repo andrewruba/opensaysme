@@ -9,6 +9,7 @@ import { openAIReasoning } from './reasoning/openai.js';
 import { createDebugSession } from './debug-session.js';
 import type { DebugSession } from './diagnostics.js';
 import { capabilityNames } from './desktop/types.js';
+import { createDesktopTools } from './tools/desktop.js';
 
 export async function runVoice(config: Config, signal: AbortSignal, emit: (output: VoiceOutput) => void,
   options: { debugDirectory?: string } = {}): Promise<void> {
@@ -52,7 +53,7 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
     if (signal.aborted) return;
     const input = startVoiceHelper(spec, (event) => runtime.handle(event));
     const runtime = new VoiceRuntime({ input, transcribe: openAITranscription, captureContext: adapter.captureContext,
-      captureFrame: adapter.captureFrame, reason,
+      captureFrame: adapter.captureFrame, reason, createTools: () => createDesktopTools(adapter),
       debug, apiKey, model: config.speech.model, emit });
     let resolveStopped!: () => void;
     const stopped = new Promise<void>((resolve) => { resolveStopped = resolve; });

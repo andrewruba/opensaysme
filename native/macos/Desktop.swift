@@ -30,6 +30,11 @@ struct Window: Encodable {
     let title: String?
 }
 
+struct WindowInventory: Encodable {
+    let windows: [Window]
+    let warnings: [String]
+}
+
 struct Snapshot: Encodable {
     let platform = "darwin"
     let window: Window?
@@ -98,6 +103,41 @@ func targetID(_ application: NSRunningApplication, _ window: AXUIElement) throws
     let data = try JSONSerialization.data(withJSONObject: [identifier, title])
     let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     return "mac:\(application.processIdentifier):\(Int64(launched.timeIntervalSince1970 * 1000)):\(digest)"
+}
+
+func listWindows() throws -> WindowInventory {
+    try requireAccessibility()
+    var found: [Window] = []
+    var omitted = false
+    var limited = false
+    let deadline = Date().addingTimeInterval(3)
+    for application in NSWorkspace.shared.runningApplications where application.activationPolicy == .regular {
+        if found.count >= 128 || Date() >= deadline { limited = true; break }
+        let app = applicationElement(application)
+        AXUIElementSetMessagingTimeout(app, 0.15)
+        guard let windows = try? attribute(app, kAXWindowsAttribute) as? [AXUIElement] else {
+            omitted = true
+            continue
+        }
+        var candidates: [Window] = []
+        for window in windows {
+            if found.count + candidates.count >= 128 || Date() >= deadline { limited = true; break }
+            AXUIElementSetMessagingTimeout(window, 0.15)
+            guard let id = try? targetID(application, window) else { omitted = true; continue }
+            candidates.append(Window(id: id, application: String((application.localizedName ?? "Application").prefix(1024)),
+                title: stringAttribute(window, kAXTitleAttribute).map { String($0.prefix(16384)) }))
+        }
+        // The focus helper cannot disambiguate identical AX identifiers/titles.
+        let counts = Dictionary(grouping: candidates, by: { $0.id })
+        for candidate in candidates {
+            if counts[candidate.id]?.count == 1 { found.append(candidate) }
+            else { omitted = true }
+        }
+    }
+    var warnings: [String] = []
+    if omitted { warnings.append("Some inaccessible or ambiguous windows were omitted.") }
+    if limited { warnings.append("Window discovery reached its time or 128-window limit; some windows may be missing.") }
+    return WindowInventory(windows: found, warnings: warnings)
 }
 
 func focusedElement(_ app: AXUIElement) throws -> AXUIElement {
@@ -456,6 +496,7 @@ struct DesktopMain {
             case ["--probe"]: try output(probe())
             case ["--inspect"]: try output(inspect(includeSelection: false))
             case ["--inspect-selection"]: try output(inspect(includeSelection: true))
+            case ["--list-windows"]: try output(listWindows())
             case ["--context"]: try output(captureContext())
             case ["--frame"]: try output(captureFrame())
             case ["--voice"]: VoiceSession().run()
@@ -468,7 +509,7 @@ struct DesktopMain {
                 }
                 try output(args[0] == "--test-hotkey" ? testHotkey(seconds: seconds) : testMicrophone(seconds: seconds))
             default:
-                throw DesktopError("Expected --probe, --inspect, --inspect-selection, --context, --frame, --voice, --focus <target-id>, --test-hotkey <seconds>, or --test-microphone <seconds>.")
+                throw DesktopError("Expected --probe, --inspect, --inspect-selection, --list-windows, --context, --frame, --voice, --focus <target-id>, --test-hotkey <seconds>, or --test-microphone <seconds>.")
             }
         } catch let error as VisualCaptureError {
             try? output(["error": error.rawValue])

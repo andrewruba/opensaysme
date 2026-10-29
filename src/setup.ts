@@ -22,7 +22,8 @@ export async function setup(signal?: AbortSignal, replace = false): Promise<void
     + 'While recording, screen frames, window/selection context, and cursor paths are captured.\n'
     + 'After stopping, selected frames, attention history, and the transcript go to your\n'
     + 'reasoning provider for a response. Screen content can include private data.\n'
-    + 'Nothing is executed. Capture stays in memory; the response appears in the terminal.\n'
+    + 'The agent can inspect more desktop context and switch windows for your request.\n'
+    + 'Tool results may also go to your provider. Capture stays in memory by default.\n'
     + 'Setup stores an environment-variable name, never your key, and makes no API request.', 'Voice mode');
   const apiKeyEnv = answer(await text({
     signal,
@@ -34,7 +35,7 @@ export async function setup(signal?: AbortSignal, replace = false): Promise<void
     message: 'Environment variable containing your OpenAI reasoning API key', initialValue: apiKeyEnv,
     validate: (value) => value && /^[A-Z_][A-Z0-9_]{0,127}$/.test(value) ? undefined : 'Enter an uppercase environment-variable name, not a key value.',
   }));
-  const model = answer(await text({ signal, message: 'Reasoning model with image input', initialValue: defaultReasoningModel,
+  const model = answer(await text({ signal, message: 'Reasoning model with image input and function calling', initialValue: defaultReasoningModel,
     validate: (value) => value?.trim() ? undefined : 'Enter a compatible model identifier.',
   }));
   if (!answer(await confirm({ signal, message: 'Enable sharing captured screen/context with your reasoning provider after each turn?', initialValue: false }))) {

@@ -38,6 +38,16 @@ export const desktopSnapshotSchema = z.object({
 });
 export type DesktopSnapshot = z.infer<typeof desktopSnapshotSchema>;
 
+export const windowInventorySchema = z.object({
+  windows: z.array(z.object({
+    id: z.string().min(1).max(512), application: z.string().min(1).max(1024),
+    title: z.string().max(16_384).optional(),
+  }).strict()).max(128),
+  warnings: z.array(z.string().max(1024)).max(16),
+}).strict().refine((inventory) => new Set(inventory.windows.map(({ id }) => id)).size === inventory.windows.length,
+  'Window IDs must be unique');
+export type WindowInventory = z.infer<typeof windowInventorySchema>;
+
 export const desktopTestResultSchema = z.object({
   capability: z.enum(['globalHotkey', 'microphone']),
   status: z.enum(['passed', 'not-observed', 'unavailable']),
@@ -48,8 +58,9 @@ export type DesktopTestResult = z.infer<typeof desktopTestResultSchema>;
 
 export interface DesktopAdapter {
   probe(): Promise<DesktopReport>;
-  inspect(includeSelection: boolean): Promise<DesktopSnapshot>;
-  focus(targetId: string): Promise<void>;
+  listWindows(signal?: AbortSignal): Promise<WindowInventory>;
+  inspect(includeSelection: boolean, signal?: AbortSignal): Promise<DesktopSnapshot>;
+  focus(targetId: string, signal?: AbortSignal): Promise<void>;
   testHotkey(durationSeconds: number): Promise<DesktopTestResult>;
   testMicrophone(durationSeconds: number): Promise<DesktopTestResult>;
   voiceHelper(): Promise<VoiceHelperSpec>;

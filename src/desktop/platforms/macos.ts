@@ -10,9 +10,11 @@ import {
   desktopReportSchema,
   desktopSnapshotSchema,
   desktopTestResultSchema,
+  windowInventorySchema,
   type DesktopReport,
   type DesktopSnapshot,
   type DesktopTestResult,
+  type WindowInventory,
 } from '../types.js';
 
 const helperPath = fileURLToPath(new URL('../../../native/macos/bin/opensaysme-desktop', import.meta.url));
@@ -43,7 +45,9 @@ async function requireHelper(): Promise<void> {
 }
 
 async function invoke(args: string[], timeoutMs = 10_000, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   await requireHelper();
+  signal?.throwIfAborted();
   return runCommand(helperPath, args, { timeoutMs, signal });
 }
 
@@ -94,19 +98,27 @@ export async function probeMacOS(): Promise<DesktopReport> {
   }
 }
 
-export async function inspectMacOS(includeSelection: boolean): Promise<DesktopSnapshot> {
-  const result = parseMacOSSnapshot(await invoke([includeSelection ? '--inspect-selection' : '--inspect']));
+export async function listMacOSWindows(signal?: AbortSignal): Promise<WindowInventory> {
+  const inventory = decode(windowInventorySchema, await invoke(['--list-windows'], 4_000, signal));
+  if (inventory.windows.some((window) => !targetIdSchema.safeParse(window.id).success)) {
+    throw new Error('The macOS desktop helper returned an invalid window target.');
+  }
+  return inventory;
+}
+
+export async function inspectMacOS(includeSelection: boolean, signal?: AbortSignal): Promise<DesktopSnapshot> {
+  const result = parseMacOSSnapshot(await invoke([includeSelection ? '--inspect-selection' : '--inspect'], 10_000, signal));
   if (includeSelection && result.selectedText === undefined) {
     throw new Error('Selected text is unavailable from the current macOS control.');
   }
   return result;
 }
 
-export async function focusMacOS(targetId: string): Promise<void> {
+export async function focusMacOS(targetId: string, signal?: AbortSignal): Promise<void> {
   if (!targetIdSchema.safeParse(targetId).success) {
     throw new Error('Use a macOS window ID returned by desktop inspect.');
   }
-  decode(focusResultSchema, await invoke(['--focus', targetId]));
+  decode(focusResultSchema, await invoke(['--focus', targetId], 10_000, signal));
 }
 
 async function test(capability: 'globalHotkey' | 'microphone', durationSeconds: number): Promise<DesktopTestResult> {

@@ -6,6 +6,7 @@ import { VoiceRuntime, type VoiceOutput } from '../src/runtime.js';
 import type { NativeVoiceCommand, DesktopContext } from '../src/desktop/voice-types.js';
 import type { ScreenFrameCapture } from '../src/desktop/visual-types.js';
 import type { TranscriptionOptions, TranscriptionSession } from '../src/speech/types.js';
+import type { ToolHost } from '../src/tools/types.js';
 
 const context: DesktopContext = { platform: 'test', capturedAt: '2026-10-28T00:00:00.000Z',
   activeWindow: { id: 'one', application: 'Editor' }, selectedText: 'original selection',
@@ -26,6 +27,7 @@ function mockDebugSession() {
     event: vi.fn<DebugSession['event']>((event) => { events.push(structuredClone(event)); }),
     input: vi.fn<DebugSession['input']>((turnId, input) => { inputs.push({ turnId, input: structuredClone(input) }); }),
     request: vi.fn<DebugSession['request']>((turnId, request) => { requests.push({ turnId, request: structuredClone(request) }); }),
+    tool: vi.fn(),
     result: vi.fn<DebugSession['result']>((turnId, result) => { results.push({ turnId, result: structuredClone(result) }); }),
     turnDirectory: (turnId: string) => `/debug/session/turns/${turnId}`,
     close: vi.fn<DebugSession['close']>(() => new Promise(() => {})),
@@ -41,7 +43,7 @@ const runtimes: VoiceRuntime[] = [];
 afterEach(() => { for (const runtime of runtimes.splice(0)) runtime.close(); vi.useRealTimers(); });
 function fixture(capture: (signal: AbortSignal) => Promise<DesktopContext> = async () => ({ ...structuredClone(context), capturedAt: new Date().toISOString() }),
   interpret: ReasoningFactory = reason, captureFrame: () => Promise<ScreenFrameCapture> = async () => { throw new Error('no screen'); },
-  debug?: DebugSession) {
+  debug?: DebugSession, createTools?: () => ToolHost) {
   let clock = 0;
   const commands: NativeVoiceCommand[] = [];
   const outputs: VoiceOutput[] = [];
@@ -50,7 +52,7 @@ function fixture(capture: (signal: AbortSignal) => Promise<DesktopContext> = asy
   const runtime = new VoiceRuntime({
     input: { ready: Promise.resolve(), done: new Promise(() => {}), send: (command) => commands.push(command), close: async () => {} },
     apiKey: 'fixture-key', model: 'fixture-model', captureContext: capture,
-    captureFrame, reason: interpret, debug,
+    captureFrame, reason: interpret, debug, createTools,
     now: () => clock, emit: (output) => outputs.push(output),
     transcribe: (options): TranscriptionSession => {
       const ready = deferred<void>(); const final = deferred<string>();
@@ -66,6 +68,58 @@ function fixture(capture: (signal: AbortSignal) => Promise<DesktopContext> = asy
 const flush = async () => { for (let i = 0; i < 16; i++) await Promise.resolve(); };
 
 describe('live voice turn lifecycle', () => {
+  it('uses a fresh tool session for each turn, exposes progress, and records multiple requests', async () => {
+    const d = mockDebugSession();
+    const hosts: Array<ToolHost & { close: ReturnType<typeof vi.fn> }> = [];
+    const createTools = vi.fn(() => {
+      const host = { list: () => [], call: vi.fn<ToolHost['call']>(async () => ({ content: [{ type: 'text', text: 'Verified.' }] })), close: vi.fn() };
+      hosts.push(host); return host;
+    });
+    const interpret: ReasoningFactory = async (input) => {
+      input.onRequest?.(preparedRequest, 1);
+      const event = { callId: 'call-1', name: 'focus_window', arguments: { windowId: 'window-2' }, effect: 'focus' as const };
+      input.onTool?.({ ...event, phase: 'started' });
+      const result = await input.tools!.call(event.name, event.arguments, input.signal);
+      input.onTool?.({ ...event, phase: 'completed', result, durationMs: 12 });
+      input.onRequest?.(preparedRequest, 2);
+      return 'Switched to the frontend.';
+    };
+    const f = fixture(undefined, interpret, undefined, d.debug, createTools);
+    expect(createTools).not.toHaveBeenCalled();
+    for (let index = 0; index < 2; index++) {
+      f.runtime.toggle(); const id = f.id(); await flush();
+      f.runtime.toggle(); f.runtime.handle({ type: 'audio-stopped', turnId: id });
+      f.sessions[index]!.final.resolve('Switch to the frontend'); await flush();
+      expect(hosts[index]!.close).toHaveBeenCalled();
+      expect(f.outputs.findLast((event) => event.type === 'result')).toMatchObject({ response: 'Switched to the frontend.',
+        latency: { toolCalls: 1, toolMs: 12 } });
+    }
+    expect(createTools).toHaveBeenCalledTimes(2);
+    expect(hosts[0]).not.toBe(hosts[1]);
+    expect(f.outputs).toContainEqual(expect.objectContaining({ type: 'state', state: 'acting' }));
+    expect(d.debug.request.mock.calls.map((call) => call[2])).toEqual([1, 2, 1, 2]);
+    expect(d.debug.tool).toHaveBeenCalledTimes(4);
+  });
+
+  it('closes the tool session on cancellation and ignores late tool feedback and answers', async () => {
+    const d = mockDebugSession(); const result = deferred<string>();
+    const host: ToolHost = { list: () => [], call: vi.fn(), close: vi.fn() };
+    let request: Parameters<ReasoningFactory>[0] | undefined;
+    const f = fixture(undefined, async (input) => { request = input; return result.promise; }, undefined, d.debug, () => host);
+    f.runtime.toggle(); const id = f.id(); await flush();
+    f.runtime.toggle(); f.runtime.handle({ type: 'audio-stopped', turnId: id });
+    f.sessions[0]!.final.resolve('Switch to the frontend'); await flush();
+    expect(request?.tools).toBe(host);
+    f.runtime.cancel(); f.runtime.handle({ type: 'audio-stopped', turnId: id });
+    expect(request?.signal.aborted).toBe(true);
+    expect(host.close).toHaveBeenCalled();
+    request?.onTool?.({ callId: 'late', name: 'focus_window', arguments: {}, effect: 'focus', phase: 'completed' });
+    result.resolve('Late success'); await flush();
+    expect(d.debug.tool).not.toHaveBeenCalled();
+    expect(f.outputs.some((event) => event.type === 'result')).toBe(false);
+    expect(f.outputs.at(-1)).toMatchObject({ type: 'state', state: 'ready' });
+  });
+
   it('leaves diagnostic callbacks and bundle paths absent by default', async () => {
     const interpret = vi.fn<ReasoningFactory>(async () => 'The answer.');
     const f = fixture(undefined, interpret);
@@ -338,7 +392,7 @@ describe('live voice turn lifecycle', () => {
     f.runtime.toggle(); const id = f.id(); await flush();
     f.runtime.toggle(); f.runtime.handle({ type: 'audio-stopped', turnId: id });
     f.sessions[0]!.final.resolve('use this'); await flush();
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(50_000);
     expect(f.outputs).toContainEqual({ type: 'error', turnId: id, message: 'Reasoning timed out. Try a shorter request.' });
     expect(f.commands.at(-1)).toEqual({ type: 'cancel', turnId: id });
   });

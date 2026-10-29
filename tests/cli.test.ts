@@ -23,7 +23,21 @@ it('shows CLI commands without reading desktop context', async () => {
   expect(stdout).toContain('setup');
   expect(stdout).toContain('doctor');
   expect(stdout).toContain('desktop');
+  expect(stdout).toContain('tools');
   expect(stdout).toContain('--debug [directory]');
+});
+
+it('lists tool schemas without configuration, keys, or a graphical session', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'opensaysme-cli-tools-'));
+  directories.push(directory);
+  const { stdout, stderr } = await execute(process.execPath, [...args, 'tools'], { env: {
+    ...process.env, OPENSAYSME_CONFIG_DIR: directory, DISPLAY: '', WAYLAND_DISPLAY: '', OPENAI_API_KEY: '',
+  } });
+  expect(JSON.parse(stdout).map((tool: { name: string }) => tool.name)).toEqual([
+    'list_windows', 'inspect_desktop', 'capture_screen', 'focus_window',
+  ]);
+  expect(stderr).toBe('');
+  expect(await readdir(directory)).toEqual([]);
 });
 
 it('rejects an empty debug directory before native access', async () => {

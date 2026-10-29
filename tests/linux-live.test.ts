@@ -1,12 +1,12 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { captureLinuxContext, captureLinuxFrame, focusLinux, inspectLinux, linuxVoiceHelper, probeLinux, testLinuxHotkey } from '../src/desktop/platforms/linux.js';
+import { captureLinuxContext, captureLinuxFrame, focusLinux, inspectLinux, listLinuxWindows, linuxVoiceHelper, probeLinux, testLinuxHotkey } from '../src/desktop/platforms/linux.js';
 import { runCommand } from '../src/desktop/process.js';
 import { nativeVoiceEventSchema, type NativeVoiceCommand, type NativeVoiceEvent } from '../src/desktop/voice-types.js';
 
@@ -18,6 +18,8 @@ describe.skipIf(!enabled)('Linux X11 virtual desktop integration', () => {
   const titles = ['OpenSaysMe fixture one', 'OpenSaysMe fixture two'];
   let firstWindow: string;
   let secondWindow: string;
+  let firstXid: string;
+  let secondXid: string;
   let fixtureDirectory: string;
 
   async function launch(file: string, args: string[], input?: string): Promise<void> {
@@ -58,12 +60,22 @@ describe.skipIf(!enabled)('Linux X11 virtual desktop integration', () => {
       () => runCommand('xdotool', ['search', '--name', `^${title}$`]),
       (value) => /^[1-9]\d*\s*$/.test(value),
     )));
-    [firstWindow, secondWindow] = ids as [string, string];
+    [firstXid, secondXid] = ids as [string, string];
+    // Xmessage predates EWMH process hints; use its actual child identity.
+    await Promise.all(ids.map(async (id, index) => {
+      await runCommand('xprop', ['-id', id, '-f', '_NET_WM_PID', '32c', '-set', '_NET_WM_PID', String(fixtures[index]!.pid)]);
+      await runCommand('xprop', ['-id', id, '-f', 'WM_CLIENT_MACHINE', '8s', '-set', 'WM_CLIENT_MACHINE', hostname()]);
+    }));
     await launch('openbox', ['--sm-disable']);
-    await eventually(
-      async () => { await focusLinux(firstWindow); return firstWindow; },
-      (value) => value === firstWindow,
-    );
+    const tokens = [];
+    for (const id of ids) {
+      tokens.push(await eventually(async () => {
+        await runCommand('xdotool', ['windowactivate', '--sync', id]);
+        return (await inspectLinux(false)).window?.id ?? '';
+      }, (value) => value.startsWith(`x11:${id}:`)));
+    }
+    [firstWindow, secondWindow] = tokens as [string, string];
+    await focusLinux(firstWindow);
     fixtureDirectory = await mkdtemp(join(tmpdir(), 'opensaysme-x11-'));
     // Fake only the microphone process. Real Xlib, grabs, pipes, commands, and
     // cancellation run against Xvfb without host devices or provider requests.
@@ -120,6 +132,27 @@ while True:
     expect((await inspectLinux(false)).window?.id).toBe(firstWindow);
   });
 
+  it('discovers separate windows without changing focus', async () => {
+    const inventory = await listLinuxWindows();
+    expect(inventory.windows).toEqual(expect.arrayContaining([
+      { id: firstWindow, application: 'Xmessage', title: titles[0] },
+      { id: secondWindow, application: 'Xmessage', title: titles[1] },
+    ]));
+    expect((await inspectLinux(false)).window?.id).toBe(firstWindow);
+  });
+
+  it('rejects changed process ownership before focus', async () => {
+    await focusLinux(secondWindow);
+    try {
+      await runCommand('xprop', ['-id', firstXid, '-f', '_NET_WM_PID', '32c', '-set', '_NET_WM_PID', String(fixtures[1]!.pid)]);
+      await expect(focusLinux(firstWindow)).rejects.toThrow('unavailable or stale');
+      expect((await inspectLinux(false)).window?.id).toBe(secondWindow);
+    } finally {
+      await runCommand('xprop', ['-id', firstXid, '-f', '_NET_WM_PID', '32c', '-set', '_NET_WM_PID', String(fixtures[0]!.pid)]);
+      await focusLinux(firstWindow);
+    }
+  });
+
   it('reads an explicit PRIMARY selection and preserves whitespace', async () => {
     const selection = '  Synthetic selected context\nwith a trailing newline\n';
     await launch('xsel', ['--primary', '--input', '--nodetach'], selection);
@@ -145,7 +178,7 @@ while True:
 
   it('captures the pointer owning window independently from the active window', async () => {
     await focusLinux(firstWindow);
-    await runCommand('xdotool', ['mousemove', '--window', secondWindow, '60', '60']);
+    await runCommand('xdotool', ['mousemove', '--window', secondXid, '60', '60']);
     const context = await captureLinuxContext();
     expect(context.activeWindow?.id).toBe(firstWindow);
     expect(context.pointer?.window).toEqual({ id: secondWindow, title: titles[1], application: 'Xmessage' });

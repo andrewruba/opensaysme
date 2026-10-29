@@ -46,6 +46,16 @@ pointer window identities independently. Selected text comes from PRIMARY,
 which can belong to another application; that limitation accompanies each
 snapshot. Missing context is reported without blocking microphone startup.
 
+Window discovery reads the window manager's EWMH `_NET_CLIENT_LIST_STACKING`
+property with `xprop`; it never changes focus. Queries retain up to 128 windows
+and stop after three seconds, reporting omitted or inaccessible entries.
+Tokens have the form `x11:<XID>:<PID>:<process-start-ticks>`. Inspection requires
+local `_NET_WM_PID` and `WM_CLIENT_MACHINE` hints plus readable `/proc/<PID>/stat`.
+Missing hints and remote clients are unavailable. Focus verifies process identity
+before activation and afterward; raw XIDs are no longer focus targets. These
+client-provided hints are not a security boundary: same-process XID reuse and
+the check/activation race remain limitations. Tokens are temporary.
+
 During recording, `voice.py` also emits changed pointer positions at up to 20 Hz,
 with capture timestamps and the `x11:root` display ID. It samples only coordinates,
 not window ancestry, on the audio loop. Stop and cancellation end pointer sampling;

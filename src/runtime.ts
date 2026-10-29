@@ -5,11 +5,12 @@ import type { ScreenFrameCapture } from './desktop/visual-types.js';
 import { AttentionCollector, attentionSummary } from './attention.js';
 import type { DebugSession, DiagnosticEvent, DebugTurnResult } from './diagnostics.js';
 import type { ReasoningFactory } from './reasoning/types.js';
+import type { ToolHost } from './tools/types.js';
 import { prepareVisualContext, discardVisualContext, visualContextSummary, type PreparedVisualContext } from './visual-input.js';
 import type { VoiceInput } from './desktop/voice-process.js';
 import type { TranscriptionFactory, TranscriptionSession } from './speech/types.js';
 
-export type VoiceState = 'ready' | 'starting' | 'listening' | 'processing' | 'interpreting' | 'cancelling';
+export type VoiceState = 'ready' | 'starting' | 'listening' | 'processing' | 'interpreting' | 'inspecting' | 'acting' | 'cancelling';
 export interface LatencyMeasurements {
   activationToListeningMs?: number;
   activationToFirstAudioMs?: number;
@@ -23,6 +24,8 @@ export interface LatencyMeasurements {
   contextCaptureMs?: number;
   visualPreparationMs?: number;
   reasoningMs?: number;
+  toolMs?: number;
+  toolCalls?: number;
   stopToResponseMs?: number;
   recordingMs?: number;
   totalMs?: number;
@@ -41,6 +44,7 @@ interface Turn {
   id: string; activated: number; stopped?: number; abort: AbortController;
   attention?: AttentionCollector; session?: TranscriptionSession;
   visual?: PreparedVisualContext;
+  tools?: ToolHost;
   transcript?: string; debugInputRecorded?: boolean; debugResultRecorded?: boolean;
   metrics: LatencyMeasurements; partial: string; timers: Set<NodeJS.Timeout>;
   startupTimer?: NodeJS.Timeout; stopTimer?: NodeJS.Timeout; captureTimer?: NodeJS.Timeout;
@@ -51,6 +55,7 @@ export interface VoiceRuntimeOptions {
   captureContext: (signal: AbortSignal) => Promise<DesktopContext>;
   captureFrame: (signal: AbortSignal) => Promise<ScreenFrameCapture>;
   reason: ReasoningFactory;
+  createTools?: () => ToolHost;
   debug?: DebugSession;
   apiKey: string; model: string;
   emit: (output: VoiceOutput) => void;
@@ -251,7 +256,7 @@ export class VoiceRuntime {
     turn.metrics.maxAudioDeliveryLagMs = history.audio.maxDeliveryLagMs ?? undefined;
     this.publishState('interpreting');
     const started = this.now();
-    const deadline = this.timer(turn, this.options.deadlines?.reasoning ?? 30_000,
+    const deadline = this.timer(turn, this.options.deadlines?.reasoning ?? 50_000,
       () => this.cancel('Reasoning timed out. Try a shorter request.'));
     const visual = await prepareVisualContext(history, turn.abort.signal);
     if (this.turn !== turn || turn.abort.signal.aborted || this.closed) { discardVisualContext(visual); return; }
@@ -259,9 +264,20 @@ export class VoiceRuntime {
     turn.metrics.visualPreparationMs = this.elapsed(started);
     this.debugInput(turn);
     this.diagnostic('runtime', 'visuals-prepared', turn, { frames: history.frames.length, trailCopies: visual.frames.filter((frame) => frame.image).length, durationMs: turn.metrics.visualPreparationMs });
+    turn.tools = this.options.createTools?.();
     const reasoningStarted = this.now();
     const response = await this.options.reason({ transcript, history, visual, signal: turn.abort.signal,
-      onRequest: this.options.debug ? (request) => this.options.debug!.request(turn.id, request) : undefined,
+      tools: turn.tools,
+      onTool: turn.tools ? (event) => {
+        if (this.turn !== turn || turn.abort.signal.aborted || this.closed) return;
+        if (event.phase === 'completed') {
+          turn.metrics.toolCalls = (turn.metrics.toolCalls ?? 0) + 1;
+          turn.metrics.toolMs = (turn.metrics.toolMs ?? 0) + (event.durationMs ?? 0);
+        }
+        try { this.options.debug?.tool?.(turn.id, event); } catch { /* Diagnostics cannot stop a turn. */ }
+        this.publishState(event.phase === 'completed' ? 'interpreting' : event.effect === 'read' ? 'inspecting' : 'acting');
+      } : undefined,
+      onRequest: this.options.debug ? (request, step) => this.options.debug!.request(turn.id, request, step) : undefined,
       onDiagnostic: this.options.debug ? (event) => this.diagnostic(event.component, event.event, turn, event.data) : undefined,
     });
     turn.metrics.reasoningMs = this.elapsed(reasoningStarted);
@@ -288,6 +304,7 @@ export class VoiceRuntime {
     turn.attention?.discard();
     if (turn.visual) discardVisualContext(turn.visual);
     turn.abort.abort();
+    turn.tools?.close();
     turn.session?.close();
     turn.partial = '';
     this.options.emit(message ? { type: 'error', turnId: turn.id, message } : { type: 'cancelled', turnId: turn.id });
@@ -303,6 +320,7 @@ export class VoiceRuntime {
     turn.attention?.discard();
     if (turn.visual) discardVisualContext(turn.visual);
     turn.abort.abort();
+    turn.tools?.close();
     turn.session?.close();
     turn.partial = '';
     try { this.options.input.send({ type: 'settled', turnId: turn.id }); }
@@ -312,6 +330,7 @@ export class VoiceRuntime {
     this.publishState('ready');
   }
   close(): void {
+    if (this.closed) return;
     this.closed = true;
     const turn = this.turn;
     if (!turn) return;
@@ -321,6 +340,7 @@ export class VoiceRuntime {
     turn.attention?.discard();
     if (turn.visual) discardVisualContext(turn.visual);
     turn.abort.abort();
+    turn.tools?.close();
     turn.session?.close();
     turn.partial = '';
     this.turn = undefined;

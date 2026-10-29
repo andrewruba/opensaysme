@@ -8,6 +8,7 @@ import { cancelDesktopCommands } from './desktop/process.js';
 import { capabilityNames, type DesktopReport } from './desktop/types.js';
 import { setup } from './setup.js';
 import { runVoice } from './voice.js';
+import { createDesktopTools } from './tools/desktop.js';
 
 const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
 const stop = new AbortController();
@@ -46,7 +47,8 @@ const program = new Command()
     if (!config) throw new Error('Run opensaysme setup first. Desktop probes work without provider configuration.');
     process.stderr.write('OpenSaysMe voice mode. Ctrl+Shift+Space starts/stops; Escape cancels; Ctrl+C quits.\n');
     process.stderr.write('Activated audio streams to OpenAI. Screen/context and cursor history are captured while recording.\n');
-    process.stderr.write('After stopping, selected frames and context go to your reasoning provider for a response. No actions are executed.\n');
+    process.stderr.write('After stopping, your agent can inspect desktop evidence and switch windows to fulfill your request.\n');
+    process.stderr.write('Selected frames, context, and requested tool results go to your reasoning provider.\n');
     const debugDirectory = options.debug === true ? resolve('.opensaysme-debug') : options.debug;
     if (debugDirectory) process.stderr.write(`Debug enabled: ${safeText(debugDirectory)}. Context, transcripts, screenshots, prompts, responses, and session diagnostics remain until you delete them.\n`);
     await runVoice(config, stop.signal, (event) => {
@@ -72,6 +74,11 @@ const program = new Command()
 program.command('setup').description('Configure speech, visual sharing, and reasoning without storing keys')
   .option('--replace', 'Replace existing configuration after interactive setup')
   .action((options: { replace?: boolean }) => setup(stop.signal, Boolean(options.replace)));
+program.command('tools').description('List available agent tools and their schemas without reading the desktop')
+  .action(async () => {
+    const host = createDesktopTools(await desktopAdapter());
+    try { json(host.list()); } finally { host.close(); }
+  });
 program.command('doctor')
   .description('Read-only desktop and configuration checks; does not record or request permissions')
   .option('--json', 'Print a machine-readable report')

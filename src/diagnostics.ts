@@ -1,5 +1,6 @@
 import type { AttentionHistory } from './attention.js';
 import type { PreparedVisualContext } from './visual-input.js';
+import type { ToolEvent } from './tools/types.js';
 
 export interface DiagnosticEvent {
   component: 'session' | 'desktop' | 'speech' | 'reasoning' | 'runtime';
@@ -15,10 +16,14 @@ export interface PreparedReasoningRequest {
   instructions: string;
   store: false;
   max_output_tokens: number;
+  tools?: Array<{ type: 'function'; name: string; description: string; parameters: Record<string, unknown>; strict: true }>;
+  tool_choice?: 'auto' | 'none';
+  parallel_tool_calls?: false;
+  include?: string[];
   input: Array<{ role: 'user'; content: Array<
     { type: 'input_text'; text: string } |
     { type: 'input_image'; image_url: string; detail: 'high' }
-  > }>;
+  > } | Record<string, unknown>>;
 }
 export interface DebugTurnInput {
   transcript: string;
@@ -37,7 +42,8 @@ export interface DebugSession {
   directory: string;
   event: DiagnosticSink;
   input(turnId: string, input: DebugTurnInput): void;
-  request(turnId: string, request: PreparedReasoningRequest): void;
+  request(turnId: string, request: PreparedReasoningRequest, step?: number): void;
+  tool?(turnId: string, event: ToolEvent): void;
   result(turnId: string, result: DebugTurnResult): void;
   turnDirectory(turnId: string): string;
   close(): Promise<void>;

@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('probe', 'inspect', 'focus', 'context')]
+    [ValidateSet('probe', 'inspect', 'focus', 'context', 'list-windows')]
     [string]$Operation,
     [switch]$IncludeSelection,
     [string]$TargetId
@@ -34,6 +34,16 @@ public static class OpenSaysMeDesktop {
         // UI Automation exposes an Int32 HWND, even in a 64-bit client.
         return (window.ToInt64() & 0xffffffffL) == unchecked((uint)automationHandle);
     }
+    private delegate bool EnumWindowsProc(IntPtr handle, IntPtr parameter);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
+    public static IntPtr[] VisibleWindows() {
+        var handles = new System.Collections.Generic.List<IntPtr>();
+        EnumWindows(delegate(IntPtr handle, IntPtr parameter) {
+            if (IsWindowVisible(handle)) handles.Add(handle);
+            return handles.Count < 256;
+        }, IntPtr.Zero);
+        return handles.ToArray();
+    }
 }
 '@
 
@@ -56,11 +66,13 @@ function Read-Window([IntPtr]$Handle) {
     if (-not [OpenSaysMeDesktop]::IsWindow($Handle)) { throw 'Window unavailable.' }
     [uint32]$ownerProcess = 0
     $null = [OpenSaysMeDesktop]::GetWindowThreadProcessId($Handle, [ref]$ownerProcess)
-    $application = (Get-Process -Id $ownerProcess).ProcessName
+    $windowProcess = Get-Process -Id $ownerProcess
+    $application = $windowProcess.ProcessName
+    $started = $windowProcess.StartTime.ToUniversalTime().Ticks
     $title = New-Object System.Text.StringBuilder(16385)
     $null = [OpenSaysMeDesktop]::GetWindowText($Handle, $title, $title.Capacity)
     return @{
-        id = "win32:${ownerProcess}:$($Handle.ToInt64())"
+        id = "win32:${ownerProcess}:$($Handle.ToInt64()):${started}"
         application = $application; title = $title.ToString()
     }
 }
@@ -126,16 +138,18 @@ try {
 
     if ($Operation -eq 'focus') {
         $failureCode = 'invalid-target'
-        if ($TargetId -notmatch '^win32:([1-9][0-9]{0,9}):([1-9][0-9]{0,18})$') {
+        if ($TargetId -notmatch '^win32:([1-9][0-9]{0,9}):([1-9][0-9]{0,18}):([1-9][0-9]{0,18})$') {
             throw 'Invalid Windows window identifier.'
         }
         $expectedProcess = [uint32]::Parse($Matches[1])
         $target = [IntPtr]::new([long]::Parse($Matches[2]))
+        $expectedStart = [long]::Parse($Matches[3])
         [uint32]$actualProcess = 0
         $null = [OpenSaysMeDesktop]::GetWindowThreadProcessId($target, [ref]$actualProcess)
         if (-not [OpenSaysMeDesktop]::IsWindow($target) -or
             -not [OpenSaysMeDesktop]::IsWindowVisible($target) -or
-            $actualProcess -ne $expectedProcess) {
+            $actualProcess -ne $expectedProcess -or
+            (Get-Process -Id $actualProcess).StartTime.ToUniversalTime().Ticks -ne $expectedStart) {
             throw 'The target window is no longer available.'
         }
         if ([OpenSaysMeDesktop]::IsIconic($target)) {
@@ -152,6 +166,27 @@ try {
             Start-Sleep -Milliseconds 50
         }
         throw 'Windows refused foreground activation. Activate the tool deliberately and try again.'
+    }
+
+    if ($Operation -eq 'list-windows') {
+        if (-not [Environment]::UserInteractive -or $foreground -eq [IntPtr]::Zero) {
+            throw 'No interactive desktop is available.'
+        }
+        $windows = @()
+        $warnings = @()
+        $omitted = $false
+        $handles = [OpenSaysMeDesktop]::VisibleWindows()
+        foreach ($handle in $handles) {
+            if ($windows.Count -ge 128) { break }
+            try {
+                $window = Read-Window $handle
+                if ($null -ne $window -and -not [String]::IsNullOrWhiteSpace($window.title)) { $windows += $window }
+            } catch { $omitted = $true }
+        }
+        if ($omitted) { $warnings += 'Some inaccessible or closing windows were omitted.' }
+        if ($windows.Count -ge 128 -or $handles.Length -ge 256) { $warnings += 'Window discovery reached its limit; some windows may be missing.' }
+        Write-Response @{ version = 1; operation = 'list-windows'; inventory = @{ windows = @($windows); warnings = @($warnings) } }
+        exit 0
     }
 
     if ($Operation -eq 'context') {

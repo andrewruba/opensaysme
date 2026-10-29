@@ -3,12 +3,15 @@
 The product goal is to reduce friction between what the user wants and what their
 AI agents do. Each interaction should fit the request and available capabilities.
 
-Today, the CLI records a spoken request with desktop context, then produces a
-natural-language response. Screens and application history provide context;
+Today, the CLI records a spoken request with desktop context, then lets the agent
+gather more evidence, navigate, or answer naturally. Screens and application history provide context;
 selections and timed cursor paths can help clarify references. Gestures have no
 predefined command meanings, content categories, or required response types.
-Execution and on-screen overlays remain future work. Gaze may later supplement
-context as an optional input.
+The shared tool host supports window discovery, current-context inspection,
+current-screen capture, and verified focus. Background-window inspection, clicking,
+agent submission, and on-screen overlays remain future work. Gaze stays optional.
+The voice runtime calls this host in the same Node.js process. See
+[the tool framework](tools.md) for the catalog and extension points.
 
 Use Node.js 22.20+ and npm:
 
@@ -43,8 +46,9 @@ configuration and provider keys are unchanged.
 - Tap **Ctrl+Shift+Space** again to stop audio and freeze visual capture. No hold
   is needed. Silence does not automatically finish a turn.
 - Final transcript feedback appears immediately when transcription finishes.
-  `interpreting` prepares visual evidence and produces a natural-language response.
-- **Escape** cancels recording or interpretation. **Ctrl+C** quits and cleans up
+  `interpreting` prepares visual evidence and runs the agent loop; `inspecting`
+  indicates evidence gathering and `acting` a requested focus operation.
+- **Escape** cancels recording, interpretation, or pending tools. **Ctrl+C** quits and cleans up
   native hooks, microphone capture, screenshot processes, and provider requests.
 - The runtime returns to `ready` after each turn. Activation is ignored during
   processing. A subsequent turn starts fresh; clarification answers do not yet
@@ -53,6 +57,9 @@ configuration and provider keys are unchanged.
 Recording is limited to two minutes. Startup, provider connection, finalization,
 reasoning, and native cleanup have deadlines. If microphone cleanup cannot be
 confirmed, the runtime exits rather than claiming it is ready to record again.
+Automatic history capture stops at the second tap. The agent may request fresh
+desktop evidence while fulfilling that activated turn. Cancellation cannot undo
+a focus change already issued to the OS.
 
 ## Attention history and reasoning
 
@@ -119,11 +126,20 @@ not hide the only view of content. No crops or on-screen overlays are created.
 
 Local rendering uses two workers, a two-second deadline, and an additional 8 MB
 base64 budget. Failures or limits fall back to clean images and timed coordinates,
-with warnings. One OpenAI Responses request sends at most twelve originals and
-twelve marked copies, plus bounded attention history. The initial reasoning model
-is `gpt-5.4-mini`, independently configurable from speech. It returns ordinary text,
-without an action enum or required per-phrase outcome. Nothing is executed. The
-provider request times out after twenty seconds.
+with warnings. The initial OpenAI Responses request sends at most twelve originals
+and twelve marked copies, plus bounded attention history. The initial reasoning
+model is `gpt-5.4-mini`, independently configurable from speech. It can answer
+directly or call local tools and inspect their results before answering. There is
+no fixed action enum or required per-phrase outcome. The agent discovers window
+references itself; no user naming or routing rules are required.
+
+The loop permits six provider requests and five tool calls within 45 seconds.
+Each provider request has a twenty-second deadline; each local tool has six seconds.
+Tool results, including requested screenshots, enter subsequent model requests.
+Requests remain stateless with `store: false`, replaying tool outputs and encrypted
+reasoning context. More tool steps can increase latency and provider usage; simple
+answers still need just one reasoning request. The model is instructed to gather
+useful evidence before asking for clarification and to avoid unnecessary steps.
 
 Result JSON contains `response`, `attention`, and `visualContext.frames`. Each
 visual entry records its frame ID, interval, associated phrase/context IDs,
@@ -135,10 +151,11 @@ normalized timed paths, pointer sample, warnings, and `trailImageIncluded`.
 Speech uses OpenAI `gpt-live-transcribe` over Realtime WebSocket transcription,
 with client-selected phrase boundaries and low-delay streaming. It does not return
 word timestamps. Other speech models are
-rejected before native access. Reasoning uses image input and text output
+rejected before native access. Reasoning uses image input, function calling, and text output
 through Responses. Official documentation: [transcription](https://developers.openai.com/api/docs/guides/realtime-transcription),
 [image input](https://developers.openai.com/api/docs/guides/images-vision), and
-[text generation](https://developers.openai.com/api/docs/guides/text).
+[text generation](https://developers.openai.com/api/docs/guides/text), and
+[function calling](https://developers.openai.com/api/docs/guides/function-calling).
 
 Setup saves environment-variable names, never keys. Configuration lives in the
 platform's user config directory; `OPENSAYSME_CONFIG_DIR` overrides it. Setup only
@@ -167,8 +184,8 @@ future work. Setup makes no provider request.
 
 Activated audio streams directly to OpenAI. After stopping, full screenshots and
 optional trail copies, window titles, selected text, cursor history, and transcripts
-go directly to the
-reasoning provider. Setup explains and asks to enable this sharing. Provider
+go directly to the reasoning provider. Requested tool results can include window
+inventory, current context, and additional screenshots. Setup explains this sharing. Provider
 charges and data policies apply. The Responses request uses `store: false`;
 provider retention policies still apply.
 
@@ -198,8 +215,11 @@ Each session contains `session.jsonl` and a `turns/<turn-id>/` directory for eac
 
 - `context.json`: transcript, phrase timing, window/selection context, cursor history,
   frame bounds, and visual alignment.
-- `request.json`: the prepared prompt and model settings, with image URLs replaced
-  by local file paths. Images remain the exact JPEG bytes prepared for the provider.
+- `request.json`, `request-2.json`, ...: each prepared model request, including
+  the catalog and replayed tool exchanges, with image URLs replaced by local paths.
+  Images remain the exact JPEG bytes prepared for the provider.
+- `tool-1-started.json`, `tool-1-completed.json`, ...: tool arguments, results,
+  and duration. Additional tool images are saved under `images/`.
 - `result.json`: response, latency, and completed/failed/cancelled/interrupted status.
 - `images/f1-clean.jpg`, `images/f1-trail.jpg`: retained clean frames and available
   annotated copies, with corresponding files for the other frame IDs.
@@ -209,8 +229,8 @@ request state, failures, cancellation, and cleanup. Entries include a wall times
 monotonic session time, and a turn ID where applicable. A saved request means it was
 prepared; dispatch and completion events distinguish what happened afterward.
 
-Diagnostic text redacts configured provider keys; authorization headers and raw
-audio are not saved. Screenshot pixels remain unchanged; screenshots and captured
+Diagnostic text redacts configured provider keys; authorization headers, raw
+audio, and opaque encrypted reasoning are not saved. Screenshot pixels remain unchanged; screenshots and captured
 context can contain private content.
 Completed records remain until you delete them, including failed or cancelled turns.
 Unfinished writes are cleaned up where possible. Directories/files request owner-only
@@ -238,7 +258,8 @@ Completed results include milliseconds on a monotonic clock:
 - `stopToFinalTranscriptMs`: second tap to final speech transcript.
 - `contextCaptureMs`: activation to the first retained context observation, if any.
 - `visualPreparationMs`: alignment and local trail-image preparation.
-- `reasoningMs`: reasoning request through validated text response.
+- `reasoningMs`: the full agent loop through the final text, including any tool time.
+- `toolMs`, `toolCalls`: accumulated local tool time and completed call count, when tools run.
 - `stopToResponseMs`, `stopToResultMs`: second tap through the response/result.
 - `recordingMs`, `totalMs`: activation-to-stop and activation-to-result.
 
@@ -335,12 +356,21 @@ Prior prototype verification (2026-10-28):
   physical device timing accuracy remains unverified. No paid request was made by
   the automated checks.
 
-Current full-frame trail checks (2026-10-28): `npm run check` passed on macOS
+Full-frame trail checks (2026-10-28): `npm run check` passed on macOS
 (176 tests; the 12 X11 tests skip there). All 188 tests passed in the isolated
 Linux container, including rendering and X11 integration. A synthetic twelve-frame
 1600×900 rendering run took 323 ms on macOS arm64; that measures local preparation,
 not provider latency. Windows rendering and live provider reference accuracy remain
 unverified. These checks made no paid requests or physical desktop captures.
+
+Tool framework checks (2026-10-29): `npm run check` passed on macOS
+(256 tests; 14 X11 tests skip there). Provider fixtures
+exercise discovery of two editor windows, evidence-based target choice, verified
+focus, screenshot results, stateless replay, budgets, and cancellation.
+All 14 isolated Xvfb tests passed, including window inventory and stale-owner
+rejection. The macOS helper builds and passes synthetic checks. Windows native
+enumeration, physical desktop navigation, and live model target inference remain
+unverified; no paid provider calls were made by these checks.
 
 Manual acceptance: ask about visible content using existing context, then try
 pointing or selecting to clarify a reference and a request spanning several windows.
@@ -350,3 +380,8 @@ scrolling, incidental movement, missing screen permission, and multiple displays
 Try both paused and continuous speech: energy-based phrase boundaries can include
 several referents. Cancel during capture and interpretation, disconnect/retry, and
 confirm resources release on Ctrl+C.
+Open editor windows for two different projects and ask to switch to one by context,
+without registering names. Use `--debug` to inspect the discovered titles, selected
+window reference, and verified tool result. Try indistinguishable titles and a
+window closed or retitled during processing; the agent should inspect again or
+explain the remaining ambiguity.

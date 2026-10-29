@@ -2,8 +2,8 @@
 
 Read `README.md` for the product intent and `PLAN.md` for the current MVP scope.
 Keep both accurate as implementation decisions become concrete. This repository
-contains a tap-to-talk runtime, visual attention history, natural responses, and
-desktop probes. See
+contains a tap-to-talk runtime, visual attention history, an agent tool loop,
+an in-process tool host, and desktop probes. See
 `docs/development.md` for setup, validation commands, and platform limitations.
 
 ## Project direction
@@ -17,6 +17,9 @@ desktop probes. See
 - Center the experience on spoken requests and available desktop context.
   Pointing and selection can clarify references. Keep future inputs such as gaze
   optional; the core interaction must work without them.
+- Let the agent discover targets and gather evidence through tools. Do not require
+  users to label windows or maintain routing rules. Resolve references using
+  available context before asking; clarify only material unresolved ambiguity.
 - Use TypeScript and Node.js for the core. Isolate OS access, provider APIs, and
   agent integrations behind small, typed interfaces.
 - Support user-supplied provider keys and direct provider calls. Keep speech and
