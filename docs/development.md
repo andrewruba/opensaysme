@@ -333,12 +333,8 @@ Current full-frame trail checks (2026-10-28): `npm run check` passed on macOS
 (176 tests; the 12 X11 tests skip there). All 188 tests passed in the isolated
 Linux container, including rendering and X11 integration. A synthetic twelve-frame
 1600×900 rendering run took 323 ms on macOS arm64; that measures local preparation,
-not provider latency. These automated checks made no paid requests or physical
-desktop captures. A subsequent user-run macOS session sent five clean frames and
-five trail copies, returned a specific answer about a circled word, and reported
-133 ms of visual preparation and 5.29 seconds from stop to response. This is one
-live trial, not an accuracy or latency benchmark. Windows rendering and broader
-reference accuracy remain unverified.
+not provider latency. Windows rendering and live provider reference accuracy remain
+unverified. These checks made no paid requests or physical desktop captures.
 
 Manual acceptance: ask about content while moving the pointer around it, then try
 a request spanning several windows. Inspect `visualContext.frames` and compare
