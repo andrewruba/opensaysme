@@ -2,7 +2,7 @@
   "name": "opensaysme",
   "version": "0.1.0",
   "private": true,
-  "description": "Navigate and interact with AI agents using voice and desktop context.",
+  "description": "Reduce friction in AI-agent interactions with voice and desktop context.",
   "type": "module",
   "license": "MIT",
   "bin": {

@@ -10,6 +10,10 @@ desktop probes. See
 
 - Build a cross-platform, CLI-first tool that runs locally and complements
   existing agents. Keep setup in the terminal and desktop feedback minimal.
+- Reduce friction between user intent and agent behavior. Context gathering,
+  preparing input, navigation, answers, and actions are possible interactions.
+  Let the user's request determine the flow; do not impose a universal
+  draft-review-send sequence or a fixed output type.
 - Center the experience on spoken requests and available desktop context.
   Pointing and selection can clarify references. Keep future inputs such as gaze
   optional; the core interaction must work without them.

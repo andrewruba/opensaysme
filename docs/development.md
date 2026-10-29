@@ -1,6 +1,9 @@
 # Developing the voice and desktop context prototype
 
-The CLI records a spoken request with desktop context, then produces a
+The product goal is to reduce friction between what the user wants and what their
+AI agents do. Each interaction should fit the request and available capabilities.
+
+Today, the CLI records a spoken request with desktop context, then produces a
 natural-language response. Screens and application history provide context;
 selections and timed cursor paths can help clarify references. Gestures have no
 predefined command meanings, content categories, or required response types.

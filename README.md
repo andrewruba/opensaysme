@@ -1,12 +1,12 @@
 # OpenSaysMe
 
-Say what you want your AI agent to do. OpenSaysMe uses voice and what you were just looking at to gather the context for you.
+Less friction between what you want and what your AI agents do, using voice and desktop context.
 
 ## Why
 
-Speaking to an agent can feel effortless. Gathering the context, finding the right window, and copying it all into a prompt often does not.
+Speaking to an agent can feel effortless. Getting it to understand what you mean and do what you want often takes more work.
 
-You're about to ask an agent to do something. The details are scattered: a ticket in one browser tab, a discussion in a chat app, an error in your terminal, eight windows in between. Before you can say what you want, you're hunting for windows, copying text, and pasting it into a prompt box.
+The details may be scattered: a ticket in one browser tab, a discussion in a chat app, an error in your terminal, eight windows in between. You end up hunting for windows, copying context, and re-explaining what you mean to keep the work moving.
 
 OpenSaysMe explores a simpler way: say what you want, with context from what you're working on.
 
@@ -16,15 +16,15 @@ Tap a hotkey and say:
 
 > "Take the ticket I was just reading and that chat thread, and have the agent start on it."
 
-OpenSaysMe uses what was on your screen, where your cursor lingered, and what you said to assemble the prompt. You review it, then send it yourself.
+OpenSaysMe explores how what you say and the context of your work can make that interaction easier. Gathering context, preparing input, getting an answer, navigating windows, or directing an agent's actions are all possibilities. The interaction should fit the request.
 
-More examples of gathering context:
+That might mean bringing together context:
 
 - A bug report in one tab and logs in another: "Debug this."
 - PR review comments: "Address these."
 - A spec plus a screenshot of the current UI: "Build this."
 
-Later, the same context can help you navigate between windows and agents:
+It can also mean navigating or directing agent work:
 
 - With a terminal error visible, say: "Send this to the debugging agent."
 - Say: "Switch to the agent working on authentication."
@@ -44,7 +44,7 @@ The goal is to complement the mouse and keyboard, not replace them or build anot
 
 Early development prototype (macOS). Today it supports tap-to-talk transcription and natural-language responses grounded in desktop history. Full screenshots are paired with nearby speech phrases and timed cursor trails, preserving attention without assigning gestures fixed meanings. Trail copies are model input only: there are no crops or on-screen overlays.
 
-It does not yet draft prompts or take actions. Action execution remains future work.
+History is captured only during an activated turn. Agent integrations and action execution remain future work.
 
 <!-- demo video goes here -->
 

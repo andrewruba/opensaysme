@@ -1,13 +1,15 @@
 # CLI-first MVP implementation plan
 
-Build a local tool that makes existing agents easier to navigate and interact
-with. Launch it from a terminal, activate it with a hotkey, and speak a request.
-Available desktop context helps resolve what the user means.
+Build a local tool that reduces friction between user intent and agent behavior.
+Voice expresses the request; available desktop context helps resolve what the user
+means. Context gathering, preparing input, navigation, answers, and actions are
+possible interactions. Develop useful slices without prescribing one workflow or
+output for every request.
 
 ```sh
-opensaysme setup    # Configure providers, keys, hotkey, and agent targets
+opensaysme setup    # Configure providers, key-variable names, and visual sharing
 opensaysme         # Run until Ctrl+C
-opensaysme doctor  # Check permissions, providers, and desktop capabilities
+opensaysme doctor  # Check permissions, key presence, and desktop capabilities
 ```
 
 Use TypeScript and Node.js, Commander and Clack for the CLI, direct provider
@@ -101,13 +103,13 @@ restarted. See [the current workaround](docs/development.md#macos-screen-recordi
    keep informational responses unrestricted by an action enum.
    Keep context in memory by default and send only the context needed for the request.
 
-4. **Deliver three useful interactions.** Register agent targets with user-chosen
-   names, then support switching to a named agent, returning to the previous
-   window, and inserting dictated text or selected context into a confirmed agent
-   input. Start with one documented agent integration available across platforms.
-   Use its APIs or supported links where possible. Keep submission explicit and
-   resolve ambiguous targets before acting. Read agent status only when the
-   integration exposes it reliably.
+4. **Connect useful agent interactions.** Candidate slices include switching to a
+   named agent, returning to the previous window, and providing dictated text or
+   relevant context to an agent input. Start with a small, documented integration
+   available across platforms. Let the request and available capabilities determine
+   whether to answer, clarify, navigate, or act. Use supported APIs or links where
+   possible. Keep submission explicit and resolve ambiguous targets before acting.
+   Read agent status only when the integration exposes it reliably.
 
 5. **Add minimal feedback and ship.** Show listening, processing, target, and error
    states through terminal output, audio cues, and brief desktop feedback. Provide
@@ -126,5 +128,6 @@ audit bundled binaries and model weights separately. The image renderer uses
 Apache-2.0 sharp; its bundled libvips package declares LGPL-3.0-or-later and includes
 additional dependency licenses that need review before release packaging.
 
-The MVP is complete when a user can install, configure their own keys, and perform
-the three interactions on each supported OS without opening a separate app UI.
+The MVP is complete when a user can install, configure their own keys, and use
+voice and desktop context for the implemented agent interactions on each supported
+OS, with less manual context copying, window hunting, and re-explaining.
