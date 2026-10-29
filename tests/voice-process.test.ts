@@ -22,7 +22,7 @@ it('exchanges incremental native frames and gracefully shuts down', async () => 
     emit({type:'ready'});
     require('node:readline').createInterface({input:process.stdin}).on('line', line => {
       const c=JSON.parse(line);
-      if(c.type==='start'){emit({type:'audio-started',turnId:c.turnId});emit({type:'audio',turnId:c.turnId,data:'AAAA'});}
+      if(c.type==='start'){emit({type:'audio-started',turnId:c.turnId});emit({type:'audio',turnId:c.turnId,data:'AAA=',capturedAt:new Date().toISOString(),startSample:0,timing:'estimated'});}
       if(c.type==='stop'||c.type==='cancel')emit({type:'audio-stopped',turnId:c.turnId});
       if(c.type==='shutdown')process.exit(0);
     });

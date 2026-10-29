@@ -1,12 +1,15 @@
-import { createHash } from 'node:crypto';
 import type { DesktopContext, NativeVoiceEvent } from './desktop/voice-types.js';
 import { desktopContextSchema } from './desktop/voice-types.js';
 import { screenFrameCaptureSchema, type ScreenFrameCapture } from './desktop/visual-types.js';
+import { AudioTimeline, type AudioSummary, type AudioTiming } from './audio-timeline.js';
+import type { TranscriptionPhrase } from './speech/types.js';
 
 export interface AttentionFrame extends ScreenFrameCapture { id: string; atMs: number; receivedAtMs: number }
 export interface ContextSample { id: string; atMs: number; receivedAtMs: number; context: DesktopContext }
 export interface CursorSample { atMs: number; receivedAtMs: number; x: number; y: number; displayId: string | null }
-export interface TranscriptSample { receivedAtMs: number; text: string }
+export interface TranscriptSample extends TranscriptionPhrase {
+  startMs: number | null; endMs: number | null; receivedAtMs: number; timing: AudioTiming;
+}
 export interface AttentionHistory {
   frames: AttentionFrame[];
   contexts: ContextSample[];
@@ -14,7 +17,7 @@ export interface AttentionHistory {
   transcript: TranscriptSample[];
   warnings: string[];
   durationMs: number;
-  audio: { firstChunkAtMs: number | null; durationMs: number };
+  audio: AudioSummary;
 }
 interface AttentionOptions {
   captureContext: (signal: AbortSignal) => Promise<DesktopContext>;
@@ -40,16 +43,14 @@ function thin<T extends { atMs: number }>(samples: T[], limit: number) {
 }
 
 export class AttentionCollector {
-  private history: AttentionHistory = { frames: [], contexts: [], cursor: [], transcript: [], warnings: [
-    'Transcript sample times are delivery times, not word or phrase timestamps; speech/context alignment is uncertain.',
-    'Screen frames are sampled; cursor paths between frames do not prove that screen content stayed unchanged.',
-  ], durationMs: 0, audio: { firstChunkAtMs: null, durationMs: 0 } };
+  private history: AttentionHistory;
+  private readonly audioTimeline: AudioTimeline;
   private stopped = false;
+  private discarded = false;
   private controller = new AbortController();
   private timers = new Set<NodeJS.Timeout>();
   private frameSequence = 0;
   private contextSequence = 0;
-  private lastFrame = '';
   private lastContext = '';
   private lastCursorAt = -Infinity;
   private transcriptBytes = 0;
@@ -57,6 +58,11 @@ export class AttentionCollector {
   private readonly abort = () => this.discard();
 
   constructor(private readonly options: AttentionOptions) {
+    this.audioTimeline = new AudioTimeline(options.epochStart, (message) => this.warn(message));
+    this.history = { frames: [], contexts: [], cursor: [], transcript: [], warnings: [
+      'Transcript intervals cover committed audio phrases, including pauses; they are not word timestamps. Limit boundaries may split words.',
+      'Screen frames are sampled; cursor paths between frames do not prove that screen content stayed unchanged.',
+    ], durationMs: 0, audio: this.audioTimeline.summary };
     options.signal.addEventListener('abort', this.abort, { once: true });
     if (options.signal.aborted) { this.discard(); return; }
     void this.collectFrame();
@@ -102,17 +108,15 @@ export class AttentionCollector {
       if (this.stopped) return;
       const bytes = Buffer.from(frame.image.data, 'base64');
       if (bytes.length > 1_000_000 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) throw new Error('Invalid image.');
-      const hash = createHash('sha256').update(frame.image.data).update(JSON.stringify(frame.display)).digest('hex');
       const receivedAtMs = this.options.now();
-      if (hash !== this.lastFrame) {
-        this.history.frames.push({ ...frame, id: `f${++this.frameSequence}`, atMs: this.time(frame.capturedAt, receivedAtMs, requested), receivedAtMs });
-        this.lastFrame = hash;
-        if (this.history.frames.length > 12) this.warn('Screen history was sampled to retain at most twelve representative frames.');
-        thin(this.history.frames, 12);
-        while (this.history.frames.reduce((sum, item) => sum + item.image.data.length, 0) > 8_000_000) {
-          thin(this.history.frames, this.history.frames.length - 1);
-          this.warn('Screen history was sampled to fit its image memory limit.');
-        }
+      // Keep repeated captures: a static screen can have new speech or pointer
+      // activity, and a historical timestamp must not stand in for a later frame.
+      this.history.frames.push({ ...frame, id: `f${++this.frameSequence}`, atMs: this.time(frame.capturedAt, receivedAtMs, requested), receivedAtMs });
+      if (this.history.frames.length > 12) this.warn('Screen history was sampled to retain at most twelve representative frames.');
+      thin(this.history.frames, 12);
+      while (this.history.frames.reduce((sum, item) => sum + item.image.data.length, 0) > 8_000_000) {
+        thin(this.history.frames, this.history.frames.length - 1);
+        this.warn('Screen history was sampled to fit its image memory limit.');
       }
       frame.warnings.forEach((warning) => this.warn(warning));
       this.frameFailures = 0;
@@ -162,17 +166,23 @@ export class AttentionCollector {
     this.history.cursor.push({ atMs, receivedAtMs, x: event.x, y: event.y, displayId: event.displayId });
     if (this.history.cursor.length > 1500) { thin(this.history.cursor, 1500); this.warn('Cursor history was thinned to its sample limit.'); }
   }
-  delta(text: string) {
-    // Transcription can finish after context capture freezes.
-    const sample = { receivedAtMs: this.options.now(), text };
-    this.transcriptBytes += Buffer.byteLength(text);
-    if (this.transcriptBytes > 65_536) { this.warn('Transcript timing history exceeded its limit.'); return; }
-    if (this.history.transcript.length < 128) this.history.transcript.push(sample);
-    else { this.warn('Later transcript deltas were omitted from timing history; the final transcript is complete.'); }
+  phrase(phrase: TranscriptionPhrase): TranscriptSample | undefined {
+    // Final phrases can arrive out of order and after visual capture freezes.
+    if (this.discarded) return;
+    if (this.history.transcript.some((sample) => sample.id === phrase.id
+      || (sample.startSample < phrase.endSample && sample.endSample > phrase.startSample))) {
+      throw new Error('Duplicate or overlapping transcript phrase.');
+    }
+    this.transcriptBytes += Buffer.byteLength(phrase.text);
+    if (this.transcriptBytes > 65_536 || this.history.transcript.length >= 512) throw new Error('Transcript timing history exceeded its limit.');
+    const sample = { ...phrase, ...this.audioTimeline.interval(phrase.startSample, phrase.endSample), receivedAtMs: this.options.now() };
+    this.history.transcript.push(sample);
+    this.history.transcript.sort((a, b) => a.startSample - b.startSample);
+    return sample;
   }
-  audio(byteLength: number) {
-    this.history.audio.firstChunkAtMs ??= this.options.now();
-    this.history.audio.durationMs += byteLength / 48;
+  audio(event: Extract<NativeVoiceEvent, { type: 'audio' }>, byteLength: number) {
+    // Native audio drains after the stopping tap; do not lose its final sample offsets.
+    if (!this.discarded) this.audioTimeline.append(event, byteLength, this.options.now());
   }
   freeze(): AttentionHistory {
     if (!this.stopped) {
@@ -188,19 +198,20 @@ export class AttentionCollector {
   }
   discard() {
     this.freeze();
+    this.discarded = true;
+    this.audioTimeline.discard();
     this.options.signal.removeEventListener('abort', this.abort);
     this.history.frames.length = 0;
     this.history.contexts.length = 0;
     this.history.cursor.length = 0;
     this.history.transcript.length = 0;
     this.lastContext = '';
-    this.lastFrame = '';
     this.transcriptBytes = 0;
   }
 }
 
 // Only metadata leaves the runtime output. Image payloads stay in memory for the
-// explicitly configured preview request and are never printed into scrollback.
+// explicitly configured reasoning request and are never printed into scrollback.
 export function attentionSummary(history: AttentionHistory) {
   return { ...history, frames: history.frames.map(({ image, ...frame }) => ({ ...frame,
     image: { mimeType: image.mimeType, width: image.width, height: image.height } })),

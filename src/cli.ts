@@ -33,7 +33,7 @@ function printReport(report: DesktopReport): void {
 
 const program = new Command()
   .name('opensaysme')
-  .description('Tap-to-talk action previews with visual context and attention history')
+  .description('Tap-to-talk with visual context and attention history')
   .version(version)
   .showHelpAfterError()
   .action(async () => {
@@ -41,7 +41,7 @@ const program = new Command()
     if (!config) throw new Error('Run opensaysme setup first. Desktop probes work without provider configuration.');
     process.stderr.write('OpenSaysMe voice mode. Ctrl+Shift+Space starts/stops; Escape cancels; Ctrl+C quits.\n');
     process.stderr.write('Activated audio streams to OpenAI. Screen/context and cursor history are captured while recording.\n');
-    process.stderr.write('After stopping, selected frames and context go to your reasoning provider for a preview. No actions are executed.\n');
+    process.stderr.write('After stopping, selected frames and context go to your reasoning provider for a response. No actions are executed.\n');
     await runVoice(config, stop.signal, (event) => {
       if (event.type === 'state') {
         if (event.state === 'listening' && process.stderr.isTTY) process.stderr.write('\x07');
@@ -51,8 +51,7 @@ const program = new Command()
       } else if (event.type === 'transcript') {
         process.stderr.write(`Final transcript: ${JSON.stringify(event.text)}\n`);
       } else if (event.type === 'result') {
-        process.stderr.write(`Preview: ${safeText(event.preview.summary)}\n`);
-        if (event.preview.clarification) process.stderr.write(`Clarification: ${safeText(event.preview.clarification)}\n`);
+        process.stderr.write(`Response: ${safeText(event.response)}\n`);
         json(event);
       }
       else if (event.type === 'cancelled') process.stderr.write('Cancelled.\n');
@@ -61,7 +60,7 @@ const program = new Command()
     console.log('Stopped.');
   });
 
-program.command('setup').description('Configure speech, visual sharing, and action previews without storing keys')
+program.command('setup').description('Configure speech, visual sharing, and reasoning without storing keys')
   .option('--replace', 'Replace existing configuration after interactive setup')
   .action((options: { replace?: boolean }) => setup(stop.signal, Boolean(options.replace)));
 program.command('doctor')

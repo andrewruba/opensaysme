@@ -3,7 +3,8 @@ import { performance } from 'node:perf_hooks';
 import type { DesktopContext, NativeVoiceEvent } from './desktop/voice-types.js';
 import type { ScreenFrameCapture } from './desktop/visual-types.js';
 import { AttentionCollector, attentionSummary } from './attention.js';
-import type { ActionPreview, PreviewFactory } from './preview/types.js';
+import type { ReasoningFactory } from './reasoning/types.js';
+import { prepareVisualContext, discardVisualContext, visualContextSummary, type PreparedVisualContext } from './visual-input.js';
 import type { VoiceInput } from './desktop/voice-process.js';
 import type { TranscriptionFactory, TranscriptionSession } from './speech/types.js';
 
@@ -13,11 +14,15 @@ export interface LatencyMeasurements {
   activationToFirstAudioMs?: number;
   activationToProviderReadyMs?: number;
   activationToFirstTranscriptMs?: number;
+  activationToFirstPhraseMs?: number;
+  maxPhraseFinalizationMs?: number;
+  maxAudioDeliveryLagMs?: number;
   stopToFinalTranscriptMs?: number;
   stopToResultMs?: number;
   contextCaptureMs?: number;
-  previewMs?: number;
-  stopToPreviewMs?: number;
+  visualPreparationMs?: number;
+  reasoningMs?: number;
+  stopToResponseMs?: number;
   recordingMs?: number;
   totalMs?: number;
 }
@@ -27,10 +32,12 @@ export type VoiceOutput =
   | { type: 'transcript'; turnId: string; text: string }
   | { type: 'cancelled'; turnId: string }
   | { type: 'error'; turnId?: string; message: string }
-  | { type: 'result'; turnId: string; transcript: string; attention: ReturnType<typeof attentionSummary>; preview: ActionPreview; latency: LatencyMeasurements };
+  | { type: 'result'; turnId: string; transcript: string; attention: ReturnType<typeof attentionSummary>;
+    visualContext: ReturnType<typeof visualContextSummary>; response: string; latency: LatencyMeasurements };
 interface Turn {
   id: string; activated: number; stopped?: number; abort: AbortController;
   attention?: AttentionCollector; session?: TranscriptionSession;
+  visual?: PreparedVisualContext;
   metrics: LatencyMeasurements; partial: string; timers: Set<NodeJS.Timeout>;
   startupTimer?: NodeJS.Timeout; stopTimer?: NodeJS.Timeout; captureTimer?: NodeJS.Timeout;
 }
@@ -39,11 +46,11 @@ export interface VoiceRuntimeOptions {
   transcribe: TranscriptionFactory;
   captureContext: (signal: AbortSignal) => Promise<DesktopContext>;
   captureFrame: (signal: AbortSignal) => Promise<ScreenFrameCapture>;
-  preview: PreviewFactory;
+  reason: ReasoningFactory;
   apiKey: string; model: string;
   emit: (output: VoiceOutput) => void;
   now?: () => number;
-  deadlines?: { startup?: number; stop?: number; cancel?: number; context?: number; capture?: number; preview?: number };
+  deadlines?: { startup?: number; stop?: number; cancel?: number; context?: number; capture?: number; reasoning?: number };
 }
 const nativeErrors = {
   'hotkey-unavailable': 'The global shortcut is unavailable. Check for conflicting bindings and run opensaysme doctor.',
@@ -106,8 +113,10 @@ export class VoiceRuntime {
         if (this.state === 'cancelling') return;
         turn.metrics.activationToFirstAudioMs ??= this.elapsed(turn.activated);
         const pcm = Buffer.from(event.data, 'base64');
-        turn.attention?.audio(pcm.length);
-        try { turn.session?.append(pcm); } catch { this.cancel('Audio streaming failed. Try another voice turn.'); }
+        try {
+          turn.attention?.audio(event, pcm.length);
+          turn.session?.append(pcm);
+        } catch { this.cancel('Audio capture timing or streaming failed. Rebuild the native helper and try again.'); }
         finally { pcm.fill(0); }
         break;
       }
@@ -156,13 +165,21 @@ export class VoiceRuntime {
       });
       turn.session = this.options.transcribe({
         apiKey: this.options.apiKey, model: this.options.model, signal: turn.abort.signal,
-        onDelta: (text) => {
-          if (!text || this.turn !== turn || turn.abort.signal.aborted) return;
-          turn.metrics.activationToFirstTranscriptMs ??= this.elapsed(turn.activated);
-          turn.attention?.delta(text);
-          turn.partial += text;
-          if (turn.partial.length > 65_536) { this.cancel('Transcript exceeded the turn limit.'); return; }
+        onPartial: (text) => {
+          if (this.turn !== turn || turn.abort.signal.aborted || text === turn.partial) return;
+          if (text) turn.metrics.activationToFirstTranscriptMs ??= this.elapsed(turn.activated);
+          turn.partial = text;
+          if (Buffer.byteLength(text) > 65_536) { this.cancel('Transcript exceeded the turn limit.'); return; }
           this.options.emit({ type: 'partial', turnId: turn.id, text: turn.partial });
+        },
+        onPhrase: (phrase) => {
+          if (this.turn !== turn || turn.abort.signal.aborted) return;
+          try {
+            const timed = turn.attention?.phrase(phrase);
+            turn.metrics.activationToFirstPhraseMs ??= this.elapsed(turn.activated);
+            if (timed?.endMs != null) turn.metrics.maxPhraseFinalizationMs = Math.max(turn.metrics.maxPhraseFinalizationMs ?? 0,
+              Math.max(0, Math.round(timed.receivedAtMs - timed.endMs)));
+          } catch { this.cancel('Transcript timing did not match captured audio. Try another voice turn.'); }
         },
       });
       void turn.session.ready.then(() => {
@@ -178,22 +195,29 @@ export class VoiceRuntime {
     if (this.turn !== turn || turn.abort.signal.aborted || this.closed) return;
     if (turn.stopped === undefined) { this.cancel('Speech provider finalized before recording stopped.'); return; }
     turn.metrics.stopToFinalTranscriptMs = this.elapsed(turn.stopped);
-    // Final speech remains visible while the bounded preview request runs.
+    // Final speech remains visible while the bounded reasoning request runs.
     this.options.emit({ type: 'transcript', turnId: turn.id, text: transcript });
     const history = turn.attention!.freeze();
     turn.metrics.contextCaptureMs = history.contexts[0]?.receivedAtMs;
+    turn.metrics.maxAudioDeliveryLagMs = history.audio.maxDeliveryLagMs ?? undefined;
     this.publishState('interpreting');
     const started = this.now();
-    const deadline = this.timer(turn, this.options.deadlines?.preview ?? 30_000,
-      () => this.cancel('Action preview timed out. Try a shorter request.'));
-    const preview = await this.options.preview({ transcript, history, signal: turn.abort.signal });
+    const deadline = this.timer(turn, this.options.deadlines?.reasoning ?? 30_000,
+      () => this.cancel('Reasoning timed out. Try a shorter request.'));
+    const visual = await prepareVisualContext(history, turn.abort.signal);
+    if (this.turn !== turn || turn.abort.signal.aborted || this.closed) { discardVisualContext(visual); return; }
+    turn.visual = visual;
+    turn.metrics.visualPreparationMs = this.elapsed(started);
+    const reasoningStarted = this.now();
+    const response = await this.options.reason({ transcript, history, visual, signal: turn.abort.signal });
     this.clearTimer(turn, deadline);
-    turn.metrics.previewMs = this.elapsed(started);
-    turn.metrics.stopToPreviewMs = this.elapsed(turn.stopped);
+    turn.metrics.reasoningMs = this.elapsed(reasoningStarted);
+    turn.metrics.stopToResponseMs = this.elapsed(turn.stopped);
     if (this.turn !== turn || turn.abort.signal.aborted || this.closed) return;
     turn.metrics.totalMs = this.elapsed(turn.activated);
     turn.metrics.stopToResultMs = this.elapsed(turn.stopped);
-    this.options.emit({ type: 'result', turnId: turn.id, transcript, attention: attentionSummary(history), preview, latency: { ...turn.metrics } });
+    this.options.emit({ type: 'result', turnId: turn.id, transcript, attention: attentionSummary(history),
+      visualContext: visualContextSummary(visual), response, latency: { ...turn.metrics } });
     this.reset(turn);
   }
 
@@ -204,6 +228,7 @@ export class VoiceRuntime {
     for (const timer of turn.timers) clearTimeout(timer);
     turn.timers.clear();
     turn.attention?.discard();
+    if (turn.visual) discardVisualContext(turn.visual);
     turn.abort.abort();
     turn.session?.close();
     turn.partial = '';
@@ -218,6 +243,7 @@ export class VoiceRuntime {
     if (this.turn !== turn) return;
     for (const timer of turn.timers) clearTimeout(timer);
     turn.attention?.discard();
+    if (turn.visual) discardVisualContext(turn.visual);
     turn.abort.abort();
     turn.session?.close();
     turn.partial = '';
@@ -232,6 +258,7 @@ export class VoiceRuntime {
     if (!turn) return;
     for (const timer of turn.timers) clearTimeout(timer);
     turn.attention?.discard();
+    if (turn.visual) discardVisualContext(turn.visual);
     turn.abort.abort();
     turn.session?.close();
     turn.partial = '';

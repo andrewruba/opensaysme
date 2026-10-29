@@ -16,6 +16,35 @@ import time
 from x11 import Desktop
 
 
+class AudioSampleClock:
+    """Estimate an audio origin once, then advance by emitted PCM samples.
+
+    arecord's raw pipe has no device timestamps. The first read minus its PCM
+    duration estimates capture start; device/pipe buffering can still shift it.
+    Later pipe/IPC delays and wall-clock changes must not move that origin.
+    """
+
+    def __init__(self, started_at, wall_at_start):
+        self.started_at = started_at
+        self.wall_at_start = wall_at_start
+        self.origin = None
+        self.samples = 0
+
+    def stamp(self, count, read_at):
+        if count <= 0:
+            raise ValueError("Empty audio interval")
+        if self.origin is None:
+            self.origin = max(self.started_at, read_at - count / 24000)
+        captured = self.wall_at_start + self.origin - self.started_at + self.samples / 24000
+        fields = {
+            "capturedAt": datetime.fromtimestamp(captured, timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z"),
+            "startSample": self.samples,
+            "timing": "estimated",
+        }
+        self.samples += count
+        return fields
+
+
 class Voice:
     def __init__(self, desktop):
         self.desktop = desktop
@@ -25,6 +54,7 @@ class Voice:
         self.stopping_at = None
         self.capture_at = None
         self.audio_tail = b""
+        self.audio_clock = None
         self.commands = b""
         self.output = collections.deque()
         self.output_bytes = 0
@@ -60,6 +90,7 @@ class Voice:
                     recorder.wait(timeout=0.5)
             recorder.stdout.close()
         self.audio_tail = b""
+        self.audio_clock = None
         self.stopping_at = None
 
     def cancel(self):
@@ -87,12 +118,14 @@ class Voice:
             self.recorder = subprocess.Popen([
                 "arecord", "--quiet", "--device", "default", "--file-type", "raw",
                 "--format", "S16_LE", "--rate", "24000", "--channels", "1",
+                "--period-time", "20000", "--buffer-time", "100000", "--fatal-errors",
             ], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             os.set_blocking(self.recorder.stdout.fileno(), False)
         except OSError:
             self.fail("microphone-unavailable")
             return
         self.capture_at = time.monotonic()
+        self.audio_clock = AudioSampleClock(self.capture_at, time.time())
         self.started = False
         self.pointer_at = 0
         self.last_pointer = None
@@ -155,6 +188,7 @@ class Voice:
 
     def read_audio(self):
         chunk = os.read(self.recorder.stdout.fileno(), 4800)
+        read_at = time.monotonic()
         if chunk:
             chunk = self.audio_tail + chunk
             self.audio_tail = chunk[len(chunk) - len(chunk) % 2:] if len(chunk) % 2 else b""
@@ -164,7 +198,8 @@ class Voice:
                     self.started = True
                     self.emit("audio-started", turnId=self.turn)
                     self.desktop.bell()
-                self.emit("audio", turnId=self.turn, data=base64.b64encode(chunk).decode("ascii"))
+                self.emit("audio", turnId=self.turn, data=base64.b64encode(chunk).decode("ascii"),
+                          **self.audio_clock.stamp(len(chunk) // 2, read_at))
         elif self.stopping_at is not None:
             turn = self.turn
             self.end_recorder()

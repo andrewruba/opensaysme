@@ -11,16 +11,34 @@ struct VoiceTests {
                 let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: channels, interleaved: false)!
                 let converter = VoicePCMConverter(inputFormat: format)!
                 let inputFrames = AVAudioFrameCount(sampleRate / 100)
+                let epoch = Date(timeIntervalSince1970: 100)
+                var clock = VoiceAudioClock(wallTime: epoch, hostTime: AVAudioTime.hostTime(forSeconds: 1000))
                 var pcm = Data()
-                for _ in 0..<20 {
+                for index in 0..<20 {
                     let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: inputFrames)!
                     buffer.frameLength = inputFrames
                     for channel in 0..<Int(channels) {
                         for frame in 0..<Int(inputFrames) { buffer.floatChannelData![channel][frame] = 0.25 }
                     }
-                    pcm.append(try converter.convert(buffer))
+                    try clock.observeInput(frames: Int(inputFrames), sampleRate: sampleRate,
+                        hostTime: AVAudioTime.hostTime(forSeconds: 1000 + Double(index) / 100),
+                        observedHostTime: AVAudioTime.hostTime(forSeconds: 1010 + Double(index) / 100))
+                    let converted = try converter.convert(buffer)
+                    if !converted.isEmpty {
+                        let chunk = try clock.stamp(converted)
+                        precondition(chunk.startSample == Int64(pcm.count / 2))
+                        precondition(chunk.timing == "device")
+                        precondition(abs(chunk.capturedAt.timeIntervalSince(epoch) - Double(pcm.count) / 48_000) < 0.0001)
+                        pcm.append(chunk.data)
+                    }
                 }
-                pcm.append(try converter.convert(nil, end: true))
+                let tail = try converter.convert(nil, end: true)
+                if !tail.isEmpty {
+                    let chunk = try clock.stamp(tail)
+                    precondition(chunk.startSample == Int64(pcm.count / 2))
+                    precondition(abs(chunk.capturedAt.timeIntervalSince(epoch) - Double(pcm.count) / 48_000) < 0.0001)
+                    pcm.append(chunk.data)
+                }
                 // 200ms of mono 24k PCM16 must be 9,600 bytes. Allow the SRC's
                 // tiny boundary rounding, but never a channel/rate mismatch.
                 precondition(abs(pcm.count - 9600) <= 8, "Unexpected converted frame count: \(pcm.count)")
@@ -32,6 +50,29 @@ struct VoiceTests {
                 precondition(samples.dropFirst(100).dropLast(100).allSatisfy { abs(Int($0) - 8192) < 4 }, "PCM must be mono little-endian signed 16-bit samples")
             }
         }
+        let epoch = Date(timeIntervalSince1970: 100)
+        let host = AVAudioTime.hostTime(forSeconds: 1000)
+        var estimated = VoiceAudioClock(wallTime: epoch, hostTime: host)
+        try estimated.observeInput(frames: 480, sampleRate: 48_000, hostTime: nil,
+            observedHostTime: AVAudioTime.hostTime(forSeconds: 1001.01))
+        let first = try estimated.stamp(Data(repeating: 0, count: 480))
+        precondition(first.startSample == 0 && first.timing == "estimated")
+        precondition(abs(first.capturedAt.timeIntervalSince(epoch) - 1) < 0.0001)
+        try estimated.observeInput(frames: 480, sampleRate: 48_000, hostTime: nil,
+            observedHostTime: AVAudioTime.hostTime(forSeconds: 1001.03))
+        let second = try estimated.stamp(Data(repeating: 0, count: 480))
+        precondition(second.startSample == 240 && second.timing == "estimated")
+        precondition(abs(second.capturedAt.timeIntervalSince(first.capturedAt) - 0.01) < 0.0001)
+        var device = VoiceAudioClock(wallTime: epoch, hostTime: host)
+        try device.observeInput(frames: 480, sampleRate: 48_000, hostTime: host)
+        var rejectedGap = false
+        do {
+            try device.observeInput(frames: 480, sampleRate: 48_000,
+                hostTime: AVAudioTime.hostTime(forSeconds: 1001))
+        } catch { rejectedGap = true }
+        precondition(rejectedGap, "A device clock gap must not silently become contiguous PCM")
+        let restarted = try device.stamp(Data(repeating: 0, count: 480))
+        precondition(restarted.startSample == 0, "A new turn resets the audio sample clock")
         func command(_ json: String) -> VoiceCommand? { VoiceCommand.parse(Data(json.utf8)) }
         precondition(command(#"{"type":"start","turnId":"turn-123"}"#)?.turnID == "turn-123")
         precondition(command(#"{"type":"shutdown"}"#)?.type == "shutdown")
@@ -83,6 +124,6 @@ struct VoiceTests {
         let display = encoded["display"] as! [String: Any]
         let bounds = display["bounds"] as! [String: Double]
         precondition(bounds["x"] == -1920 && bounds["y"] == -200)
-        print("Passed synthetic PCM, command, pointer trajectory, and bounded JPEG frame checks.")
+        print("Passed synthetic PCM/timing, command, pointer trajectory, and bounded JPEG frame checks.")
     }
 }

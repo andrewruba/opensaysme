@@ -1,9 +1,9 @@
 # Developing the visual attention prototype
 
-The CLI records speech with visual context history and cursor trajectories, then
-produces a structured action preview. Gestures indicate attention; there are no
-predefined gesture commands or content categories. Execution, drawing overlays,
-and gaze capture remain future work.
+The CLI records speech with visual context history and timed cursor trajectories,
+then produces a natural-language response. Gestures indicate attention; there are
+no predefined gesture commands, content categories, or required response types.
+Execution, on-screen overlays, and gaze capture remain future work.
 
 Use Node.js 22.20+ and npm:
 
@@ -24,6 +24,10 @@ keys. The package remains private while release packaging is unfinished.
 Existing speech-only configurations need `npm run dev -- setup --replace`. This
 asks for reasoning preferences and visual-sharing consent before replacing the
 file. Configuration is not silently migrated or opted into screen sharing.
+Rebuild the macOS helper with `npm run build:native` after updating: audio events
+now require capture timestamps and sample offsets. Run `npm ci` after updating to
+install sharp and its platform image-processing binaries. Existing visual-sharing
+configuration and provider keys are unchanged.
 
 ## Voice interaction
 
@@ -33,7 +37,7 @@ file. Configuration is not silently migrated or opted into screen sharing.
 - Tap **Ctrl+Shift+Space** again to stop audio and freeze visual capture. No hold
   is needed. Silence does not automatically finish a turn.
 - Final transcript feedback appears immediately when transcription finishes.
-  `interpreting` then produces a preview and any clarification question.
+  `interpreting` prepares visual evidence and produces a natural-language response.
 - **Escape** cancels recording or interpretation. **Ctrl+C** quits and cleans up
   native hooks, microphone capture, screenshot processes, and provider requests.
 - The runtime returns to `ready` after each turn. Activation is ignored during
@@ -41,10 +45,10 @@ file. Configuration is not silently migrated or opted into screen sharing.
   continue an earlier conversation.
 
 Recording is limited to two minutes. Startup, provider connection, finalization,
-preview, and native cleanup have deadlines. If microphone cleanup cannot be
+reasoning, and native cleanup have deadlines. If microphone cleanup cannot be
 confirmed, the runtime exits rather than claiming it is ready to record again.
 
-## Attention history and preview
+## Attention history and reasoning
 
 Audio, speech connection, screen capture, and window/selection capture start
 concurrently. Native helpers report changed cursor positions at up to 20 Hz. The
@@ -58,8 +62,10 @@ turn. Speech continues with explicit warnings when context is unavailable.
 
 History retains at most twelve representative JPEGs, 24 context observations,
 and 8 MB of base64 image data. Images have a maximum edge of 1,600 pixels and a
-maximum JPEG size of 700 KB. Identical frames/context are coalesced; crowded
-interior samples are thinned while retaining the first and latest. Selected text
+maximum JPEG size of 700 KB. Repeated screenshots are retained so later speech
+and movement still have a nearby frame; identical context observations are
+coalesced. Crowded interior samples are thinned while retaining the first and
+latest. Selected text
 is capped at 4,096 characters per observation. Limits appear in history warnings.
 
 Frame IDs, display bounds, and capture times identify historical screen content.
@@ -67,30 +73,66 @@ macOS and Windows capture the display under the pointer at each sample; Linux
 captures the X11 virtual root. Sampling can miss scrolling or a brief display
 switch. Cursor paths between frames do not prove that the image stayed unchanged.
 
-Native wall timestamps map to a monotonic turn clock. Capture and receipt times
-remain separate, and invalid clock intervals generate warnings. Speech deltas
-have **receipt times only**, not word timestamps. Audio metadata records first
-chunk arrival and sample duration, not acoustic alignment. The model receives
-these limitations and can ask for clarification instead of assuming which
-position corresponds to a spoken word.
+Native wall timestamps map to a monotonic turn clock. Every audio chunk carries
+the first sample's capture timestamp, a cumulative 24 kHz sample offset, and its
+clock quality. macOS uses the device host clock when available. Windows uses an
+estimated capture-start clock; Linux estimates from the first recorder pipe read.
+Those estimates include unknown device/startup buffering. Missing or repeated
+sample offsets fail the turn; invalid capture clocks leave phrase times null
+with a warning instead of substituting arrival time.
 
-After the transcript finishes, one OpenAI Responses request combines it with
-representative frames and bounded attention history. The initial reasoning model
-is `gpt-5.4-mini`, independently configurable from speech. Outputs are proposals
-for `focus_window`, `return_to_previous`, `insert_text`, `clarify`, or `unsupported`.
-Frame/context/window IDs and normalized image regions are checked against the
-supplied evidence. Action types do not classify gestures or screen content.
-Nothing is executed. Returning to a previous window needs focus history within
-this turn. A preview request times out after twenty seconds.
+Transcription uses one connection per activated turn. A lightweight local energy
+check commits phrases after 400 ms of quiet following sound, or four seconds of
+continuous input. All captured audio is streamed once; speech is never discarded
+based on the energy check. Phrases finalize while recording continues, so stopping
+waits only for unfinished phrases. There is no extra alignment model call and no
+requirement to pause or change the tap-to-toggle interaction. A final fragment
+shorter than the provider's minimum is padded with silence; that padding is excluded
+from the recorded sample range.
+
+`attention.transcript` contains final phrase text, `startSample`/`endSample`
+(exclusive end), mapped `startMs`/`endMs`, `receivedAtMs`, a `pause`/`limit`/`stop`
+boundary, and `device`/`estimated`/`unavailable` timing. Provider item IDs keep phrases
+in capture order despite delayed results. These are **committed audio intervals**,
+not exact word boundaries: pauses are included and duration limits can split words.
+The model can compare a phrase's interval with cursor and screen history, but
+should acknowledge ambiguity when timing or visual evidence is insufficient.
+
+After the transcript finishes, each retained frame is paired with overlapping
+speech phrases and a nearby cursor interval, at most 750 ms on either side of
+capture. Adjacent frames and observed window changes narrow that interval. Cursor
+coordinates are normalized using the captured display bounds. Trails break across
+observed window/display changes, out-of-bounds samples, and gaps over 250 ms.
+Sampling can still miss navigation, and a single phrase can refer to several frames.
+
+Optional full-size copies show cyan trails fading from older to newer observations.
+A filled dot marks the latest trail endpoint, which may be after frame capture; a
+hollow ring marks the last observed pointer at or before capture. Exact point times
+remain in metadata. The clean screenshot accompanies its marked copy so trails do
+not hide the only view of content. No crops or on-screen overlays are created.
+
+Local rendering uses two workers, a two-second deadline, and an additional 8 MB
+base64 budget. Failures or limits fall back to clean images and timed coordinates,
+with warnings. One OpenAI Responses request sends at most twelve originals and
+twelve marked copies, plus bounded attention history. The initial reasoning model
+is `gpt-5.4-mini`, independently configurable from speech. It returns ordinary text,
+without an action enum or required per-phrase outcome. Nothing is executed. The
+provider request times out after twenty seconds.
+
+Result JSON contains `response`, `attention`, and `visualContext.frames`. Each
+visual entry records its frame ID, interval, associated phrase/context IDs,
+normalized timed paths, pointer sample, warnings, and `trailImageIncluded`.
+`visualContext.warnings` describes rendering omissions. Image bytes are not printed.
 
 ## Configuration and data sharing
 
 Speech uses OpenAI `gpt-live-transcribe` over Realtime WebSocket transcription,
-with manual turn boundaries and low-delay streaming. Other speech models are
-rejected before native access. Reasoning uses image input and structured output
+with client-selected phrase boundaries and low-delay streaming. It does not return
+word timestamps. Other speech models are
+rejected before native access. Reasoning uses image input and text output
 through Responses. Official documentation: [transcription](https://developers.openai.com/api/docs/guides/realtime-transcription),
 [image input](https://developers.openai.com/api/docs/guides/images-vision), and
-[structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses).
+[text generation](https://developers.openai.com/api/docs/guides/text).
 
 Setup saves environment-variable names, never keys. Configuration lives in the
 platform's user config directory; `OPENSAYSME_CONFIG_DIR` overrides it. Setup only
@@ -117,8 +159,9 @@ Reasoning configuration and explicit `shareVisualContext: true` are required.
 Only OpenAI is implemented for this slice; OS credential-store setup remains
 future work. Setup makes no provider request.
 
-Activated audio streams directly to OpenAI. After stopping, selected screenshots,
-window titles, selected text, cursor history, and transcripts go directly to the
+Activated audio streams directly to OpenAI. After stopping, full screenshots and
+optional trail copies, window titles, selected text, cursor history, and transcripts
+go directly to the
 reasoning provider. Setup explains and asks to enable this sharing. Provider
 charges and data policies apply. The Responses request uses `store: false`;
 provider retention policies still apply.
@@ -126,7 +169,7 @@ provider retention policies still apply.
 Screenshots and audio stay in memory locally; no files or application logs are
 created. Frame/context history is released on completion or cancellation. Screen
 image payloads are never printed. Results are JSON on stdout; state, transcript,
-and preview feedback appear on stderr. Text and attention metadata can contain
+and response feedback appear on stderr. Text and attention metadata can contain
 private content and remain in terminal scrollback or user-created redirects.
 Cancellation aborts requests; data already sent cannot be recalled. `doctor`
 checks key presence only, without authentication, paid requests, or device capture.
@@ -139,16 +182,22 @@ Completed results include milliseconds on a monotonic clock:
   and the first PCM chunk received by the runtime.
 - `activationToProviderReadyMs`, `activationToFirstTranscriptMs`: speech session
   configuration and first nonempty partial transcript.
+- `activationToFirstPhraseMs`: first completed phrase delivered to the runtime.
+- `maxPhraseFinalizationMs`: largest capture-end-to-phrase-delivery delay, when
+  capture timing is available; estimated capture clocks also affect this metric.
+- `maxAudioDeliveryLagMs`: largest captured-chunk-end-to-Node-delivery delay.
 - `stopToFinalTranscriptMs`: second tap to final speech transcript.
 - `contextCaptureMs`: activation to the first retained context observation, if any.
-- `previewMs`: interpretation request through validated response.
-- `stopToPreviewMs`, `stopToResultMs`: second tap through the preview/result.
+- `visualPreparationMs`: alignment and local trail-image preparation.
+- `reasoningMs`: reasoning request through validated text response.
+- `stopToResponseMs`, `stopToResultMs`: second tap through the response/result.
 - `recordingMs`, `totalMs`: activation-to-stop and activation-to-result.
 
-Frame/context capture and receipt timestamps expose query overhead. These
-measurements include IPC/network delays and do not establish acoustic or
-word-level alignment. Real reference accuracy and responsiveness need interactive
-evaluation; fixture timings are not performance results.
+Frame/context capture and receipt timestamps expose query overhead. Audio delivery
+and phrase finalization measurements expose buffering/provider delays separately.
+These do not establish acoustic or word-level alignment. Real reference accuracy,
+phrase-boundary quality, and responsiveness need interactive evaluation; fixture
+timings are not performance results.
 
 ## Platform prerequisites
 
@@ -162,7 +211,11 @@ evaluation; fixture timings are not performance results.
 Dependencies are never installed by the CLI. See platform protocols and
 permission instructions under [macOS](../native/macos/README.md),
 [Windows](../native/windows/README.md), and [Linux](../native/linux/README.md).
-External Linux utilities are not bundled; review licenses before redistribution.
+Sharp supplies prebuilt image-processing binaries for supported macOS, Windows,
+and Linux targets through npm. Its wrapper is Apache-2.0; the bundled libvips package
+declares LGPL-3.0-or-later and includes other dependency licenses. Audit these
+binaries and notices before redistribution, including commercial packaging.
+External Linux utilities are not bundled; review their licenses before redistribution.
 
 ### macOS Screen Recording setup
 
@@ -210,24 +263,44 @@ docker build -f scripts/Dockerfile.x11 -t opensaysme-x11-test .
 docker run --rm --init --network none opensaysme-x11-test
 ```
 
-Verification for this slice (2026-10-28):
+Prior prototype verification (2026-10-28):
 
 - **macOS:** native build, synthetic audio/pointer/JPEG checks, and screen permission
-  denial passed. A subsequent user-run session captured five screen frames with
-  cursor/window context and returned a live preview after granting Screen Recording
-  permission. Multi-monitor behavior and visual reference accuracy remain unverified.
+  denial passed. A user-run session of the earlier visual-history prototype captured
+  five screen frames with cursor/window context and returned a live preview after
+  granting Screen Recording permission. Multi-monitor behavior and visual reference
+  accuracy remain unverified.
 - **Linux/X11:** eleven isolated Xvfb/Openbox tests passed, including in-memory
   screenshots, cursor samples, recording stop/cancellation, and cleanup. Audio is
   synthetic; this does not verify a physical desktop or microphone.
 - **Windows:** adapter fixtures, C#5 compilation, protocol and synthetic image
   checks passed. Native Windows desktop and PowerShell behavior remain unverified.
-- **Providers:** protocol fixtures cover multimodal requests, validated references,
-  cancellation, timeouts, refusal, and bounded/redacted failures. The user's live
+- **Providers:** protocol fixtures covered multimodal requests and structured references,
+  cancellation, timeouts, refusal, and bounded/redacted failures. The earlier live
   session completed transcription and a multimodal preview, with 3.48 seconds from
   the stopping tap to the preview. This single run is not a performance benchmark.
+- **Audio/phrase timing:** native sample-clock and resampling checks, twelve isolated
+  X11 tests, and provider fixtures verify sample ranges, delayed/out-of-order results,
+  pause/limit boundaries, and cancellation. Windows timing helpers compile and pass
+  synthetic checks under Mono. Subsequent user-run sessions exercised phrase timing;
+  physical device timing accuracy remains unverified. No paid request was made by
+  the automated checks.
 
-Manual acceptance: indicate a generic region while speaking, move to another
-window, and refer to the destination. Review proposed references without assigning
-any gesture/content category. Repeat after scrolling, with incidental pointer
-movement, missing screen permission, and multiple displays. Cancel during capture
-and interpretation, disconnect/retry, and confirm resources release on Ctrl+C.
+Current full-frame trail checks (2026-10-28): `npm run check` passed on macOS
+(176 tests; the 12 X11 tests skip there). All 188 tests passed in the isolated
+Linux container, including rendering and X11 integration. A synthetic twelve-frame
+1600×900 rendering run took 323 ms on macOS arm64; that measures local preparation,
+not provider latency. These automated checks made no paid requests or physical
+desktop captures. A subsequent user-run macOS session sent five clean frames and
+five trail copies, returned a specific answer about a circled word, and reported
+133 ms of visual preparation and 5.29 seconds from stop to response. This is one
+live trial, not an accuracy or latency benchmark. Windows rendering and broader
+reference accuracy remain unverified.
+
+Manual acceptance: ask about content while moving the pointer around it, then try
+a request spanning several windows. Inspect `visualContext.frames` and compare
+phrase, cursor, and frame times with the response. Repeat during rapid navigation,
+scrolling, incidental movement, missing screen permission, and multiple displays.
+Try both paused and continuous speech: energy-based phrase boundaries can include
+several referents. Cancel during capture and interpretation, disconnect/retry, and
+confirm resources release on Ctrl+C.

@@ -67,15 +67,83 @@ final class VoicePCMConverter {
     }
 }
 
+struct VoiceAudioChunk {
+    let data: Data
+    let capturedAt: Date
+    let startSample: Int64
+    let timing: String
+}
+
+// Keep acquisition time separate from conversion, queueing, and pipe delivery.
+// AVAudioTime.hostTime identifies the first input sample. Converter output can
+// lag that input, so map its cumulative 24 kHz offset through the input clock.
+struct VoiceAudioClock {
+    private let wallEpoch: Date
+    private let hostEpoch: TimeInterval
+    private var anchorDate: Date?
+    private var anchorSample = 0.0
+    private var inputSamples = 0.0
+    private var outputSamples: Int64 = 0
+    private var timing = "estimated"
+
+    init(wallTime: Date = Date(), hostTime: UInt64 = mach_absolute_time()) {
+        wallEpoch = wallTime
+        hostEpoch = AVAudioTime.seconds(forHostTime: hostTime)
+    }
+
+    mutating func observeInput(frames: Int, sampleRate: Double, hostTime: UInt64?,
+                              observedHostTime: UInt64 = mach_absolute_time()) throws {
+        guard frames > 0, sampleRate.isFinite, sampleRate > 0 else {
+            throw NSError(domain: "VoiceCapture", code: 4)
+        }
+        let duration = Double(frames) / sampleRate
+        if let hostTime {
+            let date = wallEpoch.addingTimeInterval(AVAudioTime.seconds(forHostTime: hostTime) - hostEpoch)
+            if let anchorDate,
+               abs(date.timeIntervalSince(anchorDate) - (inputSamples - anchorSample) / 24_000) > 0.05 {
+                // A discontinuity cannot be represented as contiguous provider
+                // PCM without inventing silence or losing alignment.
+                throw NSError(domain: "VoiceCapture", code: 5)
+            }
+            anchorDate = date
+            anchorSample = inputSamples
+            timing = "device"
+        } else {
+            let observedDate = wallEpoch.addingTimeInterval(AVAudioTime.seconds(forHostTime: observedHostTime) - hostEpoch)
+            if anchorDate == nil {
+                anchorDate = observedDate.addingTimeInterval(-duration)
+                anchorSample = inputSamples
+            } else if let anchorDate,
+                      abs(observedDate.timeIntervalSince(anchorDate) - (inputSamples - anchorSample) / 24_000 - duration) > 0.5 {
+                throw NSError(domain: "VoiceCapture", code: 5)
+            }
+            timing = "estimated"
+        }
+        inputSamples += duration * 24_000
+    }
+
+    mutating func stamp(_ data: Data) throws -> VoiceAudioChunk {
+        guard let anchorDate, !data.isEmpty, data.count % 2 == 0 else {
+            throw NSError(domain: "VoiceCapture", code: 6)
+        }
+        let result = VoiceAudioChunk(data: data,
+            capturedAt: anchorDate.addingTimeInterval((Double(outputSamples) - anchorSample) / 24_000),
+            startSample: outputSamples, timing: timing)
+        outputSamples += Int64(data.count / 2)
+        return result
+    }
+}
+
 final class VoiceCapture {
     private let engine = AVAudioEngine()
     private let lock = NSLock()
-    private var chunks: [Data] = []
+    private var chunks: [VoiceAudioChunk] = []
     private var queuedBytes = 0
     private var failed = false
     private var accepting = true
     private var tapped = false
     private var converter: VoicePCMConverter?
+    private var clock = VoiceAudioClock()
 
     func start() throws {
         let input = engine.inputNode
@@ -84,12 +152,17 @@ final class VoiceCapture {
             throw NSError(domain: "VoiceCapture", code: 3)
         }
         self.converter = converter
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, time in
+            let observedHostTime = mach_absolute_time()
             guard let self else { return }
             self.lock.lock()
             defer { self.lock.unlock() }
             guard self.accepting, !self.failed else { return }
-            do { self.enqueue(try converter.convert(buffer)) }
+            do {
+                try self.clock.observeInput(frames: Int(buffer.frameLength), sampleRate: buffer.format.sampleRate,
+                    hostTime: time.isHostTimeValid ? time.hostTime : nil, observedHostTime: observedHostTime)
+                try self.enqueue(converter.convert(buffer))
+            }
             catch { self.failed = true }
         }
         tapped = true
@@ -98,17 +171,17 @@ final class VoiceCapture {
 
     // Called only with the lock held. A stalled parent never grows memory or
     // makes the real-time callback wait for a pipe write.
-    private func enqueue(_ data: Data) {
+    private func enqueue(_ data: Data) throws {
         guard !data.isEmpty else { return }
         if data.count > 65_536 || queuedBytes + data.count > 256 * 1024 {
             failed = true
             return
         }
-        chunks.append(data)
+        chunks.append(try clock.stamp(data))
         queuedBytes += data.count
     }
 
-    func drain() -> (chunks: [Data], failed: Bool) {
+    func drain() -> (chunks: [VoiceAudioChunk], failed: Bool) {
         lock.lock()
         defer { lock.unlock() }
         let result = (chunks, failed)
@@ -124,7 +197,7 @@ final class VoiceCapture {
         accepting = false
         if discard { chunks.removeAll(); queuedBytes = 0 }
         else if let converter, !failed {
-            do { enqueue(try converter.convert(nil, end: true)) }
+            do { try enqueue(converter.convert(nil, end: true)) }
             catch { failed = true }
         }
         lock.unlock()
@@ -323,7 +396,10 @@ final class VoiceSession {
         guard let capture, let id = turnID else { return }
         let result = capture.drain()
         if result.failed { fail("capture-failed"); return }
-        for data in result.chunks { output.send(["type": "audio", "turnId": id, "data": data.base64EncodedString()]) }
+        for chunk in result.chunks {
+            output.send(["type": "audio", "turnId": id, "data": chunk.data.base64EncodedString(),
+                "capturedAt": captureTimestamp(chunk.capturedAt), "startSample": chunk.startSample, "timing": chunk.timing])
+        }
     }
 
     private func samplePointer() {

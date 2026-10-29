@@ -35,10 +35,11 @@ or build another coding agent.
 
 ## Development prototype
 
-The CLI supports tap-to-talk transcription, visual context history, cursor
-trajectories, and a structured action preview. Gestures provide attention evidence
-alongside speech and screen content. Actions, drawing overlays, and gaze capture
-are not connected yet.
+The CLI supports tap-to-talk transcription and natural-language responses grounded
+in desktop history. Full screenshots are paired with nearby speech phrases and
+timed cursor trails, preserving attention without assigning gestures fixed meanings.
+Trail copies are model input only: there are no crops or on-screen overlays.
+Action execution and gaze capture remain future work.
 
 ```sh
 npm ci
@@ -51,9 +52,10 @@ node dist/cli.js       # Requires the API-key environment variable chosen in set
 
 Tap Ctrl+Shift+Space to start and stop; Escape cancels. Activated audio streams to
 OpenAI using your key. After stopping, selected screen frames and attention history
-go to your independently configured reasoning model for a preview. Nothing is
-executed. Existing speech-only configurations need `setup --replace` to enable
-visual sharing; macOS screen capture requires Screen Recording permission.
+go to your independently configured reasoning model for a response. Nothing is
+executed. Run `npm ci` after updating to install the image-processing dependency;
+existing visual-sharing configuration and keys still work. macOS screen capture
+requires Screen Recording permission.
 
 See [development instructions](docs/development.md) for platform prerequisites,
 provider configuration, explicit desktop tests, and current limitations.

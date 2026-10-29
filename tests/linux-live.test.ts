@@ -73,7 +73,7 @@ from pathlib import Path
 if '--version' in sys.argv:
     print('Synthetic arecord fixture')
     sys.exit(0)
-expected = ['--quiet', '--device', 'default', '--file-type', 'raw', '--format', 'S16_LE', '--rate', '24000', '--channels', '1']
+expected = ['--quiet', '--device', 'default', '--file-type', 'raw', '--format', 'S16_LE', '--rate', '24000', '--channels', '1', '--period-time', '20000', '--buffer-time', '100000', '--fatal-errors']
 if sys.argv[1:] != expected:
     sys.exit(2)
 directory = Path(os.environ['OPENSAYSME_RECORDER_FIXTURE'])
@@ -107,6 +107,10 @@ while True:
     const snapshot = await inspectLinux(false);
     expect(snapshot.window).toEqual({ id: firstWindow, title: titles[0], application: 'Xmessage' });
     expect(snapshot.selectedText).toBeUndefined();
+  });
+
+  it('checks audio sample timing without capture devices', async () => {
+    await runCommand('python3', ['native/linux/test_voice.py']);
   });
 
   it('focuses the exact second window and restores the first', async () => {
@@ -246,6 +250,15 @@ while True:
       expect(pcm.length).toBeGreaterThan(0);
       expect(pcm.length % 2).toBe(0);
       expect(pcm.equals(Buffer.alloc(pcm.length))).toBe(true);
+      expect(audio.startSample).toBe(0);
+      expect(audio.timing).toBe('estimated');
+      expect(Number.isNaN(Date.parse(audio.capturedAt))).toBe(false);
+      const next = await helper.take('audio', 'first');
+      expect(next.type).toBe('audio');
+      if (next.type === 'audio') {
+        expect(next.startSample).toBe(pcm.length / 2);
+        expect(Date.parse(next.capturedAt) - Date.parse(audio.capturedAt)).toBeCloseTo(pcm.length / 48, 0);
+      }
     }
     await runCommand('xdotool', ['key', 'ctrl+shift+space']);
     await helper.take('toggle');
@@ -258,6 +271,8 @@ while True:
     await helper.take('audio-stopped', 'first');
     helper.send({ type: 'start', turnId: 'second' });
     await helper.take('audio-started', 'second');
+    const restarted = await helper.take('audio', 'second');
+    expect(restarted).toMatchObject({ startSample: 0, timing: 'estimated' });
     await runCommand('xdotool', ['key', 'Escape']);
     await helper.take('cancel');
     helper.send({ type: 'cancel', turnId: 'second' });

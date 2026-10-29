@@ -6,10 +6,21 @@ export interface TranscriptionSession {
   close(): void;
 }
 
+/** A committed audio interval, not provider word timestamps or exact speech boundaries. */
+export interface TranscriptionPhrase {
+  id: string;
+  text: string;
+  startSample: number;
+  endSample: number;
+  boundary: 'pause' | 'limit' | 'stop';
+}
+
 export interface TranscriptionOptions {
   apiKey: string;
   model: string;
   signal: AbortSignal;
-  onDelta: (text: string) => void;
+  /** Full ordered text so completed phrases can correct earlier streaming text. */
+  onPartial: (text: string) => void;
+  onPhrase: (phrase: TranscriptionPhrase) => void;
 }
 export type TranscriptionFactory = (options: TranscriptionOptions) => TranscriptionSession;

@@ -23,6 +23,17 @@ emits `audio-stopped`, retaining Escape until `settled`; `cancel` discards captu
 and acknowledges cleanup with `audio-stopped`. Escape emits `cancel`, stops
 capture immediately, and awaits the parent's cancellation acknowledgement.
 
+Every audio chunk includes `startSample`, its cumulative 24 kHz PCM sample offset,
+and `capturedAt`, the estimated UTC time of its first sample. The initial pipe read
+minus its audio duration anchors a monotonic/sample clock; later pipe or IPC delays
+do not move the timeline. Offsets reset each turn and count only complete samples,
+including audio drained on stop. Because raw `arecord` output has no device clock,
+`timing` is always `estimated`: initial device/pipe buffering and hardware clock
+drift remain uncertain. These are not hardware-accurate acoustic timestamps.
+Capture requests 20 ms periods and a 100 ms ALSA buffer to limit startup buffering;
+actual hardware latency remains unverified. ALSA errors terminate capture instead
+of recovering silently across an overrun and hiding a gap in the sample timeline.
+
 Capture is capped at 120 seconds, microphone startup at five seconds, command
 input at 8 KiB, and pending protocol output at 512 KiB. Signal, EOF, and failure
 paths stop/reap the recorder and release all grabs. Fixed error codes avoid
@@ -54,3 +65,5 @@ with a synthetic `arecord` executable on the test child's PATH. This verifies
 hotkeys, repeat suppression, pointer ownership and trajectories, bounded JPEG frames, streaming, cancellation,
 restart, and shutdown; it does not validate a physical microphone or a hosted
 provider. Run it using the Docker instructions in `docs/development.md`.
+Run `python3 native/linux/test_voice.py` for device-free sample clock, delayed
+delivery, partial-sample, stop-drain, and repeated-turn checks.

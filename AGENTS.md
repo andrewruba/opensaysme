@@ -2,7 +2,7 @@
 
 Read `README.md` for the product intent and `PLAN.md` for the current MVP scope.
 Keep both accurate as implementation decisions become concrete. This repository
-contains a tap-to-talk runtime, visual attention history, action previews, and
+contains a tap-to-talk runtime, visual attention history, natural responses, and
 desktop probes. See
 `docs/development.md` for setup, validation commands, and platform limitations.
 

@@ -4,7 +4,7 @@ import { desktopAdapter } from './desktop/index.js';
 import { startVoiceHelper } from './desktop/voice-process.js';
 import { openAITranscription, streamingModel } from './speech/openai.js';
 import { VoiceRuntime, type VoiceOutput } from './runtime.js';
-import { openAIActionPreview } from './preview/openai.js';
+import { openAIReasoning } from './reasoning/openai.js';
 
 export async function runVoice(config: Config, signal: AbortSignal, emit: (output: VoiceOutput) => void): Promise<void> {
   const apiKey = process.env[config.speech.apiKeyEnv];
@@ -12,14 +12,14 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
   if (config.speech.model !== streamingModel) throw new Error(`Set speech.model to "${streamingModel}" for live transcription.`);
   if (!config.shareVisualContext) throw new Error('Run opensaysme setup --replace to enable visual context sharing.');
   const reasoningKey = process.env[config.reasoning.apiKeyEnv];
-  if (!reasoningKey?.trim()) throw new Error(`Set ${config.reasoning.apiKeyEnv} in your environment before starting action previews.`);
+  if (!reasoningKey?.trim()) throw new Error(`Set ${config.reasoning.apiKeyEnv} in your environment before starting reasoning.`);
   if (signal.aborted) return;
   const adapter = await desktopAdapter();
   const spec = await adapter.voiceHelper();
   if (signal.aborted) return;
   const input = startVoiceHelper(spec, (event) => runtime.handle(event));
   const runtime = new VoiceRuntime({ input, transcribe: openAITranscription, captureContext: adapter.captureContext,
-    captureFrame: adapter.captureFrame, preview: openAIActionPreview({ apiKey: reasoningKey, model: config.reasoning.model }),
+    captureFrame: adapter.captureFrame, reason: openAIReasoning({ apiKey: reasoningKey, model: config.reasoning.model }),
     apiKey, model: config.speech.model, emit });
   let resolveStopped!: () => void;
   const stopped = new Promise<void>((resolve) => { resolveStopped = resolve; });

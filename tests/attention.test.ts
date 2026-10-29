@@ -20,7 +20,10 @@ function fixture() {
     signal: controller.signal, frameIntervalMs: 100, contextIntervalMs: 100 });
   collectors.push(collector);
   const pointer = (x: number, y = 100, capturedAt = timestamp()) => collector.pointer({ type: 'pointer', turnId: 'turn', capturedAt, x, y, displayId: 'display' });
-  return { collector, controller, captureFrame, captureContext, frame, context, pointer };
+  const audio = (startSample: number, capturedAtMs: number, samples: number, timing: 'device' | 'estimated' = 'device') => collector.audio({
+    type: 'audio', turnId: 'turn', startSample, capturedAt: new Date(epoch + capturedAtMs).toISOString(), timing, data: 'AAA=',
+  }, samples * 2);
+  return { collector, controller, captureFrame, captureContext, frame, context, pointer, audio };
 }
 
 it('preserves generic attention paths and changing source/destination context without labeling gestures', async () => {
@@ -30,22 +33,25 @@ it('preserves generic attention paths and changing source/destination context wi
   }
   f.context.activeWindow = { id: 'target', application: 'Terminal' };
   f.frame.image.data = '/9j/AQ==';
-  f.collector.delta('use this');
+  f.audio(0, 100, 9600);
+  f.collector.phrase({ id: 'p1', startSample: 0, endSample: 9600, boundary: 'pause', text: 'use this' });
   await vi.advanceTimersByTimeAsync(100);
   const history = f.collector.freeze();
-  expect(history.frames).toHaveLength(2);
+  expect(history.frames).toHaveLength(7);
   expect(history.contexts.map((entry) => entry.context.activeWindow?.id)).toEqual(['source', 'target']);
   expect(history.cursor.map((entry) => [entry.x, entry.y])).toEqual([[-100, 100], [-120, 110], [-100, 120], [-80, 110], [-100, 100]]);
   expect(history.frames[0]!.display.bounds.x).toBe(-1440);
-  expect(history.transcript[0]).toEqual({ receivedAtMs: 500, text: 'use this' });
+  expect(history.transcript[0]).toMatchObject({ startMs: 100, endMs: 500, receivedAtMs: 500, text: 'use this', timing: 'device' });
   expect(history.cursor[0]).not.toHaveProperty('gesture');
-  expect(history.warnings[0]).toContain('not word or phrase timestamps');
+  expect(history.warnings[0]).toContain('not word timestamps');
 });
 
-it('coalesces unchanged frames/context and bounds long changing histories', async () => {
+it('retains later captures of unchanged screens, coalesces context, and bounds long histories', async () => {
   let f = fixture(); await vi.advanceTimersByTimeAsync(1000);
   const stable = f.collector.freeze();
-  expect(stable.frames).toHaveLength(1);
+  expect(stable.frames).toHaveLength(11);
+  expect(stable.frames.at(-1)?.atMs).toBe(1000);
+  expect(stable.frames[0]?.image).toEqual(stable.frames.at(-1)?.image);
   expect(stable.contexts).toHaveLength(1);
   f = fixture(); await flush();
   for (let i = 1; i <= 50; i++) {
@@ -77,7 +83,8 @@ it('aborts in-flight capture and rejects late samples when the turn freezes', as
   expect(history.frames).toHaveLength(1);
   expect(history.cursor).toHaveLength(0);
   expect(f.captureFrame).toHaveBeenCalledTimes(2);
-  f.collector.delta('delivered after stop');
+  f.audio(0, 0, 2400);
+  f.collector.phrase({ id: 'p1', startSample: 0, endSample: 2400, boundary: 'stop', text: 'delivered after stop' });
   expect(history.transcript.at(-1)?.text).toBe('delivered after stop');
 });
 
@@ -96,11 +103,33 @@ it('reports native clock jumps and does not present transcript delivery as speec
   const f = fixture(); await flush();
   await vi.advanceTimersByTimeAsync(100);
   f.pointer(10, 10, new Date(epoch + 50_000).toISOString());
-  f.collector.delta('this');
+  f.audio(0, 50_000, 2400);
+  f.collector.phrase({ id: 'p1', startSample: 0, endSample: 2400, boundary: 'stop', text: 'this' });
   const history = f.collector.freeze();
   expect(history.cursor[0]).toMatchObject({ atMs: 100, receivedAtMs: 100 });
   expect(history.warnings.some((warning) => warning.includes('outside its request interval'))).toBe(true);
-  expect(history.transcript[0]).not.toHaveProperty('atMs');
+  expect(history.transcript[0]).toMatchObject({ receivedAtMs: 100, startMs: null, endMs: null, timing: 'unavailable' });
+});
+
+it('orders delayed phrases by captured audio, accepts a drained tail, and ignores cancelled callbacks', async () => {
+  const f = fixture(); await vi.advanceTimersByTimeAsync(200);
+  f.audio(0, 50, 2400);
+  f.audio(2400, 150, 1200);
+  const history = f.collector.freeze();
+  await vi.advanceTimersByTimeAsync(500);
+  f.audio(3600, 200, 1200);
+  f.collector.phrase({ id: 'second', startSample: 2400, endSample: 4800, boundary: 'stop', text: 'over here' });
+  await vi.advanceTimersByTimeAsync(300);
+  f.collector.phrase({ id: 'first', startSample: 0, endSample: 2400, boundary: 'pause', text: 'use this' });
+  expect(history.transcript.map(({ text, startMs, endMs, receivedAtMs }) => ({ text, startMs, endMs, receivedAtMs }))).toEqual([
+    { text: 'use this', startMs: 50, endMs: 150, receivedAtMs: 1000 },
+    { text: 'over here', startMs: 150, endMs: 250, receivedAtMs: 700 },
+  ]);
+  const summary = attentionSummary(history);
+  f.controller.abort();
+  f.collector.phrase({ id: 'late', startSample: 0, endSample: 2400, boundary: 'stop', text: 'stale' });
+  expect(history.transcript).toEqual([]);
+  expect(summary.transcript).toHaveLength(2);
 });
 
 it('continues context capture when screen permission is denied and bounds retries', async () => {

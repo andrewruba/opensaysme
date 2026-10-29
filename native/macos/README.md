@@ -67,6 +67,11 @@ by the CLI for action previews; the helper itself has no provider access.
 Ctrl+Shift+Space without opening the microphone. A `start` command begins one
 turn and may prompt for microphone permission. Audio is resampled to 24 kHz mono
 signed 16-bit little-endian PCM, sent in bounded base64 chunks, and never saved.
+Each audio chunk includes its first sample's UTC `capturedAt`, cumulative 24 kHz
+`startSample`, and `timing`. Device host timestamps are mapped to a fixed wall-clock
+anchor before queueing and adjusted for resampling and final converter output.
+Missing device timestamps use an explicitly `estimated` sample clock; discontinuous
+device times or a stalled estimate fail the turn instead of silently misaligning it.
 `stop` drains the microphone before acknowledging completion; `cancel` discards
 it. Escape is registered only during an active turn, including transcription,
 and is released by `cancel` or `settled`. Key repeat does not retrigger turns.
@@ -85,7 +90,8 @@ Run native conversion and protocol checks without microphone access:
 sh native/macos/test.sh
 ```
 
-These checks convert synthetic 44.1/48 kHz mono/stereo buffers, reject invalid
+These checks convert and timestamp synthetic 44.1/48 kHz mono/stereo buffers,
+including delayed delivery, resampler tail, clock gaps, and turn reset; reject invalid
 commands, exercise pointer sampling lifecycle, and encode a bounded synthetic JPEG
 with display coordinates. They never capture the screen. Native compilation and protocol checks do not establish microphone
 quality, real hotkey delivery, or AX behavior in every application; those require

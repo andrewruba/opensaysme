@@ -99,6 +99,16 @@ public sealed class OpenSaysMeVoice
     private void Emit(string type) { Emit(type, null, null, null); }
     private void Error(string code, string id) { Emit("error", id, "code", code); }
 
+    private void EmitAudio(AudioChunk chunk)
+    {
+        string line = new JavaScriptSerializer().Serialize(new Dictionary<string, object> {
+            { "type", "audio" }, { "turnId", turnId }, { "data", Convert.ToBase64String(chunk.Data) },
+            { "capturedAt", chunk.CapturedAt.ToString("o") }, { "startSample", chunk.StartSample },
+            { "timing", "estimated" }
+        });
+        if (!output.TryAdd(line)) shutdown = true;
+    }
+
     private void SamplePointer()
     {
         if (capture == null || recording == null || recording.ElapsedMilliseconds < pointerAt) return;
@@ -121,9 +131,7 @@ public sealed class OpenSaysMeVoice
         try
         {
             previous.Stop();
-            if (deliverTail) previous.Drain(delegate(byte[] bytes) {
-                Emit("audio", turnId, "data", Convert.ToBase64String(bytes));
-            }, false);
+            if (deliverTail) previous.Drain(EmitAudio, false);
         }
         finally { previous.Dispose(); }
     }
@@ -246,9 +254,7 @@ public sealed class OpenSaysMeVoice
                         CancelInput();
                         Error("capture-failed", expiredTurn);
                     }
-                    else capture.Drain(delegate(byte[] bytes) {
-                        Emit("audio", turnId, "data", Convert.ToBase64String(bytes));
-                    }, true);
+                    else capture.Drain(EmitAudio, true);
                 }
                 Thread.Sleep(5);
             }
@@ -286,6 +292,36 @@ public sealed class OpenSaysMeVoice
     [DllImport("user32.dll")]
     private static extern bool PeekMessage(out Message message, IntPtr window, uint min, uint max, uint remove);
 
+    private sealed class AudioChunk
+    {
+        public byte[] Data;
+        public DateTime CapturedAt;
+        public long StartSample;
+    }
+
+    // WinMM buffer completion does not expose a hardware acquisition timestamp.
+    // Anchor once just before waveInStart and advance by actual PCM samples, not
+    // by polling or pipe-write time. This remains explicitly estimated because
+    // startup/driver latency is unknown. A full ring is rejected below.
+    private sealed class AudioClock
+    {
+        private readonly DateTime captureStart;
+        private long samples;
+
+        public AudioClock(DateTime captureStart) { this.captureStart = captureStart; }
+
+        public AudioChunk Stamp(byte[] bytes)
+        {
+            if (bytes.Length == 0 || bytes.Length % 2 != 0) throw new InvalidOperationException();
+            AudioChunk chunk = new AudioChunk {
+                Data = bytes, StartSample = samples,
+                CapturedAt = captureStart.AddTicks(samples * TimeSpan.TicksPerSecond / 24000)
+            };
+            samples += bytes.Length / 2;
+            return chunk;
+        }
+    }
+
     private sealed class Capture : IDisposable
     {
         private const int BufferBytes = 4800; // 100 ms of 24 kHz mono signed 16-bit PCM.
@@ -295,6 +331,7 @@ public sealed class OpenSaysMeVoice
         private IntPtr input;
         private int nextBuffer;
         private bool stopped;
+        private AudioClock clock;
 
         public Capture()
         {
@@ -315,13 +352,24 @@ public sealed class OpenSaysMeVoice
                     prepared[i] = true;
                     Check(waveInAddBuffer(input, headers[i], headerSize));
                 }
+                clock = new AudioClock(DateTime.UtcNow);
                 Check(waveInStart(input));
             }
             catch { Dispose(); throw; }
         }
 
-        public void Drain(Action<byte[]> emit, bool requeue)
+        public void Drain(Action<AudioChunk> emit, bool requeue)
         {
+            // With all four buffers full, the driver may have discarded samples
+            // while no replacement was queued. Do not fabricate a continuous
+            // capture clock after a stalled loop, including during final drain.
+            bool fullRing = true;
+            for (int i = 0; i < headers.Length; i++)
+            {
+                WaveHeader pending = (WaveHeader)Marshal.PtrToStructure(headers[i], typeof(WaveHeader));
+                if ((pending.Flags & 1) == 0 || pending.BytesRecorded != BufferBytes) fullRing = false;
+            }
+            if (fullRing) throw new InvalidOperationException();
             // FIFO order matters after ring wrap, especially for the final tail.
             for (int count = 0; count < headers.Length; count++)
             {
@@ -334,7 +382,7 @@ public sealed class OpenSaysMeVoice
                 {
                     byte[] bytes = new byte[header.BytesRecorded];
                     Marshal.Copy(buffers[i], bytes, 0, bytes.Length);
-                    emit(bytes);
+                    emit(clock.Stamp(bytes));
                     Array.Clear(bytes, 0, bytes.Length);
                 }
                 nextBuffer = (nextBuffer + 1) % headers.Length;

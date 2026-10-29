@@ -27,6 +27,12 @@ or newer for per-monitor DPI awareness; unsupported capture is reported explicit
   lines and pipe queues are bounded. EOF, shutdown, and capture failure clean up
   registrations and audio handles. The parent sends audio to its configured
   transcription provider; desktop context is not included in that request.
+  Audio events carry `capturedAt` for the first PCM sample and a cumulative 24 kHz
+  `startSample`, reset for each turn. WinMM provides no hardware capture timestamp
+  here: `timing: "estimated"` uses a wall-clock anchor at recording start plus sample
+  counts, independent of pipe delivery. Driver/startup latency remains uncertain.
+  A full four-buffer ring fails the turn because samples may have been lost while
+  the capture loop was stalled; it must not silently claim continuous timing.
 - `visual.cs` / `frame.ps1` capture the monitor under the pointer into an in-memory
   JPEG, reduced to at most 1600 pixels on the longest edge and 700,000 bytes. Native
   source bounds and pointer samples use physical desktop pixels, including negative
@@ -74,7 +80,8 @@ powershell.exe -NoLogo -NoProfile -NonInteractive -File ./native/windows/test-vo
 ```
 
 The last command checks protocol validation, cancellation acknowledgments, stale
-turn isolation, output backpressure, and JPEG encoding of a synthetic bitmap without calling any Windows desktop or
+turn isolation, output backpressure, audio sample/tail timing and ring-stall rejection,
+and JPEG encoding of a synthetic bitmap without calling any Windows desktop or
 microphone APIs. Native capture and hotkey delivery still require manual Windows
 verification; compiling on another OS does not establish that they work.
 
