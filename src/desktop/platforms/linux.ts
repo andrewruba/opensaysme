@@ -2,8 +2,10 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { runCommand } from '../process.js';
 import { desktopTestResultSchema, type Capability, type DesktopReport, type DesktopSnapshot, type DesktopTestResult } from '../types.js';
+import { desktopContextSchema, type DesktopContext, type VoiceHelperSpec } from '../voice-types.js';
 
 const hotkeyHelperPath = fileURLToPath(new URL('../../../native/linux/hotkey.py', import.meta.url));
+const voiceHelperPath = fileURLToPath(new URL('../../../native/linux/voice.py', import.meta.url));
 
 type Session = 'x11' | 'wayland' | 'headless';
 
@@ -33,8 +35,8 @@ function windowId(value: string): string {
   return normalized;
 }
 
-async function activeWindowId(): Promise<string | null> {
-  const output = await runCommand('xdotool', ['getactivewindow'], { timeoutMs: 3000 });
+async function activeWindowId(signal?: AbortSignal): Promise<string | null> {
+  const output = await runCommand('xdotool', ['getactivewindow'], { timeoutMs: 3000, ...(signal ? { signal } : {}) });
   return output.trim() === '0' ? null : windowId(output);
 }
 
@@ -45,12 +47,13 @@ function checkedText(text: string, description: string, limit: number): string {
   return text;
 }
 
-async function windowApplication(id: string): Promise<string> {
+async function windowApplication(id: string, signal?: AbortSignal): Promise<string> {
+  const options = { timeoutMs: 3000, ...(signal ? { signal } : {}) };
   try {
-    return await runCommand('xdotool', ['getwindowclassname', id], { timeoutMs: 3000 });
+    return await runCommand('xdotool', ['getwindowclassname', id], options);
   } catch {
     // Stable distributions can ship xdotool versions predating getwindowclassname.
-    const output = await runCommand('xprop', ['-id', id, 'WM_CLASS'], { timeoutMs: 3000 });
+    const output = await runCommand('xprop', ['-id', id, 'WM_CLASS'], options);
     const match = /^WM_CLASS\(STRING\) = "(?:\\.|[^"\\])*", ("(?:\\.|[^"\\])*")\s*$/.exec(output);
     if (!match?.[1]) throw new Error('The X11 window has no valid WM_CLASS property.');
     return z.string().parse(JSON.parse(match[1]));
@@ -230,4 +233,63 @@ export async function testLinuxHotkey(durationSeconds: number): Promise<DesktopT
       detail: 'The X11 shortcut helper failed. Check Python 3, libX11, DISPLAY authorization, and whether another application owns Ctrl+Shift+Space.',
     };
   }
+}
+
+export async function linuxVoiceHelper(): Promise<VoiceHelperSpec> {
+  requireX11();
+  const [recorder, hotkeys] = await Promise.all([
+    isInstalled('arecord', ['--version']),
+    runCommand('python3', [hotkeyHelperPath, '--probe'], { timeoutMs: 3000 })
+      .then((output) => z.object({ available: z.literal(true) }).strict().parse(JSON.parse(output)))
+      .then(() => true).catch(() => false),
+  ]);
+  if (!recorder || !hotkeys) {
+    throw new Error('Linux voice requires arecord (alsa-utils), Python 3, and libX11 in a logged-in X11 session.');
+  }
+  return { file: 'python3', args: [voiceHelperPath] };
+}
+
+const pointerSnapshotSchema = z.object({
+  x: z.number().int(), y: z.number().int(),
+  windowId: z.string().regex(/^[1-9]\d{0,9}$/).nullable(),
+}).strict();
+
+export async function captureLinuxContext(signal?: AbortSignal): Promise<DesktopContext> {
+  requireX11();
+  signal?.throwIfAborted();
+  const capturedAt = new Date().toISOString();
+  const options = { timeoutMs: 3000, ...(signal ? { signal } : {}) };
+  const context: DesktopContext = { platform: 'linux', capturedAt, activeWindow: null, warnings: [] };
+  const metadata = async (id: string): Promise<NonNullable<DesktopContext['activeWindow']>> => {
+    const [application, title] = await Promise.all([
+      windowApplication(id, signal),
+      runCommand('xdotool', ['getwindowname', id], options),
+    ]);
+    const name = checkedText(application.trim(), 'Window application', 1024);
+    if (!name) throw new Error('Missing application class');
+    return { id, application: name, title: checkedText(title.replace(/\r?\n$/, ''), 'Window title', 8192) };
+  };
+  // IDs and coordinates are captured once, before metadata lookup. Neither voice
+  // nor a later pointer movement changes which windows this turn refers to.
+  const [active, pointer, selection] = await Promise.allSettled([
+    activeWindowId(signal).then((id) => id ? metadata(id) : null),
+    runCommand('python3', [voiceHelperPath, '--pointer'], options).then(async (output) => {
+      const point = pointerSnapshotSchema.parse(JSON.parse(output));
+      const window = point.windowId ? await metadata(windowId(point.windowId)).catch(() => null) : null;
+      if (point.windowId && !window) context.warnings.push('The window under the pointer could not be identified.');
+      return { x: point.x, y: point.y, window };
+    }),
+    runCommand('xsel', ['--primary', '--output', '--selectionTimeout', '1000'], options)
+      .then((text) => checkedText(text, 'Selected text', 65536)),
+  ]);
+  signal?.throwIfAborted();
+  if (active.status === 'fulfilled') context.activeWindow = active.value;
+  else context.warnings.push('Active-window context is unavailable; check xdotool and xprop.');
+  if (pointer.status === 'fulfilled') context.pointer = pointer.value;
+  else context.warnings.push('Pointer context is unavailable or changed during capture.');
+  if (selection.status === 'fulfilled') {
+    context.selectedText = selection.value;
+    context.warnings.push('Selected text comes from X11 PRIMARY and may belong to a different window.');
+  } else context.warnings.push('X11 PRIMARY selected text is unavailable.');
+  return desktopContextSchema.parse(context);
 }

@@ -23,7 +23,7 @@ describe('configuration', () => {
     expect(await readConfig(file)).toBeNull();
     await writeConfig(config, file);
     expect(await readConfig(file)).toEqual(config);
-    await expect(writeConfig({ ...config, reasoning: { ...config.reasoning, model: 'replacement' } }, file)).rejects.toThrow('already exists');
+    await expect(writeConfig({ ...config, reasoning: { ...config.reasoning!, model: 'replacement' } }, file)).rejects.toThrow('already exists');
     expect(JSON.parse(await readFile(file, 'utf8'))).toEqual(config);
     if (process.platform !== 'win32') expect((await stat(file)).mode & 0o777).toBe(0o600);
   });

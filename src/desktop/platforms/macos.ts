@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 import { runCommand } from '../process.js';
+import { desktopContextSchema, type DesktopContext, type VoiceHelperSpec } from '../voice-types.js';
 import {
   desktopReportSchema,
   desktopSnapshotSchema,
@@ -29,13 +30,17 @@ const nativeErrors: Record<string, string> = {
   'focus-changed': 'Desktop focus changed or the selection could not be tied to the inspected window. Retry with focus held steady.',
 };
 
-async function invoke(args: string[], timeoutMs = 10_000): Promise<string> {
+async function requireHelper(): Promise<void> {
   try {
     await access(helperPath, constants.X_OK);
   } catch {
     throw new Error('The macOS desktop helper is not built. Run npm run build:native on macOS with Xcode Command Line Tools installed.');
   }
-  return runCommand(helperPath, args, { timeoutMs });
+}
+
+async function invoke(args: string[], timeoutMs = 10_000, signal?: AbortSignal): Promise<string> {
+  await requireHelper();
+  return runCommand(helperPath, args, { timeoutMs, signal });
 }
 
 function decode<T>(schema: z.ZodType<T>, output: string): T {
@@ -116,4 +121,18 @@ export function testMacOSHotkey(durationSeconds: number): Promise<DesktopTestRes
 
 export function testMacOSMicrophone(durationSeconds: number): Promise<DesktopTestResult> {
   return test('microphone', durationSeconds);
+}
+
+export async function macOSVoiceHelper(): Promise<VoiceHelperSpec> {
+  await requireHelper();
+  return { file: helperPath, args: ['--voice'] };
+}
+
+export async function captureMacOSContext(signal?: AbortSignal): Promise<DesktopContext> {
+  const result = decode(desktopContextSchema, await invoke(['--context'], 4_000, signal));
+  if (result.platform !== 'darwin' || [result.activeWindow, result.pointer?.window]
+    .some((window) => window && !targetIdSchema.safeParse(window.id).success)) {
+    throw new Error('The macOS desktop helper returned an invalid context target.');
+  }
+  return result;
 }

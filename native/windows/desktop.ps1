@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('probe', 'inspect', 'focus')]
+    [ValidateSet('probe', 'inspect', 'focus', 'context')]
     [string]$Operation,
     [switch]$IncludeSelection,
     [string]$TargetId
@@ -16,6 +16,10 @@ using System;
 using System.Text;
 using System.Runtime.InteropServices;
 public static class OpenSaysMeDesktop {
+    [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out Point point);
+    [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(Point point);
+    [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr handle, uint flags);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr handle);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr handle);
@@ -33,7 +37,7 @@ public static class OpenSaysMeDesktop {
 '@
 
 function Write-Response($Value) {
-    $Value | ConvertTo-Json -Compress -Depth 5
+    $Value | ConvertTo-Json -Compress -Depth 6
 }
 
 function Load-Automation {
@@ -44,6 +48,64 @@ function Load-Automation {
     } catch {
         return $false
     }
+}
+
+function Read-Window([IntPtr]$Handle) {
+    if ($Handle -eq [IntPtr]::Zero) { return $null }
+    if (-not [OpenSaysMeDesktop]::IsWindow($Handle)) { throw 'Window unavailable.' }
+    [uint32]$ownerProcess = 0
+    $null = [OpenSaysMeDesktop]::GetWindowThreadProcessId($Handle, [ref]$ownerProcess)
+    $application = (Get-Process -Id $ownerProcess).ProcessName
+    $title = New-Object System.Text.StringBuilder(16385)
+    $null = [OpenSaysMeDesktop]::GetWindowText($Handle, $title, $title.Capacity)
+    return @{
+        id = "win32:${ownerProcess}:$($Handle.ToInt64())"
+        application = $application; title = $title.ToString()
+    }
+}
+
+function Read-Selection([IntPtr]$Foreground) {
+    $script:failureCode = 'selection-unavailable'
+    if (-not (Load-Automation)) { throw 'Windows UI Automation is unavailable.' }
+    $element = [System.Windows.Automation.AutomationElement]::FocusedElement
+    if ($null -eq $element -or $element.Current.IsPassword) { throw 'Selection protected or unavailable.' }
+    $ancestor = $element
+    $belongsToForeground = $false
+    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+    for ($depth = 0; $depth -lt 128 -and $null -ne $ancestor; $depth++) {
+        if ($ancestor.Current.IsPassword) { throw 'Selection protected.' }
+        if ([OpenSaysMeDesktop]::MatchesAutomationHandle($Foreground, $ancestor.Current.NativeWindowHandle)) {
+            $belongsToForeground = $true
+            break
+        }
+        $ancestor = $walker.GetParent($ancestor)
+    }
+    if (-not $belongsToForeground) {
+        $script:failureCode = 'focus-changed'
+        throw 'Desktop focus changed.'
+    }
+    [object]$pattern = $null
+    if (-not $element.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$pattern) -or
+        $pattern.SupportedTextSelection -eq [System.Windows.Automation.SupportedTextSelection]::None) {
+        throw 'Selection unavailable.'
+    }
+    $parts = @()
+    $remaining = 16384
+    foreach ($range in $pattern.GetSelection()) {
+        $part = $range.GetText($remaining + 1)
+        if ($part.Length -gt $remaining) {
+            $script:failureCode = 'selection-too-large'
+            throw 'Selected text exceeds the capture limit.'
+        }
+        $parts += $part
+        $remaining -= $part.Length
+    }
+    if ([OpenSaysMeDesktop]::GetForegroundWindow() -ne $Foreground -or
+        -not $element.Equals([System.Windows.Automation.AutomationElement]::FocusedElement)) {
+        $script:failureCode = 'focus-changed'
+        throw 'Desktop focus changed.'
+    }
+    return @{ selectedText = ($parts -join '') }
 }
 
 $failureCode = 'native-failure'
@@ -88,67 +150,41 @@ try {
         throw 'Windows refused foreground activation. Activate the tool deliberately and try again.'
     }
 
-    if ($foreground -eq [IntPtr]::Zero) {
-        Write-Response @{ version = 1; operation = 'inspect'; window = $null }
+    if ($Operation -eq 'context') {
+        # Freeze coordinates and window identities before the slower optional UIA read.
+        $context = @{
+            platform = 'win32'; capturedAt = [DateTime]::UtcNow.ToString('o')
+            activeWindow = $null; warnings = @()
+        }
+        $position = New-Object OpenSaysMeDesktop+Point
+        if ([OpenSaysMeDesktop]::GetCursorPos([ref]$position)) {
+            $pointed = [OpenSaysMeDesktop]::WindowFromPoint($position)
+            if ($pointed -ne [IntPtr]::Zero) {
+                $pointed = [OpenSaysMeDesktop]::GetAncestor($pointed, 2) # GA_ROOT
+            }
+            $context.pointer = @{ x = $position.X; y = $position.Y; window = $null }
+            try { $context.pointer.window = Read-Window $pointed }
+            catch { $context.warnings += 'The window under the pointer was unavailable.' }
+        } else { $context.warnings += 'Pointer position was unavailable.' }
+        try {
+            $context.activeWindow = Read-Window $foreground
+            if ($null -eq $context.activeWindow) { $context.warnings += 'No active window was available.' }
+        }
+        catch { $context.warnings += 'The active window was unavailable.' }
+        if ($null -ne $context.activeWindow) {
+            try { $context.selectedText = (Read-Selection $foreground).selectedText }
+            catch {
+                # Context is best-effort; strict desktop inspect still fails on unavailable selection.
+                $context.warnings += 'Selected text was unavailable, protected, too large, or changed during capture.'
+            }
+        }
+        Write-Response $context
         exit 0
     }
-    [uint32]$ownerProcess = 0
-    $null = [OpenSaysMeDesktop]::GetWindowThreadProcessId($foreground, [ref]$ownerProcess)
-    $application = (Get-Process -Id $ownerProcess).ProcessName
-    $title = New-Object System.Text.StringBuilder(16385)
-    $null = [OpenSaysMeDesktop]::GetWindowText($foreground, $title, $title.Capacity)
-    $response = @{
-        version = 1; operation = 'inspect'
-        window = @{
-            id = "win32:${ownerProcess}:$($foreground.ToInt64())"
-            application = $application; title = $title.ToString()
-        }
-    }
-    if ($IncludeSelection) {
-        $failureCode = 'selection-unavailable'
-        if (-not (Load-Automation)) { throw 'Windows UI Automation is unavailable.' }
-        $element = [System.Windows.Automation.AutomationElement]::FocusedElement
-        if ($null -eq $element -or $element.Current.IsPassword) {
-            throw 'Selected text is unavailable from the current Windows control.'
-        }
-        # Reject a focus race instead of associating another window's text with this one.
-        $ancestor = $element
-        $belongsToForeground = $false
-        $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
-        while ($null -ne $ancestor) {
-            if ([OpenSaysMeDesktop]::MatchesAutomationHandle($foreground, $ancestor.Current.NativeWindowHandle)) {
-                $belongsToForeground = $true
-                break
-            }
-            $ancestor = $walker.GetParent($ancestor)
-        }
-        if (-not $belongsToForeground) {
-            $failureCode = 'focus-changed'
-            throw 'Desktop focus changed; inspect again.'
-        }
-        [object]$pattern = $null
-        if (-not $element.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$pattern)) {
-            throw 'The focused control does not expose selected text through UI Automation.'
-        }
-        if ($pattern.SupportedTextSelection -eq [System.Windows.Automation.SupportedTextSelection]::None) {
-            throw 'The focused control does not support text selection.'
-        }
-        $parts = @()
-        $remaining = 16384
-        foreach ($range in $pattern.GetSelection()) {
-            $part = $range.GetText($remaining + 1)
-            if ($part.Length -gt $remaining) {
-                $failureCode = 'selection-too-large'
-                throw 'Selected text exceeds the capture limit.'
-            }
-            $parts += $part
-            $remaining -= $part.Length
-        }
-        $response.selectedText = $parts -join ''
-        if ([OpenSaysMeDesktop]::GetForegroundWindow() -ne $foreground) {
-            $failureCode = 'focus-changed'
-            throw 'Desktop focus changed; inspect again.'
-        }
+
+    $response = @{ version = 1; operation = 'inspect'; window = (Read-Window $foreground) }
+    if ($IncludeSelection -and $null -ne $response.window) {
+        $response.selectedText = (Read-Selection $foreground).selectedText
     }
     Write-Response $response
 } catch {

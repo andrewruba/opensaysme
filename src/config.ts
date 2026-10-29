@@ -12,7 +12,7 @@ export const configSchema = z.strictObject({
     provider: z.enum(['openai', 'anthropic']),
     model: modelName,
     apiKeyEnv: environmentName,
-  }),
+  }).optional(),
   speech: z.strictObject({
     provider: z.literal('openai'),
     model: modelName,
@@ -60,10 +60,9 @@ export async function writeConfig(config: Config, path = configPath()): Promise<
 }
 
 export function providerStatus(config: Config, env = process.env) {
-  return Object.fromEntries((['reasoning', 'speech'] as const).map((role) => [role, {
-    provider: config[role].provider,
-    model: config[role].model,
-    apiKeyEnv: config[role].apiKeyEnv,
-    keyPresent: Boolean(env[config[role].apiKeyEnv]?.trim()),
-  }]));
+  return Object.fromEntries((['reasoning', 'speech'] as const).flatMap((role) => {
+    const provider = config[role];
+    return provider ? [[role, { provider: provider.provider, model: provider.model,
+      apiKeyEnv: provider.apiKeyEnv, keyPresent: Boolean(env[provider.apiKeyEnv]?.trim()) }]] : [];
+  }));
 }

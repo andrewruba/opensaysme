@@ -13,6 +13,6 @@ xcrun swiftc -O \
   -module-cache-path "$helper_dir/bin/module-cache" \
   -framework AppKit -framework ApplicationServices -framework AVFoundation -framework Carbon \
   -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$helper_dir/Info.plist" \
-  "$helper_dir/Desktop.swift" -o "$helper_dir/bin/opensaysme-desktop"
+  "$helper_dir/Desktop.swift" "$helper_dir/Voice.swift" -o "$helper_dir/bin/opensaysme-desktop"
 
 echo "Built $helper_dir/bin/opensaysme-desktop"

@@ -1,5 +1,6 @@
-import { cancel, intro, isCancel, note, outro, select, text } from '@clack/prompts';
-import { configPath, readConfig, writeConfig, type Config } from './config.js';
+import { cancel, intro, isCancel, note, outro, text } from '@clack/prompts';
+import { configPath, readConfig, writeConfig } from './config.js';
+import { streamingModel } from './speech/openai.js';
 
 function answer<T>(value: T): Exclude<T, symbol> {
   if (isCancel(value)) {
@@ -15,30 +16,20 @@ export async function setup(signal?: AbortSignal): Promise<void> {
   }
   if (await readConfig()) throw new Error(`Configuration already exists at ${configPath()}; edit it directly.`);
   intro('OpenSaysMe setup');
-  note('This scaffold saves provider preferences and environment-variable names only.\n'
-    + 'Model calls, voice activation, and OS credential storage are not connected yet.\n'
-    + 'Future requests will go directly to your chosen providers. Nothing is uploaded now.', 'Current scope');
-  const provider = answer(await select({
+  note(`Voice uses OpenAI ${streamingModel}. When you activate recording,\n`
+    + 'microphone audio streams directly to OpenAI using your key. Provider charges apply.\n'
+    + 'Desktop context stays local. Transcripts and context appear in the terminal.\n'
+    + 'Setup stores an environment-variable name, never your key, and makes no API request.', 'Voice mode');
+  const apiKeyEnv = answer(await text({
     signal,
-    message: 'Reasoning provider',
-    options: [{ value: 'openai', label: 'OpenAI' }, { value: 'anthropic', label: 'Anthropic' }],
-  })) as Config['reasoning']['provider'];
-  const model = answer(await text({
-    signal,
-    message: 'Reasoning model identifier',
-    validate: (value) => value?.trim() ? undefined : 'Enter a model identifier from your provider.',
+    message: 'Environment variable containing your OpenAI API key',
+    initialValue: 'OPENAI_API_KEY',
+    validate: (value) => value && /^[A-Z_][A-Z0-9_]{0,127}$/.test(value) ? undefined : 'Enter an uppercase environment-variable name, not a key value.',
   }));
-  const speechModel = answer(await text({
-    signal,
-    message: 'OpenAI transcription model identifier (configured separately)',
-    validate: (value) => value?.trim() ? undefined : 'Enter your transcription model identifier.',
-  }));
-  const reasoningKey = provider === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';
   if (signal?.aborted) throw new Error('Setup cancelled. No configuration was written.');
   await writeConfig({
     version: 1,
-    reasoning: { provider, model, apiKeyEnv: reasoningKey },
-    speech: { provider: 'openai', model: speechModel, apiKeyEnv: 'OPENAI_API_KEY' },
+    speech: { provider: 'openai', model: streamingModel, apiKeyEnv },
   });
-  outro(`Saved ${configPath()}. Set ${[...new Set([reasoningKey, 'OPENAI_API_KEY'])].join(' and ')} in your environment, then run opensaysme doctor.`);
+  outro(`Saved ${configPath()}. Set ${apiKeyEnv} in your environment, then run opensaysme.`);
 }

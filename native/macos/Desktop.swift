@@ -212,6 +212,80 @@ func inspect(includeSelection: Bool) throws -> Snapshot {
     return Snapshot(window: target, selectedText: selection)
 }
 
+struct PointerContext: Encodable {
+    let x: Double
+    let y: Double
+    let window: Window?
+    private enum CodingKeys: String, CodingKey { case x, y, window }
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(x, forKey: .x)
+        try container.encode(y, forKey: .y)
+        try container.encode(window, forKey: .window)
+    }
+}
+
+struct DesktopContext: Encodable {
+    let platform = "darwin"
+    let capturedAt: String
+    let activeWindow: Window?
+    let selectedText: String?
+    let pointer: PointerContext?
+    let warnings: [String]
+    private enum CodingKeys: String, CodingKey { case platform, capturedAt, activeWindow, selectedText, pointer, warnings }
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(platform, forKey: .platform)
+        try container.encode(capturedAt, forKey: .capturedAt)
+        try container.encode(activeWindow, forKey: .activeWindow)
+        try container.encodeIfPresent(selectedText, forKey: .selectedText)
+        try container.encodeIfPresent(pointer, forKey: .pointer)
+        try container.encode(warnings, forKey: .warnings)
+    }
+}
+
+// Capture is deliberately best effort: inaccessible selection or a transient
+// focus change must not stop speech. No clipboard operations or focus changes.
+func captureContext() -> DesktopContext {
+    let capturedAt = ISO8601DateFormatter().string(from: Date())
+    let position = CGEvent(source: nil)?.location
+    var warnings: [String] = []
+    var active: Window?
+    var selection: String?
+    var pointedWindow: Window?
+    if AXIsProcessTrusted() {
+        do { active = try inspect(includeSelection: false).window }
+        catch { warnings.append("Active window unavailable or focus changed during capture.") }
+        if let active {
+            do {
+                let selected = try inspect(includeSelection: true)
+                if selected.window?.id == active.id { selection = selected.selectedText }
+                else { warnings.append("Selection omitted because focus changed during capture.") }
+            } catch { warnings.append("Selection unavailable, secure, oversized, or changed during capture.") }
+        }
+        if let position {
+            let system = AXUIElementCreateSystemWide()
+            AXUIElementSetMessagingTimeout(system, 0.5)
+            var element: AXUIElement?
+            if AXUIElementCopyElementAtPosition(system, Float(position.x), Float(position.y), &element) == .success,
+               let element {
+                var pid: pid_t = 0
+                if AXUIElementGetPid(element, &pid) == .success, let app = NSRunningApplication(processIdentifier: pid) {
+                    let window = stringAttribute(element, kAXRoleAttribute) == kAXWindowRole
+                        ? element : try? elementAttribute(element, kAXWindowAttribute)
+                    if let window, let id = try? targetID(app, window) {
+                        pointedWindow = Window(id: id, application: app.localizedName ?? app.bundleIdentifier ?? "Unknown application", title: stringAttribute(window, kAXTitleAttribute))
+                    }
+                }
+            }
+            if pointedWindow == nil { warnings.append("No accessible window was resolved under the pointer.") }
+        }
+    } else { warnings.append(permissionHelp) }
+    if position == nil { warnings.append("Pointer location unavailable in this desktop session.") }
+    return DesktopContext(capturedAt: capturedAt, activeWindow: active, selectedText: selection,
+        pointer: position.map { PointerContext(x: $0.x, y: $0.y, window: pointedWindow) }, warnings: warnings)
+}
+
 func focus(_ id: String) throws {
     try requireAccessibility()
     let parts = id.split(separator: ":")
@@ -363,28 +437,35 @@ func output<T: Encodable>(_ value: T) throws {
     FileHandle.standardOutput.write(Data([10]))
 }
 
-do {
-    let arguments = Array(CommandLine.arguments.dropFirst())
-    switch arguments {
-    case ["--probe"]: try output(probe())
-    case ["--inspect"]: try output(inspect(includeSelection: false))
-    case ["--inspect-selection"]: try output(inspect(includeSelection: true))
-    case let args where args.count == 2 && args[0] == "--focus":
-        try focus(args[1])
-        try output(["ok": true])
-    case let args where args.count == 2 && ["--test-hotkey", "--test-microphone"].contains(args[0]):
-        guard let seconds = Int(args[1]), (1...30).contains(seconds) else {
-            throw DesktopError("Test duration must be an integer from 1 to 30 seconds.")
+@main
+struct DesktopMain {
+    static func main() {
+        do {
+            let arguments = Array(CommandLine.arguments.dropFirst())
+            switch arguments {
+            case ["--probe"]: try output(probe())
+            case ["--inspect"]: try output(inspect(includeSelection: false))
+            case ["--inspect-selection"]: try output(inspect(includeSelection: true))
+            case ["--context"]: try output(captureContext())
+            case ["--voice"]: VoiceSession().run()
+            case let args where args.count == 2 && args[0] == "--focus":
+                try focus(args[1])
+                try output(["ok": true])
+            case let args where args.count == 2 && ["--test-hotkey", "--test-microphone"].contains(args[0]):
+                guard let seconds = Int(args[1]), (1...30).contains(seconds) else {
+                    throw DesktopError("Test duration must be an integer from 1 to 30 seconds.")
+                }
+                try output(args[0] == "--test-hotkey" ? testHotkey(seconds: seconds) : testMicrophone(seconds: seconds))
+            default:
+                throw DesktopError("Expected --probe, --inspect, --inspect-selection, --context, --voice, --focus <target-id>, --test-hotkey <seconds>, or --test-microphone <seconds>.")
+            }
+        } catch let error as DesktopError {
+            // Expected failures stay in the validated protocol, without native values or
+            // captured content. The CLI maps these codes to errors and an exit status.
+            try? output(["error": error.code])
+        } catch {
+            FileHandle.standardError.write(Data("Desktop helper failed.\n".utf8))
+            exit(1)
         }
-        try output(args[0] == "--test-hotkey" ? testHotkey(seconds: seconds) : testMicrophone(seconds: seconds))
-    default:
-        throw DesktopError("Expected --probe, --inspect, --inspect-selection, --focus <target-id>, --test-hotkey <seconds>, or --test-microphone <seconds>.")
     }
-} catch let error as DesktopError {
-    // Expected failures stay in the validated protocol, without native values or
-    // captured content. The CLI maps these codes to errors and an exit status.
-    try? output(["error": error.code])
-} catch {
-    FileHandle.standardError.write(Data("Desktop helper failed.\n".utf8))
-    exit(1)
 }

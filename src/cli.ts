@@ -6,7 +6,7 @@ import { desktopAdapter } from './desktop/index.js';
 import { cancelDesktopCommands } from './desktop/process.js';
 import { capabilityNames, type DesktopReport } from './desktop/types.js';
 import { setup } from './setup.js';
-import { waitUntilStopped } from './runtime.js';
+import { runVoice } from './voice.js';
 
 const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
 const stop = new AbortController();
@@ -33,16 +33,27 @@ function printReport(report: DesktopReport): void {
 
 const program = new Command()
   .name('opensaysme')
-  .description('CLI-first agent interaction scaffold and desktop capability probes')
+  .description('Tap-to-talk transcription with desktop context and capability probes')
   .version(version)
   .showHelpAfterError()
   .action(async () => {
     const config = await readConfig();
     if (!config) throw new Error('Run opensaysme setup first. Desktop probes work without provider configuration.');
-    console.log('OpenSaysMe scaffold running. Ctrl+C stops it.');
-    console.log('Voice activation, model calls, and agent commands are not connected yet.');
-    console.log('Use opensaysme doctor or opensaysme desktop --help to test desktop access.');
-    await waitUntilStopped(stop.signal);
+    process.stderr.write('OpenSaysMe voice mode. Ctrl+Shift+Space starts/stops; Escape cancels; Ctrl+C quits.\n');
+    process.stderr.write('Activated microphone audio streams to OpenAI using your key. Desktop context stays local.\n');
+    process.stderr.write('Transcripts and captured context are printed below. No agent actions are executed.\n');
+    await runVoice(config, stop.signal, (event) => {
+      if (event.type === 'state') {
+        if (event.state === 'listening' && process.stderr.isTTY) process.stderr.write('\x07');
+        process.stderr.write(`${event.state}\n`);
+      } else if (event.type === 'partial') {
+        process.stderr.write(`Transcript: ${JSON.stringify(event.text)}\n`);
+      } else if (event.type === 'transcript') {
+        process.stderr.write(`Final transcript: ${JSON.stringify(event.text)}\n`);
+      } else if (event.type === 'result') json(event);
+      else if (event.type === 'cancelled') process.stderr.write('Cancelled.\n');
+      else process.stderr.write(`Error: ${safeText(event.message)}\n`);
+    });
     console.log('Stopped.');
   });
 

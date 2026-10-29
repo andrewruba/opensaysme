@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { runCommand } from '../process.js';
 import { desktopTestResultSchema, type DesktopReport, type DesktopSnapshot, type DesktopTestResult } from '../types.js';
+import { desktopContextSchema, type DesktopContext, type VoiceHelperSpec } from '../voice-types.js';
 
 const helperPath = fileURLToPath(new URL('../../../native/windows/desktop.ps1', import.meta.url));
 const windowId = z.string().refine((value) => {
@@ -32,6 +33,14 @@ const focusSchema = z.object({
   operation: z.literal('focus'),
   focused: z.literal(true),
 }).strict();
+const contextSchema = desktopContextSchema.extend({
+  platform: z.literal('win32'),
+  activeWindow: windowSchema.nullable(),
+  selectedText: z.string().max(16_384).optional(),
+  pointer: z.object({
+    x: z.number().int(), y: z.number().int(), window: windowSchema.nullable(),
+  }).strict().optional(),
+}).strict();
 const helperErrorMessages = {
   'native-failure': 'Windows desktop access failed. Check the interactive desktop session and PowerShell prerequisites.',
   'invalid-target': 'The target Windows window is no longer available.',
@@ -46,11 +55,11 @@ const helperErrorSchema = z.object({
   code: z.enum(['native-failure', 'invalid-target', 'focus-denied', 'selection-unavailable', 'selection-too-large', 'focus-changed']),
 }).strict();
 
-async function invoke(operation: 'probe' | 'inspect' | 'focus', args: string[] = []): Promise<string> {
+async function invoke(operation: 'probe' | 'inspect' | 'focus' | 'context', args: string[] = [], signal?: AbortSignal): Promise<string> {
   return runCommand('powershell.exe', [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-File', helperPath,
     '-Operation', operation, ...args,
-  ], { timeoutMs: 10_000 });
+  ], { timeoutMs: 10_000, signal });
 }
 
 function decode<T>(schema: z.ZodType<T>, output: string): T {
@@ -169,4 +178,16 @@ export async function testWindowsHotkey(durationSeconds: number): Promise<Deskto
 
 export async function testWindowsMicrophone(durationSeconds: number): Promise<DesktopTestResult> {
   return testInput('microphone', durationSeconds);
+}
+
+export async function captureWindowsContext(signal?: AbortSignal): Promise<DesktopContext> {
+  return decode(contextSchema, await invoke('context', [], signal));
+}
+
+export async function windowsVoiceHelper(): Promise<VoiceHelperSpec> {
+  return {
+    file: 'powershell.exe',
+    args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-File',
+      fileURLToPath(new URL('../../../native/windows/voice.ps1', import.meta.url))],
+  };
 }

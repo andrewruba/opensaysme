@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, vi } from 'vitest';
 
-import { focusWindows, parseWindowsSnapshot, probeWindows, testWindowsHotkey, testWindowsMicrophone } from '../src/desktop/platforms/windows.js';
+import { captureWindowsContext, focusWindows, parseWindowsSnapshot, probeWindows, testWindowsHotkey, testWindowsMicrophone, windowsVoiceHelper } from '../src/desktop/platforms/windows.js';
 import { runCommand } from '../src/desktop/process.js';
 
 vi.mock('../src/desktop/process.js', () => ({ runCommand: vi.fn() }));
@@ -67,4 +67,51 @@ test('doctor keeps focus and capture unverified until explicitly tested', async 
   for (const capability of ['focusWindow', 'selectedText', 'globalHotkey', 'microphone'] as const) {
     assert.equal(report.capabilities[capability].status, 'unverified');
   }
+});
+
+test('captures separate foreground and pointer windows without losing selection whitespace', async () => {
+  const snapshot = {
+    platform: 'win32', capturedAt: '2026-10-28T10:00:00.000Z',
+    activeWindow: { id: 'win32:123:456', application: 'Terminal', title: 'Agent' },
+    selectedText: '  selected context\n',
+    pointer: { x: -100, y: 20, window: { id: 'win32:456:789', application: 'Browser', title: 'Reference' } },
+    warnings: [],
+  };
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(snapshot));
+  const controller = new AbortController();
+  assert.deepEqual(await captureWindowsContext(controller.signal), snapshot);
+  const call = vi.mocked(runCommand).mock.lastCall!;
+  assert.deepEqual(call[1].slice(-2), ['-Operation', 'context']);
+  assert.equal(call[2]?.signal, controller.signal);
+});
+
+test('accepts missing optional context with explicit warnings', async () => {
+  const snapshot = {
+    platform: 'win32', capturedAt: '2026-10-28T10:00:00.0000000Z',
+    activeWindow: null, warnings: ['Pointer position was unavailable.'],
+  };
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(snapshot));
+  assert.deepEqual(await captureWindowsContext(), snapshot);
+});
+
+test('validates captured window IDs and context without leaking private output', async () => {
+  for (const invalid of [
+    'private non-JSON output',
+    JSON.stringify({
+      platform: 'win32', capturedAt: '2026-10-28T10:00:00.000Z', activeWindow: null,
+      selectedText: 'private selection', pointer: { x: 0, y: 0, window: { id: 'bad-id', application: 'private title', title: '' } }, warnings: [],
+    }),
+    JSON.stringify({ platform: 'win32', capturedAt: 'invalid', activeWindow: null, warnings: [] }),
+  ]) {
+    vi.mocked(runCommand).mockResolvedValueOnce(invalid);
+    await assert.rejects(captureWindowsContext(), { message: 'The Windows desktop helper returned an invalid response.' });
+  }
+});
+
+test('persistent helper uses a fixed PowerShell script and respects execution policy', async () => {
+  const helper = await windowsVoiceHelper();
+  assert.equal(helper.file, 'powershell.exe');
+  assert.deepEqual(helper.args.slice(0, 4), ['-NoLogo', '-NoProfile', '-NonInteractive', '-File']);
+  assert.match(helper.args[4]!, /native[/\\]windows[/\\]voice\.ps1$/);
+  assert.equal(helper.args.length, 5);
 });

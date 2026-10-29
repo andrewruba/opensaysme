@@ -18,11 +18,15 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run build:native
+      - name: Test macOS audio conversion without a microphone
+        if: runner.os == 'macOS'
+        run: sh native/macos/test.sh
       - name: Compile Windows helper and parse PowerShell scripts
         if: runner.os == 'Windows'
         shell: powershell
         run: |
           Add-Type -Path ./native/windows/input.cs
+          ./native/windows/test-voice.ps1
           foreach ($file in Get-ChildItem ./native/windows/*.ps1) {
             $tokens = $null
             $parseErrors = $null

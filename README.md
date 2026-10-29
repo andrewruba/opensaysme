@@ -35,16 +35,21 @@ or build another coding agent.
 
 ## Development prototype
 
-The CLI scaffold and desktop-access probes are implemented. Voice commands,
-model calls, and agent integrations are not connected yet.
+The CLI now supports tap-to-talk streaming transcription, captured desktop
+context, cancellation, and latency measurements. Intent interpretation and
+agent actions are not connected yet.
 
 ```sh
 npm ci
 npm run build:native  # Builds the helper on macOS; requires Xcode Command Line Tools
 npm run build
 node dist/cli.js doctor
-node dist/cli.js desktop --help
+node dist/cli.js setup
+node dist/cli.js       # Requires the API-key environment variable chosen in setup
 ```
+
+Tap Ctrl+Shift+Space to start and stop; Escape cancels. Activated audio streams to
+OpenAI using your key. Desktop context stays local and appears with the transcript.
 
 See [development instructions](docs/development.md) for platform prerequisites,
 provider configuration, explicit desktop tests, and current limitations.

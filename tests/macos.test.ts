@@ -5,6 +5,8 @@ import { runCommand } from '../src/desktop/process.js';
 
 import {
   focusMacOS,
+  captureMacOSContext,
+  macOSVoiceHelper,
   parseMacOSSnapshot,
   probeMacOS,
   testMacOSHotkey,
@@ -68,4 +70,33 @@ test('interactive native tests reject unbounded durations before launching', asy
   await assert.rejects(testMacOSHotkey(0), /integer from 1 to 30/);
   await assert.rejects(testMacOSMicrophone(31), /integer from 1 to 30/);
   await assert.rejects(testMacOSMicrophone(Number.NaN), /integer from 1 to 30/);
+});
+
+test('voice resolves a built helper without opening the microphone', async () => {
+  const previous = vi.mocked(runCommand).mock.calls.length;
+  const helper = await macOSVoiceHelper();
+  assert.match(helper.file, /native\/macos\/bin\/opensaysme-desktop$/);
+  assert.deepEqual(helper.args, ['--voice']);
+  assert.equal(vi.mocked(runCommand).mock.calls.length, previous);
+});
+
+test('context accepts partial desktop access and passes cancellation to the helper', async () => {
+  const signal = new AbortController().signal;
+  const context = {
+    platform: 'darwin', capturedAt: '2026-10-28T12:00:00Z', activeWindow: null,
+    pointer: { x: -10, y: 20, window: null }, warnings: ['Accessibility permission required.'],
+  };
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(context));
+  assert.deepEqual(await captureMacOSContext(signal), context);
+  assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.slice(1), [['--context'], { timeoutMs: 4000, signal }]);
+});
+
+test('context validates pointer targets and omits private malformed response details', async () => {
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify({
+    platform: 'darwin', capturedAt: '2026-10-28T12:00:00Z', activeWindow: null,
+    pointer: { x: 1, y: 2, window: { id: 'private-title', application: 'private-app' } }, warnings: [],
+  }));
+  await assert.rejects(captureMacOSContext(), { message: 'The macOS desktop helper returned an invalid context target.' });
+  vi.mocked(runCommand).mockResolvedValueOnce('{"selectedText":"private-selection"}');
+  await assert.rejects(captureMacOSContext(), { message: 'The macOS desktop helper returned an invalid response.' });
 });

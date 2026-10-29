@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { DesktopContext, VoiceHelperSpec } from './voice-types.js';
 
 export const capabilityNames = [
   'activeWindow', 'focusWindow', 'selectedText', 'globalHotkey', 'microphone',
@@ -49,4 +50,6 @@ export interface DesktopAdapter {
   focus(targetId: string): Promise<void>;
   testHotkey(durationSeconds: number): Promise<DesktopTestResult>;
   testMicrophone(durationSeconds: number): Promise<DesktopTestResult>;
+  voiceHelper(): Promise<VoiceHelperSpec>;
+  captureContext(signal?: AbortSignal): Promise<DesktopContext>;
 }

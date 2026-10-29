@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runCommand } from '../src/desktop/process.js';
-import { focusLinux, inspectLinux, probeLinux, testLinuxHotkey, testLinuxMicrophone } from '../src/desktop/platforms/linux.js';
+import { captureLinuxContext, focusLinux, inspectLinux, linuxVoiceHelper, probeLinux, testLinuxHotkey, testLinuxMicrophone } from '../src/desktop/platforms/linux.js';
 
 vi.mock('../src/desktop/process.js', () => ({ runCommand: vi.fn() }));
 const run = vi.mocked(runCommand);
@@ -17,9 +17,69 @@ beforeEach(() => {
     if (args[0] === 'getwindowname') return 'Example agent\n';
     if (args[0] === 'windowactivate') return '';
     if (file === 'python3' && args[1] === '--probe') return '{"available":true}';
+    if (file === 'python3' && args[1] === '--pointer') return '{"x":45,"y":70,"windowId":"67890"}';
     if (file === 'python3') return '{"capability":"globalHotkey","status":"not-observed","detail":"Shortcut was not observed."}';
     if (file === 'xsel') return 'selected text\n';
     throw new Error('Unexpected subprocess');
+  });
+});
+
+describe('Linux voice startup and context', () => {
+  it('requires X11 before probing prerequisites or starting a voice helper', async () => {
+    vi.stubEnv('XDG_SESSION_TYPE', 'wayland');
+    await expect(linuxVoiceHelper()).rejects.toThrow('Wayland');
+    await expect(captureLinuxContext()).rejects.toThrow('Wayland');
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('checks prerequisites without opening a microphone or grabbing a hotkey', async () => {
+    expect(await linuxVoiceHelper()).toEqual({ file: 'python3', args: [expect.stringContaining('native/linux/voice.py')] });
+    expect(run.mock.calls.map(([file, args]) => [file, args.at(-1)])).toEqual([
+      ['arecord', '--version'], ['python3', '--probe'],
+    ]);
+    run.mockRejectedValue(new Error('Missing executable'));
+    await expect(linuxVoiceHelper()).rejects.toThrow('alsa-utils');
+  });
+
+  it('freezes distinct active and pointer window IDs and labels PRIMARY honestly', async () => {
+    const signal = new AbortController().signal;
+    const context = await captureLinuxContext(signal);
+    expect(context.activeWindow?.id).toBe('12345');
+    expect(context.pointer).toEqual({ x: 45, y: 70, window: { id: '67890', application: 'AgentTerminal', title: 'Example agent' } });
+    expect(context.selectedText).toBe('selected text\n');
+    expect(context.warnings).toEqual([expect.stringContaining('may belong to a different window')]);
+    expect(Number.isNaN(Date.parse(context.capturedAt))).toBe(false);
+    expect(run.mock.calls.every(([, , options]) => options?.signal === signal)).toBe(true);
+    expect(run.mock.calls.some(([, args]) => args[0] === 'windowactivate')).toBe(false);
+  });
+
+  it('keeps partial context when one source is unavailable or malformed', async () => {
+    const implementation = run.getMockImplementation()!;
+    run.mockImplementation((file, args, options) => {
+      if (args[1] === '--pointer') return Promise.resolve('{"x":2,"y":4,"windowId":"private malformed value"}');
+      if (file === 'xsel') return Promise.reject(new Error('private selection'));
+      return implementation(file, args, options);
+    });
+    const context = await captureLinuxContext();
+    expect(context.activeWindow?.id).toBe('12345');
+    expect(context.pointer).toBeUndefined();
+    expect(context.selectedText).toBeUndefined();
+    expect(context.warnings).toHaveLength(2);
+    expect(JSON.stringify(context)).not.toContain('private');
+  });
+
+  it('discards oversized selection while preserving other context', async () => {
+    const implementation = run.getMockImplementation()!;
+    run.mockImplementation((file, args, options) => file === 'xsel'
+      ? Promise.resolve('x'.repeat(65537)) : implementation(file, args, options));
+    const context = await captureLinuxContext();
+    expect(context.selectedText).toBeUndefined();
+    expect(context.pointer?.window?.id).toBe('67890');
+  });
+
+  it('honors cancellation before starting any context subprocess', async () => {
+    await expect(captureLinuxContext(AbortSignal.abort())).rejects.toThrow();
+    expect(run).not.toHaveBeenCalled();
   });
 });
 afterEach(() => vi.unstubAllEnvs());

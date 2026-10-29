@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,12 @@ const execute = promisify(execFile);
 const args = ['--import', 'tsx', 'src/cli.ts'];
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); });
+async function configured(model = 'gpt-live-transcribe') {
+  const directory = await mkdtemp(join(tmpdir(), 'opensaysme-cli-'));
+  directories.push(directory);
+  await writeConfig({ version: 1, speech: { provider: 'openai', model, apiKeyEnv: 'OPENSAYSME_TEST_MISSING_KEY' } }, join(directory, 'config.json'));
+  return { ...process.env, OPENSAYSME_CONFIG_DIR: directory, OPENSAYSME_TEST_MISSING_KEY: '' };
+}
 
 it('shows CLI commands without reading desktop context', async () => {
   const { stdout } = await execute(process.execPath, [...args, '--help']);
@@ -26,39 +32,19 @@ it('does not hang in non-interactive setup', async () => {
   await expect(execute(process.execPath, [...args, 'setup'])).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('interactive terminal') });
 });
 
-it('requires setup for the foreground scaffold', async () => {
+it('requires setup for voice mode', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'opensaysme-cli-'));
   directories.push(directory);
   await expect(execute(process.execPath, args, { env: { ...process.env, OPENSAYSME_CONFIG_DIR: directory } })).rejects.toMatchObject({ stderr: expect.stringContaining('setup first') });
 });
 
-it.skipIf(process.platform === 'win32')('exits cleanly when the foreground scaffold is interrupted', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'opensaysme-cli-'));
-  directories.push(directory);
-  await writeConfig({ version: 1,
-    reasoning: { provider: 'openai', model: 'test', apiKeyEnv: 'TEST_KEY' },
-    speech: { provider: 'openai', model: 'test', apiKeyEnv: 'TEST_KEY' },
-  }, join(directory, 'config.json'));
-  const child = spawn(process.execPath, args, { env: { ...process.env, OPENSAYSME_CONFIG_DIR: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
-  let output = '';
-  let interrupted = false;
-  const timer = setTimeout(() => child.kill('SIGKILL'), 4000);
-  try {
-    const exit = await new Promise<number | null>((resolve, reject) => {
-      child.on('error', reject);
-      child.on('close', resolve);
-      child.stdout.on('data', (chunk: Buffer) => {
-        output += chunk.toString();
-        if (!interrupted && output.includes('Use opensaysme doctor')) {
-          interrupted = true;
-          child.kill('SIGINT');
-        }
-      });
-    });
-    expect(exit).toBe(0);
-    expect(output).toContain('Stopped.');
-  } finally {
-    clearTimeout(timer);
-    child.kill();
-  }
+it('requires the speech key before opening desktop hooks or a connection', async () => {
+  await expect(execute(process.execPath, args, { env: await configured() })).rejects.toMatchObject({ code: 1,
+    stderr: expect.stringContaining('Set OPENSAYSME_TEST_MISSING_KEY') });
+});
+
+it('rejects unsupported streaming model configuration before native access', async () => {
+  const env = await configured('file-model'); env.OPENSAYSME_TEST_MISSING_KEY = 'fixture-key';
+  await expect(execute(process.execPath, args, { env })).rejects.toMatchObject({ code: 1,
+    stderr: expect.stringContaining('Set speech.model') });
 });

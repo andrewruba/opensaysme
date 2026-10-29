@@ -1,159 +1,183 @@
-# Developing the CLI prototype
+# Developing the voice prototype
 
-This slice provides terminal setup, a foreground runtime scaffold, and desktop
-capability experiments. It does not yet transcribe speech, call models, route
-agent messages, or perform actions automatically. All desktop tests are local.
+This slice runs a local tap-to-talk loop: record, stream transcription, capture
+near-activation desktop context, and print the result with latency measurements.
+It does not interpret commands, execute agent actions, capture screenshots, or
+track gaze yet.
 
-Use Node.js 22.20+ and npm. From the repository:
+Use Node.js 22.20+ and npm:
 
 ```sh
 npm ci
 npm run build:native
 npm run build
-node dist/cli.js --help
-node dist/cli.js doctor --json
+node dist/cli.js setup
+node dist/cli.js doctor
+node dist/cli.js
 ```
 
-`npm run dev -- <arguments>` runs the TypeScript source directly. Desktop probes
-work without provider setup. The npm package is private until release packaging
-is ready; no published `npx opensaysme` installation is promised by this prototype.
+Set the API-key environment variable chosen during setup before starting voice
+mode. `npm run dev -- <arguments>` runs the TypeScript source directly; `npm run
+dev` starts voice mode. Desktop probes work without keys. The package remains
+private while release packaging is unfinished.
 
-## Platform prerequisites
+## Voice interaction
 
-| Platform | Prerequisites and limits |
-| --- | --- |
-| macOS | Xcode Command Line Tools to build the Swift helper. Window inspection, focus, and selection require Accessibility access for the relevant terminal/helper. Microphone access is separate. Development binaries are unsigned; stable signing and prebuilt Intel/Apple Silicon packages remain release work. |
-| Windows | Native Windows Node.js, Windows PowerShell, and an interactive desktop. Helpers use Win32/UI Automation and the installed .NET Framework. Execution policy is respected. WSL does not provide access to native Windows windows through the Linux adapter. |
-| Linux/X11 | `xdotool`, `xsel`, and `xprop` (often in `x11-utils`) for windows and PRIMARY selection; Python 3 and `libX11` for the explicit hotkey test. `arecord` from `alsa-utils` is optional for microphone testing. An EWMH-compatible window manager is required. |
-| Linux/Wayland | Detected separately, even when XWayland sets `DISPLAY`. Native window/selection/focus and GlobalShortcuts portal support are not implemented. The ALSA microphone experiment remains separately available. |
+- Keep the CLI running and work in another app. Tap **Ctrl+Shift+Space** to begin.
+- Wait for `listening` and its terminal bell, then speak. Terminal bell behavior
+  depends on your terminal settings; no overlay is installed.
+- Tap **Ctrl+Shift+Space** again to finish. Partial transcripts arrive while you
+  speak; the final text appears as soon as the provider completes the turn.
+- **Escape** cancels recording or processing. **Ctrl+C** in the launching terminal
+  quits and cleans up native hooks, microphone capture, and the provider socket.
+- The runtime returns to `ready` after each completed, cancelled, or failed turn.
+  While processing, additional activation taps are ignored; Escape cancels.
 
-Dependencies are never installed by the CLI. Linux utilities are external system
-prerequisites, not bundled binaries. Their licenses need separate review before
-redistribution. Native implementation details are in
-[macOS](../native/macos/README.md) and [Windows](../native/windows/README.md).
+The recording limit is two minutes. Microphone startup, provider connection,
+finalization, and native cleanup have deadlines. If cleanup cannot be confirmed,
+the runtime exits instead of claiming that it is ready to record again.
 
-## Explicit desktop experiments
+Audio startup, the provider connection, and context capture begin concurrently.
+Context contains the active window, available selection, and a separate pointer
+position/window candidate. These are snapshots taken just after activation;
+process startup and OS queries introduce a small capture delay. Moving the cursor
+later does not retarget the turn. Pointer position alone does not override the
+focused window or selection. Unsupported context fields produce warnings and do
+not prevent speech capture. Final text does not wait for context; the combined
+result waits at most for the three-second context deadline.
 
-`doctor` checks capabilities without recording audio, registering hotkeys,
-reading selected text, requesting permissions, or changing focus. Its statuses
-are `available`, `permission-required`, `unavailable`, and `unverified`. An
-available API or permission alone does not prove a complete interaction works.
-Doctor exits zero when it produces a report; inspect individual capability
-statuses rather than treating that exit code as universal desktop support.
+## Provider configuration and data
 
-```sh
-# Focus another application during the delay; output can include private titles.
-node dist/cli.js desktop inspect --delay 3
+The first speech adapter uses OpenAI `gpt-live-transcribe` through the Realtime
+transcription WebSocket API, with manual turn boundaries and low-delay streaming.
+Other transcription models are rejected before desktop hooks are opened. See the
+[official realtime transcription guide](https://developers.openai.com/api/docs/guides/realtime-transcription).
 
-# Opt in to reading the selection. Text is printed locally as escaped JSON.
-node dist/cli.js desktop inspect --selection --delay 3
-
-# Copy an ID from inspect; this changes focus but does not type or submit text.
-node dist/cli.js desktop focus '<target-id>'
-
-# Press Ctrl+Shift+Space during the bounded test.
-node dist/cli.js desktop test-hotkey --seconds 10
-
-# Records briefly and discards audio; only capture metrics are printed.
-node dist/cli.js desktop test-microphone --seconds 3
-```
-
-Test durations are limited to 1–30 seconds. Input tests exit zero for `passed`,
-one for `not-observed`, and two for `unavailable`; unexpected failures exit one.
-Ctrl+C cancels running helpers. Audio tests prove buffer delivery, not speech
-quality. No recordings, transcripts, or snapshots are stored by these commands.
-
-Window IDs are temporary. Reinspect after an app closes or changes its windows.
-macOS rejects ambiguous windows and invalidates tokens after title changes.
-Linux selection reads the last X11 PRIMARY selection; it is not guaranteed to
-belong to the active window. Windows selection depends on UI Automation support.
-
-## Provider configuration
-
-Run `node dist/cli.js setup` in an interactive terminal. This first version saves
-reasoning/speech preferences and environment-variable names, never key values.
-Supply keys through your environment for development; OS credential-store setup
-will be added when provider calls are implemented. Doctor reports key presence,
-not authentication success, and never makes a paid request.
-
-The configuration is stored under the user's platform config directory. Use
-`OPENSAYSME_CONFIG_DIR` to override it. For non-interactive setup, create
-`config.json` there with this shape, replacing the model placeholders:
+Setup saves an environment-variable name, never the key. Configuration lives in
+the platform's user config directory; `OPENSAYSME_CONFIG_DIR` overrides it. Setup
+will not overwrite an existing file. This is the minimal `config.json`:
 
 ```json
 {
   "version": 1,
-  "reasoning": {
-    "provider": "anthropic",
-    "model": "your-reasoning-model",
-    "apiKeyEnv": "ANTHROPIC_API_KEY"
-  },
   "speech": {
     "provider": "openai",
-    "model": "your-transcription-model",
+    "model": "gpt-live-transcribe",
     "apiKeyEnv": "OPENAI_API_KEY"
   }
 }
 ```
 
-Reasoning preferences accept `openai` or `anthropic`; speech currently accepts
-`openai`. These are configuration choices, not implemented provider adapters.
-Setup will not overwrite existing configuration. After setup, `node dist/cli.js`
-stays alive until Ctrl+C, without opening devices or starting voice activation.
+Existing prototype configurations may need their speech model changed. There is
+no migration layer. An optional `reasoning` block remains independently
+configurable, but this slice makes no reasoning requests. OS credential-store
+setup remains future work.
+
+Activated audio streams directly to OpenAI using the user's key; provider charges
+and data policies apply. Desktop context is **not uploaded** in this slice. A new
+connection is opened per utterance, in parallel with local capture, so turns do
+not inherit earlier transcripts. Audio buffering and socket backpressure are
+bounded. No audio files are created.
+
+Results are JSON on stdout; states and partial/final transcript feedback are on
+stderr. Both can include private content and may remain in terminal scrollback or
+user-created redirects. The application does not write audio, transcripts, or
+context logs. Cancellation closes the connection and discards pending local
+work; audio already streamed to the provider cannot be recalled. `doctor` checks
+key presence only, without authentication, paid requests, or device capture.
+
+## Latency measurements
+
+Each completed result includes millisecond measurements using a monotonic clock:
+
+- `activationToListeningMs`: native microphone-ready notification.
+- `activationToFirstAudioMs`: first PCM chunk received by the runtime.
+- `activationToProviderReadyMs`: provider confirms the session configuration.
+- `activationToFirstTranscriptMs`: first partial transcript, when one is emitted.
+- `stopToFinalTranscriptMs`: second tap to final provider transcript.
+- `stopToResultMs`: second tap to combined transcript/context result.
+- `contextCaptureMs`, `recordingMs`, and `totalMs`: context query, activation-to-stop,
+  and activation-to-result durations.
+
+These measure observed boundaries including IPC and network overhead. They are
+not acoustic latency measurements. Compare real microphone runs before tuning;
+fixture timings do not establish real-world performance.
+
+## Platform prerequisites
+
+| Platform | Prerequisites and limits |
+| --- | --- |
+| macOS | Xcode Command Line Tools to build Swift helpers. Accessibility access for the launching terminal/helper enables window and selection capture; microphone access is separate. Missing Accessibility can yield partial context while audio works. Development binaries are unsigned. |
+| Windows | Native Windows Node.js, Windows PowerShell 5.1, and an interactive desktop. Helpers use Win32/UI Automation and .NET Framework. Execution policy is respected; WSL does not provide native Windows desktop access. |
+| Linux/X11 | `xdotool`, `xprop`, `xsel`, Python 3, `libX11`, and `arecord` from `alsa-utils`; an EWMH-compatible window manager. Voice captures 24 kHz mono S16LE from the default ALSA device. PRIMARY selection may belong to another window; context includes that warning. |
+| Linux/Wayland | Native window targeting and global activation are not implemented. Voice mode rejects Wayland explicitly, even when XWayland sets `DISPLAY`. |
+
+System dependencies are never installed by the CLI. Linux utilities are external
+prerequisites, not bundled binaries. Review their licenses before redistribution.
+Helper protocols, limits, and platform details are documented under
+[macOS](../native/macos/README.md), [Windows](../native/windows/README.md), and
+[Linux](../native/linux/README.md).
+
+## Desktop experiments
+
+`doctor` checks without recording, registering shortcuts, requesting permissions,
+reading selected text, or changing focus. Its statuses are `available`,
+`permission-required`, `unavailable`, and `unverified`; a zero exit means a report
+was produced, not that every capability works.
+
+```sh
+node dist/cli.js desktop inspect --delay 3
+node dist/cli.js desktop inspect --selection --delay 3
+node dist/cli.js desktop focus '<target-id>'
+node dist/cli.js desktop test-hotkey --seconds 10
+node dist/cli.js desktop test-microphone --seconds 3
+```
+
+Focus another app during the inspection delay. IDs are temporary; reinspect after
+windows change. Input experiments run for 1–30 seconds and exit 0 for passed, 1 for
+not observed, or 2 for unavailable. Microphone probes discard captured audio.
 
 ## Checks and verification
 
 ```sh
-npm run typecheck
-npm run lint
-npm test
-npm run build
-npm run check        # All four checks above
-npm pack --dry-run   # Inspect packaging; local binaries/caches must be excluded
+npm run check        # Typecheck, lint, automated tests, TypeScript build
+npm test            # Automated tests alone; no keys or paid requests
+sh native/macos/test.sh  # Synthetic PCM conversion/protocol checks on macOS
+npm pack --dry-run
 ```
 
-The opt-in X11 integration suite uses two synthetic windows in Xvfb to test
-inspection, focus restoration, PRIMARY selection, and actual shortcut delivery
-and cleanup. Run it in an isolated container with Docker:
+The live X11 suite uses synthetic windows and a fixture recorder inside an
+unprivileged Docker container, without host mounts, physical audio, or networking:
 
 ```sh
 docker build -f scripts/Dockerfile.x11 -t opensaysme-x11-test .
 docker run --rm --init --network none opensaysme-x11-test
 ```
 
-The container runs as an unprivileged user, uses no host mounts, and needs no
-provider keys. `npm test` skips these live tests unless explicitly enabled inside
-the virtual display.
+Routine tests skip the live X11 suite unless explicitly enabled in its virtual
+display. Provider fixtures cover the actual message protocol and failures without
+sending audio externally. Windows CI compiles helpers and runs the device-free
+`native/windows/test-voice.ps1` protocol checks.
 
-Tests cover native-response validation, config privacy, helper deadlines and
-cancellation, and CLI lifecycle. Mocked platform tests do not establish live
-desktop support. CI builds/checks each OS and compiles the relevant helpers;
-physical microphone and permission/focus behavior require interactive checks.
+Verification for this slice (2026-10-28):
 
-For each supported desktop session, manually test inspect, focus-away-and-back,
-selection, hotkey activation, microphone delivery, and Ctrl+C cleanup. Record
-the OS/session and results. Never treat unrun tests or denied permissions as a
-successful capability proof.
+- **Linux/X11:** nine live Xvfb/Openbox tests passed, including repeated activation,
+  pointer-window identity, synthetic PCM streaming, cancellation, provider-stage
+  Escape, recorder failure recovery, and process/grab cleanup.
+- **macOS:** native build, synthetic 44.1/48 kHz conversion, context permission
+  fallback, and persistent helper startup/cancel/shutdown/re-registration passed.
+  The assembled CLI also reached ready and exited cleanly on Ctrl+C in two
+  consecutive terminal sessions, without opening the microphone or provider.
+  Physical microphone streaming, real key delivery, and AX window/selection
+  capture remain unverified; this host lacks the required Accessibility grant.
+- **Windows:** adapter fixtures and C# 5 compilation/pure protocol checks under
+  Mono passed. Native Windows desktop, PowerShell execution, and physical
+  microphone behavior still require a Windows run.
+- **Hosted transcription:** tested with protocol fixtures, not a live paid request.
+  Provider access, real speech accuracy, and end-to-end latency need an interactive
+  run with the user's configured key and microphone.
 
-### Initial verification (2026-10-28)
-
-- **Linux/X11, Debian bookworm ARM64 with Xvfb/Openbox:** All four live integration
-  tests passed: active-window inspection, switching and restoring focus, PRIMARY
-  selection with whitespace preserved, and shortcut delivery followed by
-  successful re-registration. This exercised real X11 APIs in an isolated virtual
-  desktop; no physical desktop or microphone was accessed.
-- **macOS 15.7.3, Apple Silicon:** Swift helper built and the read-only doctor
-  reached the desktop. Temporary hotkey registration and timeout cleanup worked;
-  key delivery was not exercised. Accessibility was not granted, so window
-  inspection, focus, and selection remain unverified. Microphone permission was
-  present; physical capture was not tested. The Intel helper was cross-compiled,
-  not run.
-- **Windows:** Adapter fixtures pass. Native helper compilation, input delivery,
-  focus, and selection still require a Windows run. The CI workflow includes
-  Windows checks but has not yet been run remotely.
-- **Wayland:** Desktop actions are explicitly unavailable in this slice.
-
-These results establish a scaffold and repeatable experiments, not completion of
-the plan's cross-platform desktop-access milestone. Physical microphone tests and
-interactive permission/focus checks remain necessary before connecting voice to
-actions.
+For manual acceptance, complete several turns from another app, cancel both while
+recording and processing, disconnect the network for one turn, then retry. Confirm
+focus stays put, context remains tied to activation, and all resources release on
+Ctrl+C. Do not treat mocks or denied permissions as successful native verification.
