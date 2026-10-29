@@ -1,7 +1,7 @@
 # Working on OpenSaysMe
 
-Read `README.md` for the product intent and `PLAN.md` for the current MVP scope.
-Keep both accurate as implementation decisions become concrete. This repository
+Read `README.md` for the product intent and `BACKLOG.md` for MVP scope and status.
+Keep both accurate and update backlog statuses as work lands. This repository
 contains a tap-to-talk runtime, visual attention history, an agent tool loop,
 an in-process tool host, and desktop probes. See
 `docs/development.md` for setup, validation commands, and platform limitations.
@@ -20,6 +20,10 @@ an in-process tool host, and desktop probes. See
 - Let the agent discover targets and gather evidence through tools. Do not require
   users to label windows or maintain routing rules. Resolve references using
   available context before asking; clarify only material unresolved ambiguity.
+- Treat context collection, model-visible capabilities, and desktop actions as
+  core work. Support inspecting, switching windows, pointing, clicking, scrolling,
+  and typing through shared tools; dedicated agent integrations improve concrete
+  interactions but are not a prerequisite for useful desktop interaction.
 - Use TypeScript and Node.js for the core. Isolate OS access, provider APIs, and
   agent integrations behind small, typed interfaces.
 - Support user-supplied provider keys and direct provider calls. Keep speech and
@@ -28,9 +32,14 @@ an in-process tool host, and desktop probes. See
   conversational responsiveness. Measure end-to-end delays and minimize serial
   waits; a two-call transcription/reasoning pipeline is not a fixed requirement.
 - Require deliberate activation. Captured context helps interpret requests but
-  does not authorize execution. Resolve ambiguity and confirm consequential actions.
-- Prioritize the interactions in `PLAN.md`. Add abstractions when a concrete
-  integration needs them; avoid speculative frameworks and unrelated features.
+  does not authorize execution. Scope permission to the user's requested outcome:
+  “fill this form” excludes submission; “fill this form and submit it” includes it.
+  Do not reconfirm explicit, still-applicable authorization. Resolve material
+  ambiguity before acting; request additional authority when an action exceeds that scope.
+  Enforce the boundary for mouse, keyboard, and API actions alike.
+- Prioritize the interactions in `BACKLOG.md`. Add abstractions when a concrete
+  capability or integration needs them; avoid speculative frameworks and unrelated
+  features.
 
 ## Implementation practices
 

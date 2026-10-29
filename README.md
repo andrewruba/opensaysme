@@ -18,6 +18,8 @@ Tap a hotkey and say:
 
 OpenSaysMe explores how what you say and the context of your work can make that interaction easier. Gathering context, preparing input, getting an answer, navigating windows, or directing an agent's actions are all possibilities. The interaction should fit the request.
 
+The core is collecting the right context, giving it to the model alongside the tools it can use, and carrying out the request within the permission you gave. The intended tools include inspecting windows, switching between them, moving the pointer to indicate something, clicking, scrolling, and typing. The model uses the results to decide what to do next. These shared desktop capabilities should work with existing agent interfaces; dedicated integrations can improve particular interactions.
+
 That might mean bringing together context:
 
 - A bug report in one tab and logs in another: "Debug this."
@@ -36,15 +38,17 @@ The goal is to complement the mouse and keyboard, not replace them or build anot
 
 ## Design goals
 
-- **User control:** Explicit activation, visible targets, and confirmation for consequential actions. Context alone never authorizes execution.
+- **User control:** Explicit activation and permission scoped to your request. “Fill in this form” leaves it unsubmitted; “fill in this form and submit it” authorizes submission without a redundant confirmation. Ask when the target, information, or consequences remain materially unclear or exceed the request. Context alone never authorizes execution.
 - **Privacy:** Local processing where practical, minimal retention, and explicit consent for external data transfer.
-- **Interoperability:** Work alongside existing agents through documented integrations rather than replace their interfaces.
+- **Interoperability:** Work alongside existing agents through their interfaces and documented integrations, using shared desktop capabilities wherever practical.
 
 ## Status
 
 Early development prototype. Tap-to-talk combines speech with desktop history and a local tool loop: the agent can discover windows, inspect current context, capture the current screen, and focus a verified target. You do not need to name windows or define routing rules. Full screenshots remain paired with nearby speech phrases and timed cursor trails.
 
-The voice agent calls desktop tools directly within the local runtime. Background-window inspection, clicking, and agent-specific integrations are future additions; the agent can currently distinguish windows using titles and available desktop context.
+The voice agent calls desktop tools directly within the local runtime. Background-window inspection, pointer control, clicking, scrolling, typing, and enforcement of edit/submit permissions are upcoming core work. Agent-specific integrations can follow where useful; the agent can currently distinguish windows using titles and available desktop context.
+
+See the [MVP backlog](BACKLOG.md) for feature status and remaining work.
 
 <!-- demo video goes here -->
 

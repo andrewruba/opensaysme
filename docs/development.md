@@ -8,8 +8,10 @@ gather more evidence, navigate, or answer naturally. Screens and application his
 selections and timed cursor paths can help clarify references. Gestures have no
 predefined command meanings, content categories, or required response types.
 The shared tool host supports window discovery, current-context inspection,
-current-screen capture, and verified focus. Background-window inspection, clicking,
-agent submission, and on-screen overlays remain future work. Gaze stays optional.
+current-screen capture, and verified focus. Background-window inspection, pointer
+control, clicking, scrolling, typing, and request-scoped edit/submit permissions
+are upcoming core work. Dedicated agent integrations and on-screen drawing overlays
+remain future work. Gaze stays optional.
 The voice runtime calls this host in the same Node.js process. See
 [the tool framework](tools.md) for the catalog and extension points.
 
@@ -303,7 +305,7 @@ doctor does not capture a test image. An activated voice turn verifies real capt
 look for nonempty `attention.frames` in the result. Images remain in memory.
 
 Guided permission setup and local verification are tracked in
-[the permission setup follow-up](../PLAN.md#follow-up-permission-setup).
+[the setup backlog](../BACKLOG.md#setup-permissions-and-providers).
 
 ## Desktop experiments and checks
 

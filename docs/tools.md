@@ -28,7 +28,25 @@ Focus also rechecks the title evidence; a changed title prompts rediscovery.
 These tools cannot yet inspect a specific background window's pixels/code, click,
 type, or submit to another agent. If two windows have indistinguishable titles and
 no useful captured context, the agent may need clarification. Background window
-capture and accessibility inspection are the next evidence sources to add.
+capture and accessibility inspection are the next evidence sources to add. Pointer
+movement/pointing, clicking, scrolling, and typing are core planned capabilities;
+they do not depend on choosing a dedicated agent integration. See the
+[product backlog](../BACKLOG.md) for delivery order and acceptance trials.
+
+## Planned execution permissions
+
+The request defines the authorized outcome. “Fill this form” permits filling it
+and stops before submission; “fill this form and submit it” also permits submission
+without another confirmation when the target, contents, and consequences match.
+Likewise, populating an agent input and sending it are distinct effects. Ask when
+material ambiguity remains or additional authority is needed, not after every step.
+
+Before enabling editing or submission, extend the runtime to check effects against
+the request at execution time. A click, keypress, or API call can submit or otherwise
+commit a change; the input mechanism does not determine permission. Revalidate the
+target and expected effect, inspect uncertain outcomes before retrying, and apply
+the same boundary to every path. Captured content and model plans cannot authorize
+actions. These checks are planned work; the current catalog only reads and focuses.
 
 ## Inspect the catalog
 
@@ -49,8 +67,9 @@ Input properties must be required (use nullable values where appropriate).
 Return text or JPEG content, or a bounded `isError` result with actionable guidance.
 Handlers receive an `AbortSignal`; pass it to OS/provider work and check it before
 any side effect or state update after an await. Keep OS details in platform adapters.
-Read tools and focus are the initial effects; define an execution policy when adding
-more consequential capabilities rather than treating all tools as safe to execute.
+Read tools and focus are the initial effects. Adding input or other consequential
+capabilities requires the request-scoped execution policy described above, alongside
+tests for authorized, unauthorized, ambiguous, stale-target, and cancelled actions.
 
 The registry bounds each call to six seconds. The voice loop allows six model
 requests and five tool calls within 45 seconds; each provider request has a
