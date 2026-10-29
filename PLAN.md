@@ -56,6 +56,25 @@ another window and say "over here," then stop. The preview should identify the
 intended source and destination, or ask a specific clarification. It should work
 without assigning the region or gesture a predefined semantic category.
 
+## Follow-up: permission setup
+
+Setup currently configures providers and sharing consent but leaves OS permissions
+to manual steps. In the macOS trial, speech worked while screenshots failed;
+Terminal was absent from the Screen Recording list until added manually and
+restarted. See [the current workaround](docs/development.md#macos-screen-recording-setup).
+
+- Guide microphone, Accessibility, and screen-capture permissions separately in
+  setup. Identify the launching app/helper where reliable and provide specific
+  grant, restart, and recheck instructions. Keep `doctor` read-only.
+- Offer deliberate local verification after a grant; distinguish permission
+  granted from capture verified. Discard test data without a provider request.
+- Preserve actionable failure reasons through the runtime: permission denied,
+  missing dependency, unsupported platform, and timeout need different guidance.
+  Make previews without screen frames visibly degraded.
+- Verify fresh installs, denial/revocation, terminal restart, and helper rebuilds.
+  Resolve macOS helper signing/permission identity before packaging; distinguish
+  Windows session restrictions and unsupported Wayland access from missing grants.
+
 ## MVP roadmap
 
 1. **Prove desktop access across platforms.** Test global activation, microphone

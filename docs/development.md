@@ -164,6 +164,24 @@ permission instructions under [macOS](../native/macos/README.md),
 [Windows](../native/windows/README.md), and [Linux](../native/linux/README.md).
 External Linux utilities are not bundled; review licenses before redistribution.
 
+### macOS Screen Recording setup
+
+Microphone and Accessibility grants do not grant screen capture. If `doctor`
+reports `screenCapture: permission-required`, open System Settings > Privacy &
+Security > Screen & System Audio Recording. For a run launched from Terminal,
+enable Terminal in the upper screen-recording list. If absent, use **+**, then
+**Cmd+Shift+G** and `/System/Applications/Utilities/Terminal.app` to add it.
+Other launchers may have a different permission identity.
+
+Fully quit and reopen the launching terminal, then rerun `npm run dev -- doctor`.
+Shell-only API-key exports may need to be set again; setup stores variable names,
+not their values. `unverified` with a permission-granted explanation is expected:
+doctor does not capture a test image. An activated voice turn verifies real capture;
+look for nonempty `attention.frames` in the result. Images remain in memory.
+
+Guided permission setup and local verification are tracked in
+[the permission setup follow-up](../PLAN.md#follow-up-permission-setup).
+
 ## Desktop experiments and checks
 
 `doctor` does not record, register shortcuts, request permissions, read selected
