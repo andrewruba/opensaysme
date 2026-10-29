@@ -10,11 +10,52 @@ opensaysme         # Run until Ctrl+C
 opensaysme doctor  # Check permissions, providers, and desktop capabilities
 ```
 
-Use TypeScript and Node.js, Commander and Clack for the CLI, AI SDK for direct
-provider calls, and Zod for configuration and action validation. Keep desktop
+Use TypeScript and Node.js, Commander and Clack for the CLI, direct provider
+adapters, and Zod for configuration and action validation. Keep desktop
 access behind platform adapters and agent-specific behavior behind integration
 adapters. Use native helpers where necessary; a graphical helper can be added
 for feedback without making it the application core.
+
+## Next slice: visual context history, cursor trajectories, and action preview
+
+The current prototype supports tap-to-talk streaming transcription, an activation
+context snapshot, cancellation, and latency measurements. Extend it to follow
+what the user sees and indicates throughout an activated turn.
+
+Treat cursor movement, selections, and later annotations and gaze as evidence of
+attention. Preserve their source and timing; let the model interpret them together
+with speech and visible content. Avoid gesture-to-command mappings or requiring
+regions to be classified into categories such as "error" before interpretation.
+Attention helps identify a referent; the user's request establishes the intended
+action.
+
+1. **Collect visual context history.** Capture an initial screen frame and bounded
+   updates while recording, alongside window/selection changes and cursor paths.
+   Associate samples with their display, coordinates, frame, and capture time so
+   references survive scrolling and window movement. Coalesce redundant samples
+   while preserving useful trajectories. Detect screen-capture capabilities and
+   permissions per platform and report missing context explicitly.
+2. **Check temporal alignment.** Relate context and audio to a common turn clock.
+   Distinguish capture time from delivery time; transcript arrival does not tell
+   us when a word was spoken. Test alignment early, retain uncertainty, and change
+   the speech adapter if the interaction needs timing it cannot provide.
+3. **Produce an action preview.** On the second tap, freeze capture and use one
+   independently configured BYOK reasoning provider that accepts text and images.
+   Send the transcript and a compact selection of relevant frames and attention
+   history. Validate a structured proposal and show the intended action, referenced
+   regions/windows, and any clarification needed in the CLI. Execution follows in
+   a later slice; do not require an overlay for this preview.
+4. **Bound capture and evaluate.** Keep history in memory for the active turn and
+   discard it after completion or cancellation. Explain external screen/context
+   sharing in setup. Measure context overhead, reference accuracy, and stop-to-preview
+   latency; test delayed transcripts, incidental movement, scrolling, and cleanup.
+
+Acceptance: indicate a region in one window while saying "use this," move to
+another window and say "over here," then stop. The preview should identify the
+intended source and destination, or ask a specific clarification. It should work
+without assigning the region or gesture a predefined semantic category.
+
+## MVP roadmap
 
 1. **Prove desktop access across platforms.** Test global activation, microphone
    capture, active-window detection, focus changes, and selected-text access on
@@ -30,8 +71,9 @@ for feedback without making it the application core.
    startup status, cancellation, and cleanup on exit. Keep microphone recording
    tied to deliberate activation.
 
-3. **Connect speech and intent.** Start with one hosted transcription adapter and
-   two reasoning-provider adapters, with independent speech and reasoning settings.
+3. **Connect speech and intent.** Build on the hosted transcription adapter with
+   the visual-context preview above, then add a second reasoning-provider adapter
+   before completing the MVP. Keep speech and reasoning settings independent.
    Users supply their own keys; requests go directly to their configured providers.
    Validate provider capabilities rather than assuming interchangeable APIs.
    Translate speech into a small set of typed actions and validate targets locally.
@@ -52,10 +94,10 @@ for feedback without making it the application core.
    parsing, action routing, cancellation, and focus restoration. Manually verify
    the complete hotkey-to-action flow in each supported desktop environment.
 
-Keep gaze behind the same targeting interface as pointer and selection. Run an
-early feasibility experiment for window-level targeting, but make it optional
-for the MVP. Defer background-service installation, local transcription, broad
-agent coverage, and general OS automation until the core interaction works well.
+Defer the drawing overlay and gaze integration until visual context and cursor
+attention work well. Future gaze should contribute to the same attention timeline
+and remain optional for the MVP. Also defer background-service installation, local
+transcription, broad agent coverage, and general OS automation.
 
 Retain the MIT license and prefer permissive dependencies. Check licenses for
 bundled binaries and model weights separately to preserve commercialization options.
