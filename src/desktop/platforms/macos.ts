@@ -11,10 +11,12 @@ import {
   desktopSnapshotSchema,
   desktopTestResultSchema,
   windowInventorySchema,
+  windowInspectionSchema,
   type DesktopReport,
   type DesktopSnapshot,
   type DesktopTestResult,
   type WindowInventory,
+  type WindowInspection,
 } from '../types.js';
 
 const helperPath = fileURLToPath(new URL('../../../native/macos/bin/opensaysme-desktop', import.meta.url));
@@ -35,6 +37,10 @@ const nativeErrors: Record<string, string> = {
   'screen-capture-unavailable': 'Screen capture requires macOS 14 or later and an active display under the pointer.',
   'screen-capture-failed': 'macOS could not capture a screen frame. Check Screen Recording permission and the active desktop session.',
 };
+
+class MacOSHelperError extends Error {
+  constructor(readonly code: string, message: string) { super(message); }
+}
 
 async function requireHelper(): Promise<void> {
   try {
@@ -62,8 +68,8 @@ function decode<T>(schema: z.ZodType<T>, output: string): T {
   const failure = z.object({ error: z.string() }).strict().safeParse(data);
   if (failure.success) {
     const code = failure.data.error;
-    throw new Error(Object.hasOwn(nativeErrors, code)
-      ? nativeErrors[code]
+    throw new MacOSHelperError(Object.hasOwn(nativeErrors, code) ? code : 'unknown', Object.hasOwn(nativeErrors, code)
+      ? nativeErrors[code]!
       : 'The macOS desktop helper failed with an unknown error.');
   }
   const parsed = schema.safeParse(data);
@@ -104,6 +110,25 @@ export async function listMacOSWindows(signal?: AbortSignal): Promise<WindowInve
     throw new Error('The macOS desktop helper returned an invalid window target.');
   }
   return inventory;
+}
+
+export async function inspectMacOSWindow(targetId: string, signal?: AbortSignal): Promise<WindowInspection> {
+  if (!targetIdSchema.safeParse(targetId).success) throw new Error('Use a macOS window ID returned by window discovery.');
+  try {
+    const result = decode(windowInspectionSchema, await invoke(['--inspect-window', targetId], 4_000, signal));
+    if (result.status === 'ok' && result.window.id !== targetId) {
+      throw new Error('The macOS desktop helper returned mismatched window content.');
+    }
+    return result;
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (error instanceof MacOSHelperError) {
+      if (error.code === 'permission-required') return { status: 'unavailable', reason: 'permission-required' };
+      if (['invalid-target', 'stale-or-ambiguous-target'].includes(error.code)) return { status: 'unavailable', reason: 'stale-target' };
+      if (error.code === 'accessibility-unavailable') return { status: 'unavailable', reason: 'inaccessible' };
+    }
+    throw error;
+  }
 }
 
 export async function inspectMacOS(includeSelection: boolean, signal?: AbortSignal): Promise<DesktopSnapshot> {

@@ -23,6 +23,7 @@ export async function setup(signal?: AbortSignal, replace = false): Promise<void
     + 'After stopping, selected frames, attention history, and the transcript go to your\n'
     + 'reasoning provider for a response. Screen content can include private data.\n'
     + 'The agent can inspect more desktop context and switch windows for your request.\n'
+    + 'On macOS, this includes accessibility text from requested background windows.\n'
     + 'Tool results may also go to your provider. Capture stays in memory by default.\n'
     + 'Setup stores an environment-variable name, never your key, and makes no API request.', 'Voice mode');
   const apiKeyEnv = answer(await text({

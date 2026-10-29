@@ -11,6 +11,7 @@ import {
   parseMacOSSnapshot,
   inspectMacOS,
   listMacOSWindows,
+  inspectMacOSWindow,
   probeMacOS,
   testMacOSHotkey,
   testMacOSMicrophone,
@@ -161,4 +162,48 @@ test('macOS inspection and focus pass cancellation and never launch after abort'
     await assert.rejects(operation());
   }
   assert.equal(vi.mocked(runCommand).mock.calls.length, previous);
+});
+
+const inspectionId = `mac:123:1700000000000:${'a'.repeat(64)}`;
+const inspection = {
+  status: 'ok', capturedAt: '2026-10-29T12:00:00Z',
+  window: { id: inspectionId, application: 'Code', title: 'Project' },
+  nodes: [{ parent: null, role: 'AXWindow' }, { parent: 0, role: 'AXTextArea', value: 'frontend/App.tsx' }], warnings: [],
+};
+
+test('window inspection is bounded, targeted, and cancellable without requesting focus', async () => {
+  const signal = new AbortController().signal;
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(inspection));
+  assert.deepEqual(await inspectMacOSWindow(inspectionId, signal), inspection);
+  assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.slice(1), [['--inspect-window', inspectionId], { timeoutMs: 4000, signal }]);
+  const previous = vi.mocked(runCommand).mock.calls.length;
+  await assert.rejects(inspectMacOSWindow('not-a-window'));
+  await assert.rejects(inspectMacOSWindow(inspectionId, AbortSignal.abort()));
+  assert.equal(vi.mocked(runCommand).mock.calls.length, previous);
+});
+
+test('window inspection rejects mismatched identity, invalid parentage, and excessive text', async () => {
+  for (const result of [
+    { ...inspection, window: { ...inspection.window, id: `mac:123:1700000000000:${'b'.repeat(64)}` } },
+    { ...inspection, nodes: [{ parent: 0, role: 'AXWindow' }] },
+    { ...inspection, nodes: [{ parent: null, role: 'AXTextArea', value: 'x'.repeat(2049) }] },
+    { ...inspection, nodes: Array.from({ length: 9 }, () => ({ parent: null, role: 'AXTextArea', value: 'x'.repeat(2048) })) },
+    { ...inspection, nodes: Array.from({ length: 129 }, () => ({ parent: null, role: 'AXButton' })) },
+    { ...inspection, capturedAt: 'private malformed timestamp' },
+  ]) {
+    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(result));
+    await assert.rejects(inspectMacOSWindow(inspectionId), /invalid response|mismatched window/);
+  }
+});
+
+test('window inspection returns known failure reasons without leaking arbitrary native errors', async () => {
+  for (const [code, reason] of [
+    ['permission-required', 'permission-required'], ['stale-or-ambiguous-target', 'stale-target'],
+    ['invalid-target', 'stale-target'], ['accessibility-unavailable', 'inaccessible'],
+  ]) {
+    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify({ error: code }));
+    assert.deepEqual(await inspectMacOSWindow(inspectionId), { status: 'unavailable', reason });
+  }
+  vi.mocked(runCommand).mockResolvedValueOnce('{"error":"private-window-content"}');
+  await assert.rejects(inspectMacOSWindow(inspectionId), { message: 'The macOS desktop helper failed with an unknown error.' });
 });

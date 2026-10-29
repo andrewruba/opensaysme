@@ -4,6 +4,7 @@ import { openAIReasoning } from '../src/reasoning/openai.js';
 import type { ReasoningInput } from '../src/reasoning/types.js';
 import type { ToolDescriptor, ToolEvent, ToolHost, ToolResult } from '../src/tools/types.js';
 import type { DiagnosticSink, PreparedReasoningRequest } from '../src/diagnostics.js';
+import { createDesktopTools } from '../src/tools/desktop.js';
 
 afterEach(() => { vi.useRealTimers(); });
 function history(): AttentionHistory {
@@ -305,6 +306,46 @@ function assistantItem(text: string) {
 function callResponse(...output: unknown[]) { return Response.json({ status: 'completed', output }); }
 
 describe('desktop tool reasoning loop', () => {
+  it('feeds candidate contents and their sources back before focusing one of two equally titled windows', async () => {
+    const candidates = [
+      { id: 'native-api', application: 'Editor', title: 'Project' },
+      { id: 'native-web', application: 'Editor', title: 'Project' },
+    ];
+    let focused = candidates[0]!;
+    const focus = vi.fn(async (id: string) => { focused = candidates.find((window) => window.id === id)!; });
+    const host = createDesktopTools({
+      listWindows: async () => ({ windows: candidates, warnings: [] }),
+      inspectWindow: async (id) => ({ status: 'ok', capturedAt: '2026-10-29T12:00:00Z',
+        window: candidates.find((window) => window.id === id)!,
+        nodes: [{ parent: null, role: 'AXTextArea', value: id === 'native-web' ? 'frontend/src/App.tsx' : 'backend/server.ts' }],
+        warnings: ['Virtualized content may be missing.'] }),
+      focus, inspect: async () => ({ platform: 'test', window: focused }),
+      captureContext: vi.fn(), captureFrame: vi.fn(),
+    });
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(callResponse(callItem()))
+      .mockResolvedValueOnce(callResponse(callItem('inspect_window', { windowId: 'window-1' }, 'inspect-api')))
+      .mockResolvedValueOnce(callResponse(callItem('inspect_window', { windowId: 'window-2' }, 'inspect-web')))
+      .mockImplementationOnce(async (_url, init) => {
+        expect(focus).not.toHaveBeenCalled();
+        const wire = JSON.parse(String(init?.body));
+        const evidence = wire.input.filter((item: { type: string }) => item.type === 'function_call_output');
+        const inspected = evidence.slice(1).map((item: { output: Array<{ text: string }> }) => JSON.parse(item.output[1]!.text));
+        expect(inspected).toMatchObject([
+          { source: 'accessibility', window: { windowId: 'window-1' }, nodes: [{ value: 'backend/server.ts' }] },
+          { source: 'accessibility', window: { windowId: 'window-2' }, nodes: [{ value: 'frontend/src/App.tsx' }] },
+        ]);
+        expect(inspected[1]).toMatchObject({ capturedAt: '2026-10-29T12:00:00Z', warnings: ['Virtualized content may be missing.'] });
+        expect(JSON.stringify(evidence)).not.toContain('native-');
+        return callResponse(callItem('focus_window', { windowId: 'window-2' }, 'focus-web'));
+      })
+      .mockResolvedValueOnce(response('Switched to the frontend project.'));
+    const f = fixture(fetcher); f.input.tools = host; f.input.transcript = 'Switch to the frontend project';
+    await expect(f.reason(f.input)).resolves.toBe('Switched to the frontend project.');
+    expect(focus).toHaveBeenCalledExactlyOnceWith('native-web', expect.any(AbortSignal));
+    host.close();
+  });
+
   it('discovers two VSCode windows, focuses the matching evidence, and answers without names configured by the user', async () => {
     const thinking = { type: 'reasoning', id: 'reason-1', summary: [], encrypted_content: 'encrypted-fixture' };
     const commentary = assistantItem('I will check the open windows.');

@@ -48,6 +48,24 @@ export const windowInventorySchema = z.object({
   'Window IDs must be unique');
 export type WindowInventory = z.infer<typeof windowInventorySchema>;
 
+const contentText = z.string().max(2048);
+export const windowInspectionSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('ok'), capturedAt: z.string().datetime(),
+    window: windowInventorySchema.shape.windows.element,
+    nodes: z.array(z.object({
+      parent: z.number().int().min(0).max(127).nullable(), role: z.string().min(1).max(128),
+      title: contentText.optional(), description: contentText.optional(), value: contentText.optional(),
+    }).strict()).max(128),
+    warnings: z.array(z.string().max(1024)).max(16),
+  }).strict().refine(({ nodes }) => nodes.every((node, index) => node.parent === null || node.parent < index)
+    && nodes.reduce((total, node) => total + node.role.length + (node.title?.length ?? 0)
+      + (node.description?.length ?? 0) + (node.value?.length ?? 0), 0) <= 16_384,
+  'Invalid or oversized accessibility content'),
+  z.object({ status: z.literal('unavailable'), reason: z.enum(['permission-required', 'stale-target', 'inaccessible']) }).strict(),
+]);
+export type WindowInspection = z.infer<typeof windowInspectionSchema>;
+
 export const desktopTestResultSchema = z.object({
   capability: z.enum(['globalHotkey', 'microphone']),
   status: z.enum(['passed', 'not-observed', 'unavailable']),
@@ -59,6 +77,8 @@ export type DesktopTestResult = z.infer<typeof desktopTestResultSchema>;
 export interface DesktopAdapter {
   probe(): Promise<DesktopReport>;
   listWindows(signal?: AbortSignal): Promise<WindowInventory>;
+  // Omitted when the platform has no implementation; do not advertise a phantom tool.
+  inspectWindow?(targetId: string, signal?: AbortSignal): Promise<WindowInspection>;
   inspect(includeSelection: boolean, signal?: AbortSignal): Promise<DesktopSnapshot>;
   focus(targetId: string, signal?: AbortSignal): Promise<void>;
   testHotkey(durationSeconds: number): Promise<DesktopTestResult>;

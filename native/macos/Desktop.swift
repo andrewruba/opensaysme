@@ -336,7 +336,7 @@ func captureContext() -> DesktopContext {
         pointer: position.map { PointerContext(x: $0.x, y: $0.y, window: pointedWindow) }, warnings: warnings)
 }
 
-func focus(_ id: String) throws {
+func resolveWindow(_ id: String, deadline: TimeInterval) throws -> (NSRunningApplication, AXUIElement) {
     try requireAccessibility()
     let parts = id.split(separator: ":")
     guard parts.count == 4, parts[0] == "mac", let pid = Int32(parts[1]), pid > 0,
@@ -344,13 +344,32 @@ func focus(_ id: String) throws {
         throw DesktopError("Invalid or expired macOS window target. Run desktop inspect again.", code: "invalid-target")
     }
     let app = applicationElement(application)
-    guard let windows = try attribute(app, kAXWindowsAttribute) as? [AXUIElement] else {
+    AXUIElementSetMessagingTimeout(app, 0.1)
+    var count = 0
+    guard AXUIElementGetAttributeValueCount(app, kAXWindowsAttribute as CFString, &count) == .success, count <= 128 else {
         throw DesktopError("The target application does not expose its windows.")
     }
-    let matches = try windows.filter { try targetID(application, $0) == id }
+    guard count > 0 else { throw DesktopError("The window closed.", code: "stale-or-ambiguous-target") }
+    var values: CFArray?
+    guard AXUIElementCopyAttributeValues(app, kAXWindowsAttribute as CFString, 0, count, &values) == .success,
+          let windows = values as? [AXUIElement] else { throw DesktopError("The target application's windows are unavailable.") }
+    var matches: [AXUIElement] = []
+    for window in windows {
+        guard ProcessInfo.processInfo.systemUptime < deadline else { throw DesktopError("Window resolution timed out.") }
+        AXUIElementSetMessagingTimeout(window, 0.05)
+        if try targetID(application, window) == id { matches.append(window) }
+    }
     guard matches.count == 1, let window = matches.first else {
         throw DesktopError("Window target is stale or ambiguous. Run desktop inspect again; duplicate window titles may require a distinct title.", code: "stale-or-ambiguous-target")
     }
+    return (application, window)
+}
+
+func focus(_ id: String) throws {
+    let (application, window) = try resolveWindow(id, deadline: ProcessInfo.processInfo.systemUptime + 3)
+    let pid = application.processIdentifier
+    let app = applicationElement(application)
+    AXUIElementSetMessagingTimeout(window, 1)
     guard AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success else {
         throw DesktopError("The application rejected raising the target window.", code: "focus-rejected")
     }
@@ -366,6 +385,56 @@ func focus(_ id: String) throws {
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
     } while Date() < deadline
     throw DesktopError("Focus change was requested but could not be verified; macOS may have blocked activation.", code: "focus-unverified")
+}
+
+struct WindowInspection: Encodable {
+    let status = "ok"
+    let capturedAt: String
+    let window: Window
+    let nodes: [WindowContentNode]
+    let warnings: [String]
+}
+
+func inspectWindow(_ id: String) throws -> WindowInspection {
+    let deadline = ProcessInfo.processInfo.systemUptime + 3
+    let (application, window) = try resolveWindow(id, deadline: deadline)
+    let capturedAt = captureTimestamp()
+    let title = stringAttribute(window, kAXTitleAttribute)
+    let contentDeadline = min(deadline - 0.5, ProcessInfo.processInfo.systemUptime + 1.5)
+    func check(_ element: AXUIElement) throws {
+        guard ProcessInfo.processInfo.systemUptime < contentDeadline else { throw DesktopError("Content inspection timed out.") }
+        AXUIElementSetMessagingTimeout(element, 0.05)
+    }
+    let content = collectWindowContent(root: window, deadline: contentDeadline,
+        same: { CFEqual($0, $1) }, read: { element, name in
+            try check(element)
+            var value: CFTypeRef?
+            let result = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+            if result == .noValue || result == .attributeUnsupported { return nil }
+            guard result == .success else { throw DesktopError("Content is unavailable.") }
+            return value as? String
+        }, children: { element, limit in
+            try check(element)
+            var count = 0
+            let result = AXUIElementGetAttributeValueCount(element, kAXChildrenAttribute as CFString, &count)
+            if result == .noValue || result == .attributeUnsupported { return [] }
+            guard result == .success else { throw DesktopError("Child elements are unavailable.") }
+            if count == 0 { return [] }
+            var values: CFArray?
+            guard AXUIElementCopyAttributeValues(element, kAXChildrenAttribute as CFString, 0, min(count, limit), &values) == .success,
+                  let children = values as? [AXUIElement] else { throw DesktopError("Child elements are unavailable.") }
+            return children
+        })
+    // Discard all content if the source window closed, changed identity, or became ambiguous.
+    let (_, current) = try resolveWindow(id, deadline: deadline)
+    guard CFEqual(current, window), title == stringAttribute(current, kAXTitleAttribute) else {
+        throw DesktopError("Window changed during inspection.", code: "stale-or-ambiguous-target")
+    }
+    guard !content.nodes.isEmpty else { throw DesktopError("No accessible content was available.") }
+    return WindowInspection(capturedAt: capturedAt,
+        window: Window(id: id, application: String((application.localizedName ?? "Application").prefix(1024)),
+                       title: title.map { String($0.prefix(16384)) }),
+        nodes: content.nodes, warnings: content.warnings)
 }
 
 final class TestState {
@@ -500,6 +569,8 @@ struct DesktopMain {
             case ["--context"]: try output(captureContext())
             case ["--frame"]: try output(captureFrame())
             case ["--voice"]: VoiceSession().run()
+            case let args where args.count == 2 && args[0] == "--inspect-window":
+                try output(inspectWindow(args[1]))
             case let args where args.count == 2 && args[0] == "--focus":
                 try focus(args[1])
                 try output(["ok": true])
@@ -509,7 +580,7 @@ struct DesktopMain {
                 }
                 try output(args[0] == "--test-hotkey" ? testHotkey(seconds: seconds) : testMicrophone(seconds: seconds))
             default:
-                throw DesktopError("Expected --probe, --inspect, --inspect-selection, --list-windows, --context, --frame, --voice, --focus <target-id>, --test-hotkey <seconds>, or --test-microphone <seconds>.")
+                throw DesktopError("Expected --probe, --inspect, --inspect-selection, --list-windows, --inspect-window <target-id>, --context, --frame, --voice, --focus <target-id>, --test-hotkey <seconds>, or --test-microphone <seconds>.")
             }
         } catch let error as VisualCaptureError {
             try? output(["error": error.rawValue])

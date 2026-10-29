@@ -8,9 +8,10 @@ gather more evidence, navigate, or answer naturally. Screens and application his
 selections and timed cursor paths can help clarify references. Gestures have no
 predefined command meanings, content categories, or required response types.
 The shared tool host supports window discovery, current-context inspection,
-current-screen capture, and verified focus. Background-window inspection, pointer
-control, clicking, scrolling, typing, and request-scoped edit/submit permissions
-are upcoming core work. Dedicated agent integrations and on-screen drawing overlays
+current-screen capture, verified focus, and macOS background-window accessibility
+inspection. Background-window images, Windows/Linux accessibility inspection,
+pointer control, clicking, scrolling, typing, and request-scoped edit/submit permissions
+remain core work. Dedicated agent integrations and on-screen drawing overlays
 remain future work. Gaze stays optional.
 The voice runtime calls this host in the same Node.js process. See
 [the tool framework](tools.md) for the catalog and extension points.
@@ -138,6 +139,11 @@ references itself; no user naming or routing rules are required.
 The loop permits six provider requests and five tool calls within 45 seconds.
 Each provider request has a twenty-second deadline; each local tool has six seconds.
 Tool results, including requested screenshots, enter subsequent model requests.
+On macOS, `inspect_window` can read a discovered window's accessibility content
+without switching to it. Its results retain source identity and capture time;
+protected fields, unavailable content, and truncation are explicit. The catalog
+omits the operation on Windows/Linux. Unchanged window references survive inventory
+refreshes within a turn, but content is read afresh and targets are revalidated.
 Requests remain stateless with `store: false`, replaying tool outputs and encrypted
 reasoning context. More tool steps can increase latency and provider usage; simple
 answers still need just one reasoning request. The model is instructed to gather
@@ -187,7 +193,7 @@ future work. Setup makes no provider request.
 Activated audio streams directly to OpenAI. After stopping, full screenshots and
 optional trail copies, window titles, selected text, cursor history, and transcripts
 go directly to the reasoning provider. Requested tool results can include window
-inventory, current context, and additional screenshots. Setup explains this sharing. Provider
+inventory, current context, macOS window accessibility content, and additional screenshots. Setup explains this sharing. Provider
 charges and data policies apply. The Responses request uses `store: false`;
 provider retention policies still apply.
 
@@ -374,6 +380,16 @@ rejection. The macOS helper builds and passes synthetic checks. Windows native
 enumeration, physical desktop navigation, and live model target inference remain
 unverified; no paid provider calls were made by these checks.
 
+Window inspection checks (2026-10-29): `npm run check` passed on macOS
+(269 tests passed; 14 X11 tests skipped), and the macOS helper builds. Native
+synthetic checks cover accessibility traversal, protected subtrees, text/node/depth
+limits, cycles, deadlines, and inaccessible elements. Provider fixtures pass source
+content from two equally titled windows through the tool loop before verified focus;
+they test evidence delivery, not live model inference. A read-only native probe
+reported no foreground desktop in this execution environment, so live application
+inspection and focus behavior remain unverified. No provider requests or real
+desktop captures were made. Windows/Linux do not yet advertise `inspect_window`.
+
 Manual acceptance: ask about visible content using existing context, then try
 pointing or selecting to clarify a reference and a request spanning several windows.
 Inspect `visualContext.frames` and compare phrase, cursor, and frame times with
@@ -387,3 +403,9 @@ without registering names. Use `--debug` to inspect the discovered titles, selec
 window reference, and verified tool result. Try indistinguishable titles and a
 window closed or retitled during processing; the agent should inspect again or
 explain the remaining ambiguity.
+On macOS, use two discoverable windows whose contents distinguish the projects and
+check that `inspect_window` supplies relevant text without a focus change before
+the requested navigation. Verify protected fields are omitted, try an application
+with limited accessibility support, and close or retitle a candidate during
+inspection. Native windows with identical title/AX-identifier tokens are still
+omitted as ambiguous; this slice does not resolve that platform limitation.

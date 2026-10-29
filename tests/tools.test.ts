@@ -114,6 +114,10 @@ function desktopFixture() {
   const state = { current: browser, inventory: [editor, browser] };
   const adapter = {
     listWindows: vi.fn<DesktopAdapter['listWindows']>(async () => ({ windows: structuredClone(state.inventory), warnings: [] })),
+    inspectWindow: vi.fn<NonNullable<DesktopAdapter['inspectWindow']>>(async (id) => ({
+      status: 'ok', capturedAt: '2026-10-29T12:00:00.000Z', window: { ...state.inventory.find((window) => window.id === id)! },
+      nodes: [{ parent: null, role: 'AXWindow', title: 'Project' }, { parent: 0, role: 'AXTextArea', value: 'frontend/src/App.tsx' }], warnings: [],
+    })),
     inspect: vi.fn<DesktopAdapter['inspect']>(async () => ({ platform: 'test', window: { ...state.current } })),
     focus: vi.fn<DesktopAdapter['focus']>(async (id) => { state.current = state.inventory.find((window) => window.id === id)!; }),
     captureContext: vi.fn<DesktopAdapter['captureContext']>(async () => ({
@@ -131,7 +135,7 @@ function desktopFixture() {
 describe('desktop tool primitives', () => {
   it('discovers windows without manual names or exposing native IDs', async () => {
     const { host, adapter } = desktopFixture();
-    expect(host.list().map((tool) => tool.name)).toEqual(['list_windows', 'inspect_desktop', 'capture_screen', 'focus_window']);
+    expect(host.list().map((tool) => tool.name)).toEqual(['list_windows', 'inspect_desktop', 'capture_screen', 'focus_window', 'inspect_window']);
     expect(adapter.listWindows).not.toHaveBeenCalled();
     const result = await host.call('list_windows', {}, signal());
     expect(value(result)).toEqual({ windows: [
@@ -142,13 +146,86 @@ describe('desktop tool primitives', () => {
     expect(adapter.focus).not.toHaveBeenCalled();
   });
 
-  it('rejects raw, undiscovered, and old discovery handles before focusing', async () => {
-    const { host, adapter } = desktopFixture();
+  it('rejects raw, undiscovered, and removed discovery handles before focusing', async () => {
+    const { host, adapter, state } = desktopFixture();
     expect((await host.call('focus_window', { windowId: editor.id }, signal())).isError).toBe(true);
     expect(value(await host.call('focus_window', { windowId: 'window-1' }, signal())).code).toBe('unknown-window');
     await host.call('list_windows', {}, signal());
+    state.inventory = [browser];
     await host.call('list_windows', {}, signal());
     expect(value(await host.call('focus_window', { windowId: 'window-1' }, signal())).code).toBe('unknown-window');
+    expect(adapter.focus).not.toHaveBeenCalled();
+  });
+
+  it('retains references for unchanged windows across reordering and refreshes', async () => {
+    const { host, state } = desktopFixture();
+    await host.call('list_windows', {}, signal());
+    state.inventory = [browser, editor];
+    expect(value(await host.call('list_windows', {}, signal())).windows.map((window: { windowId: string }) => window.windowId))
+      .toEqual(['window-2', 'window-1']);
+    state.inventory = [browser, { ...editor, title: 'Different project' }];
+    expect(value(await host.call('list_windows', {}, signal())).windows[1].windowId).toBe('window-3');
+    expect(value(await host.call('focus_window', { windowId: 'window-1' }, signal())).code).toBe('unknown-window');
+  });
+
+  it('inspects the requested background window without focus or native ID disclosure', async () => {
+    const { host, adapter } = desktopFixture();
+    await host.call('list_windows', {}, signal());
+    const result = await host.call('inspect_window', { windowId: 'window-1' }, signal());
+    expect(value(result)).toMatchObject({ source: 'accessibility', capturedAt: '2026-10-29T12:00:00.000Z',
+      window: { windowId: 'window-1', title: editor.title }, nodes: [{ role: 'AXWindow' }, { value: 'frontend/src/App.tsx' }] });
+    expect(adapter.inspectWindow).toHaveBeenCalledWith(editor.id, expect.any(AbortSignal));
+    expect(adapter.listWindows).toHaveBeenCalledOnce();
+    expect(adapter.focus).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain('native-');
+  });
+
+  it('omits inspection from the catalog when the platform has no implementation', () => {
+    const { adapter } = desktopFixture();
+    const host = createDesktopTools({ ...adapter, inspectWindow: undefined });
+    expect(host.list().some((tool) => tool.name === 'inspect_window')).toBe(false);
+  });
+
+  it('rejects undiscovered inspection targets before native access', async () => {
+    const { host, adapter } = desktopFixture();
+    for (const windowId of [editor.id, 'window-1']) {
+      expect((await host.call('inspect_window', { windowId }, signal())).isError).toBe(true);
+    }
+    expect(adapter.inspectWindow).not.toHaveBeenCalled();
+  });
+
+  it.each(['permission-required', 'inaccessible', 'stale-target'] as const)('preserves actionable %s inspection failures', async (reason) => {
+    const { host, adapter } = desktopFixture();
+    await host.call('list_windows', {}, signal());
+    adapter.inspectWindow.mockResolvedValue({ status: 'unavailable', reason });
+    const result = await host.call('inspect_window', { windowId: 'window-1' }, signal());
+    expect(value(result).code).toBe(reason === 'inaccessible' ? 'content-unavailable' : reason === 'stale-target' ? 'stale-window' : reason);
+    if (reason === 'stale-target') expect(value(await host.call('focus_window', { windowId: 'window-1' }, signal())).code).toBe('unknown-window');
+    expect(adapter.focus).not.toHaveBeenCalled();
+  });
+
+  it('discards content when the returned source changed during inspection', async () => {
+    const { host, adapter, state } = desktopFixture();
+    await host.call('list_windows', {}, signal());
+    state.inventory[0] = { ...editor, title: 'Changed project' };
+    const result = await host.call('inspect_window', { windowId: 'window-1' }, signal());
+    expect(value(result).code).toBe('stale-window');
+    expect(JSON.stringify(result)).not.toContain('frontend/src/App.tsx');
+    expect(value(await host.call('focus_window', { windowId: 'window-1' }, signal())).code).toBe('unknown-window');
+    expect(adapter.focus).not.toHaveBeenCalled();
+  });
+
+  it('does not release content returned after cancellation', async () => {
+    const { host, adapter } = desktopFixture();
+    await host.call('list_windows', {}, signal());
+    const gate = deferred<Awaited<ReturnType<NonNullable<DesktopAdapter['inspectWindow']>>>>();
+    adapter.inspectWindow.mockReturnValueOnce(gate.promise);
+    const controller = new AbortController();
+    const pending = host.call('inspect_window', { windowId: 'window-1' }, controller.signal);
+    const cancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await Promise.resolve(); controller.abort(); await cancelled;
+    gate.resolve({ status: 'ok', capturedAt: '2026-10-29T12:00:00Z', window: editor, nodes: [], warnings: [] });
+    await Promise.resolve();
     expect(adapter.focus).not.toHaveBeenCalled();
   });
 

@@ -97,9 +97,9 @@ Status: **Partial** — capture exists; relevance and live reference accuracy ne
 | V04 | Done | Clean full frames plus optional trail copies, paired with nearby speech; natural-language responses. |
 | V05 | Done | In-memory context by default; opt-in debug bundles excluding credentials and raw audio. |
 | W02 | Done | Discover windows, inspect current context, capture the current screen, and revalidate/verify focus. |
-| W03 | Next | Inspect relevant accessibility text and controls in a discovered window, including background windows where supported, without requiring a focus change. |
+| W03 | Partial | macOS can inspect bounded accessibility text/control roles from a discovered background window without changing focus, omitting protected fields. Windows/Linux implementations and live application coverage remain. |
 | W04 | Next | Capture a discovered background window where supported, with identity, bounds, and capture time for reliable reference and action targeting. |
-| W05 | Next | Detect stale, closed, inaccessible, or changed targets; reuse valid evidence and refresh what is needed without repeatedly scanning the whole desktop. |
+| W05 | Partial | Unchanged windows retain discovery references across refreshes; macOS inspection revalidates its source and distinguishes stale/inaccessible/permission failures. Broader evidence reuse and invalidation remain. |
 | W06 | Next | Live trial: distinguish similarly titled windows by contents and resolve spoken/pointed references; record accuracy, ambiguity, and latency. |
 
 ## Give the model useful context and tools

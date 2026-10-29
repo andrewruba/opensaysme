@@ -31,6 +31,26 @@ AX identifier. They are temporary: title changes and app restarts invalidate
 them, and identical windows fail as ambiguous. Applications vary in Accessibility
 support, so this is a feasibility adapter rather than universal window targeting.
 
+`--inspect-window <id>` reads accessibility content from a discovered window without
+activating it. Rebuild the helper to enable the `inspect_window` agent tool. It
+returns capture time, source identity, and a bounded tree of roles, titles,
+descriptions, and string values. It resolves the window before and after reading;
+changed, closed, or ambiguous sources discard the result. This does not make the
+content atomic or detect every edit inside an unchanged window.
+
+Traversal stops at 128 elements, eight child levels, 16,384 UTF-16 text units total,
+or its time budget (at most 1.5 seconds for content within a three-second operation).
+Individual text attributes are limited to 2,048 units. Reads use short Accessibility
+message deadlines; the parent also cancels the child at four seconds. Secure text
+fields and their descendants are skipped before reading labels or values. Failed
+protection checks skip that subtree. Truncation, inaccessible elements, and protected
+content produce omission warnings. Apps may expose only part of their content, and
+virtualized/off-screen text may be absent. No clipboard reads or screenshots are
+performed. Node parent indices describe this observation and cannot be used as
+action handles. The voice runtime retains content only for the activated turn;
+opt-in debug bundles retain tool results. Calling the helper directly prints the
+captured content as JSON on stdout.
+
 Interactive tests are separate, deliberate commands:
 
 ```sh
@@ -95,6 +115,11 @@ Run native conversion and protocol checks without microphone access:
 sh native/macos/test.sh
 ```
 
+The same command exercises synthetic accessibility trees for correct source text,
+protected subtrees, Unicode/text/node/depth limits, cycles, deadlines, and failures.
+It reads no real application content. These checks do not verify live application
+coverage, Accessibility permission grants, or model target inference.
+
 These checks convert and timestamp synthetic 44.1/48 kHz mono/stereo buffers,
 including delayed delivery, resampler tail, clock gaps, and turn reset; reject invalid
 commands, exercise pointer sampling lifecycle, and encode a bounded synthetic JPEG
@@ -107,4 +132,6 @@ Reference APIs: [AXIsProcessTrusted](https://developer.apple.com/documentation/a
 and [microphone authorization](https://developer.apple.com/documentation/avfoundation/avcapturedevice/authorizationstatus(for:)).
 Streaming uses [AVAudioConverter](https://developer.apple.com/documentation/avfaudio/avaudioconverter/convert(to:error:withinputfrom:));
 pointer targets use [Accessibility hit testing](https://developer.apple.com/documentation/applicationservices/1462077-axuielementcopyelementatposition).
+Window inspection uses [Accessibility message timeouts](https://developer.apple.com/documentation/applicationservices/1459345-axuielementsetmessagingtimeout)
+and excludes [secure text fields](https://developer.apple.com/documentation/applicationservices/kaxsecuretextfieldsubrole).
 Screenshots use [SCScreenshotManager](https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager).

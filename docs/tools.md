@@ -15,9 +15,11 @@ to the model.
 | `list_windows` | Discover application/window titles and automatic references. |
 | `inspect_desktop` | Read active-window, selection, and pointer context. |
 | `capture_screen` | Capture the current pointer display, or X11 virtual desktop. |
+| `inspect_window` | Read bounded accessibility text/control roles from a discovered window without focusing it (macOS only). |
 | `focus_window` | Recheck a discovered target, focus it, and verify the result. |
 
-Window references are internal tool handles. They reset on relisting and are never
+Window references are internal tool handles. Unchanged windows keep their references
+across relisting; removed, retitled, or replaced windows lose theirs. They are never
 names the user must organize. Voice creates a fresh tool host per activated turn
 and closes it on completion or cancellation. Native tokens remain temporary:
 macOS title changes and process restarts can invalidate targets. Ambiguous and
@@ -25,10 +27,19 @@ inaccessible windows are omitted with warnings. Same-process window-handle reuse
 remains a platform limitation.
 Focus also rechecks the title evidence; a changed title prompts rediscovery.
 
-These tools cannot yet inspect a specific background window's pixels/code, click,
-type, or submit to another agent. If two windows have indistinguishable titles and
-no useful captured context, the agent may need clarification. Background window
-capture and accessibility inspection are the next evidence sources to add. Pointer
+`inspect_window` returns its source window, capture time, control roles, available
+titles/descriptions/string values, and omission warnings. Parent indices describe
+only this observation; they are not action handles. The helper resolves the target
+before and after reading; changed or ambiguous source identities discard the result.
+Inspection does not focus the window, read the clipboard, or cache its contents.
+Permission denial and unavailable content are explicit tool errors. The catalog
+omits this tool on Windows/Linux, where no implementation exists yet.
+
+These tools cannot yet capture a specific background window's pixels, click, type,
+or submit to another agent. Accessibility may expose little content; omitted or
+truncated text does not prove that a window cannot match. Identical native window
+identities remain ambiguous even when content might distinguish them. Background
+window images and broader accessibility coverage remain work. Pointer
 movement/pointing, clicking, scrolling, and typing are core planned capabilities;
 they do not depend on choosing a dedicated agent integration. See the
 [product backlog](../BACKLOG.md) for delivery order and acceptance trials.
