@@ -2,8 +2,11 @@
 
 Reduce the work between a user's request and useful agent behavior: finding the
 right windows, copying context, explaining references, and operating interfaces.
-Build a local, cross-platform, CLI-first runtime that combines spoken intent with
-relevant desktop context and gives the model tools to carry out that intent.
+Build a local, CLI-first runtime that combines spoken intent with relevant desktop
+context and gives the model tools to carry out that intent. **V1 targets macOS 14+
+only.** Windows and Linux implementation, validation, and distribution are deferred
+until after v1. Keep existing adapters and checks, with OS access isolated for later
+ports; other-platform parity does not hold macOS features open.
 
 The core is three connected capabilities:
 
@@ -48,10 +51,9 @@ form; it must not silently apply to a different form or changed contents.
 
 ## Delivery order and acceptance
 
-First prove the core interaction on the available development desktop, then verify
-the same outcomes on each supported platform. Cross-platform adapters remain part
-of the design throughout; packaging and provider breadth do not define the first
-useful interaction.
+Prove and ship the core interaction on macOS 14+. Other-platform implementations
+and acceptance trials belong to the deferred work below. Packaging and provider
+breadth do not define the first useful interaction.
 
 1. **Understand and target.** Improve context inspection and model input, then
    prove reference resolution and pointing (W03–W06, M01–M02, T01).
@@ -60,7 +62,7 @@ useful interaction.
    and both agent-input variants above; the policy is required before enabling
    tools that can edit or submit.
 3. **Continue naturally and ship.** Add follow-ups, prove useful agent interactions,
-   reduce measured friction/latency, and complete platform/setup/release checks.
+   reduce measured friction/latency, and complete macOS setup and release checks.
 
 The core MVP must pass these end-to-end trials without manual window labels or
 copy/paste by the user. Use controlled forms and agent inputs for submission tests.
@@ -77,12 +79,13 @@ copy/paste by the user. Use controlled forms and agent inputs for submission tes
 Record completion accuracy, unintended actions, user corrections, unnecessary
 clarifications, manual context transfers, and end-to-end latency. Compare with doing
 the same task manually. Core completion requires the trials to pass; release also
-requires clean installation and validation on macOS, Windows, and the explicitly
-supported Linux desktops. Wayland is currently unsupported.
+requires clean installation and validation on supported macOS versions and
+architectures. Windows, Linux/X11, and Wayland do not gate v1.
 
-**Statuses:** `Done` = implemented with routine checks; `Partial` = partly delivered;
+**Statuses apply to macOS v1:** `Done` = implemented with routine checks; `Partial` = partly delivered;
 `Next` = upcoming implementation; `Todo` = remaining work; `Deferred` = outside the
-MVP. `Done` does not imply live validation on every desktop. Keep existing IDs for
+v1 scope. `Done` does not imply live acceptance has passed; W06, A06, P03 and P07
+track the outstanding macOS trials, including implemented capabilities. Keep existing IDs for
 continuing work; update statuses when behavior lands, not when it is planned.
 
 During v1 development, use unit tests and mocked provider responses. Once the v1
@@ -102,8 +105,8 @@ Status: **Partial** — capture exists; relevance and live reference accuracy ne
 | V04 | Done | Clean full frames plus optional trail copies, paired with nearby speech; natural-language responses. |
 | V05 | Done | In-memory context by default; opt-in debug bundles excluding credentials and raw audio. |
 | W02 | Done | Discover windows, inspect current context, capture the current screen, and revalidate/verify focus. |
-| W03 | Partial | macOS can inspect bounded accessibility text/control roles from a discovered background window without changing focus, omitting protected fields. Windows/Linux implementations and live application coverage remain. |
-| W04 | Partial | macOS 14+ can capture a discovered background window without focusing it, with source identity, bounds, capture time, and stale/ambiguous-source rejection. Windows/Linux support and live capture/coordinate validation remain. |
+| W03 | Done | Inspect bounded accessibility text/control roles from a discovered macOS background window without changing focus, omitting protected fields. Routine checks cover traversal, source identity and failures; live application coverage is tracked under W06/P03. |
+| W04 | Done | Capture a discovered background window on macOS 14+ without focusing it, with source identity, bounds, capture time, and stale/ambiguous-source rejection. Routine checks cover the native protocol and source/geometry validation; live capture and coordinate validation are tracked under P03/P07. |
 | W05 | Partial | Unchanged windows retain discovery references within a turn; fresh window outputs identify matching native sources from recent turns. macOS inspection/capture revalidates sources and reports stale, ambiguous, inaccessible, and permission failures. Broader evidence reuse and invalidation remain. |
 | W06 | Todo | In the unified live suite after v1 implementation, distinguish similarly titled windows by contents and resolve spoken/pointed references; record accuracy, ambiguity, and latency. |
 
@@ -124,7 +127,7 @@ arbitrary model-generated shell commands.
 
 ## Desktop action capabilities
 
-Status: **Partial** — initial macOS input tools are implemented; live behavior and other platforms remain unverified.
+Status: **Partial** — initial macOS input tools are implemented; broader target support, outcome recovery and live behavior remain.
 
 | ID | Status | Outcome |
 | --- | --- | --- |
@@ -191,13 +194,10 @@ Status: **Partial**
 
 | ID | Status | Outcome |
 | --- | --- | --- |
-| P01 | Done | Native adapters and capability reporting for macOS, Windows, and Linux/X11; unsupported operations fail explicitly. |
-| P02 | Done | Cross-platform CI, mocked provider/tool tests, native protocol checks, and isolated X11 desktop tests. |
+| P01 | Done | macOS native adapter and capability reporting; unsupported operations fail explicitly. Existing Windows/Linux adapters remain as a starting point for later support. |
+| P02 | Done | CI, mocked provider/tool tests and native protocol checks. Existing Windows checks and isolated X11 desktop tests remain available without extending v1 release scope. |
 | P03 | Todo | Verify the core acceptance trials on macOS, including fresh grants, denial/revocation, launcher restart, and helper rebuilds. |
-| P04 | Todo | Verify the same trials on native Windows, including physical audio/hotkeys, PowerShell, and desktop-session restrictions. |
-| P05 | Todo | Verify the same trials on physical Linux/X11 with documented desktop/dependency coverage. |
-| P06 | Todo | Assess Wayland access and decide release coverage; implement and verify any claimed support or explicitly release Linux as X11-only. |
-| P07 | Todo | Validate input targeting across displays/DPI, stale/reused handles, layout changes, user intervention, and cleanup after cancellation/failure. |
+| P07 | Todo | Validate macOS input targeting across displays/scales, stale/reused window identities, layout changes, user intervention, and cleanup after cancellation/failure. |
 
 ## Distribution and release
 
@@ -206,10 +206,23 @@ Status: **Todo** — release work follows proof of the core interaction.
 | ID | Status | Outcome |
 | --- | --- | --- |
 | D01 | Todo | Establish stable macOS helper signing/permission identity before distributing native packages. |
-| D02 | Todo | Package helpers and handle platform prerequisites so installation needs no compiler; document supported OS versions/desktops. |
-| D03 | Todo | Audit redistribution licenses/notices for bundled binaries, including sharp/libvips and any bundled Linux dependencies; retain MIT for the project. |
+| D02 | Todo | Package the macOS helper so installation needs no compiler; document supported macOS versions and architectures. |
+| D03 | Todo | Audit redistribution licenses/notices for macOS release binaries, including sharp/libvips; retain MIT for the project. |
 | D04 | Todo | Prepare versioned release artifacts and publishing/install/update instructions; remove the package's private flag only when ready. |
-| D05 | Todo | Run clean-machine install → setup → core acceptance trials on every supported OS and record results. |
+| D05 | Todo | Run clean-machine install → setup → core acceptance trials on supported macOS versions and architectures, and record results. |
+
+## After v1: other platforms
+
+Status: **Deferred** — retain the existing adapters and tests; complete support
+when each platform becomes a release target.
+
+| ID | Status | Outcome |
+| --- | --- | --- |
+| L04 | Deferred | Implement Windows/Linux background-window accessibility inspection, window capture and desktop input with the same context, permission and verification contracts as macOS (W03–W04, T01–T05, E01–E04). |
+| P04 | Deferred | Verify the core trials on native Windows, including physical audio/hotkeys, PowerShell, and desktop-session restrictions. |
+| P05 | Deferred | Verify the core trials on physical Linux/X11 with documented desktop/dependency coverage. |
+| P06 | Deferred | Assess Wayland access and decide Linux release coverage; implement and verify any claimed support or explicitly release Linux as X11-only. |
+| L05 | Deferred | Complete Windows/Linux permission setup, packaging, prerequisite guidance, binary/license review and clean-machine installation checks before releasing either platform. |
 
 ## Later exploration
 

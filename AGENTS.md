@@ -8,8 +8,10 @@ an in-process tool host, and desktop probes. See
 
 ## Project direction
 
-- Build a cross-platform, CLI-first tool that runs locally and complements
-  existing agents. Keep setup in the terminal and desktop feedback minimal.
+- Ship a macOS-only v1 of a CLI-first tool that runs locally and complements
+  existing agents. Windows and Linux implementation, validation, and distribution
+  are deferred until after v1. Keep OS access isolated for those later ports,
+  setup in the terminal, and desktop feedback minimal.
 - Reduce friction between user intent and agent behavior. Context gathering,
   preparing input, navigation, answers, and actions are possible interactions.
   Let the user's request determine the flow; do not impose a universal

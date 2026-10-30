@@ -10,6 +10,9 @@ to the model.
 
 ## Current capabilities
 
+V1 targets macOS 14+ only. Existing Windows/Linux adapters remain available for
+development; completing those platforms is deferred until after v1.
+
 | Tool | Behavior |
 | --- | --- |
 | `list_windows` | Discover application/window titles and automatic references. |
@@ -64,7 +67,7 @@ bundles save tool images. The catalog omits window capture on Windows/Linux.
 Accessibility may expose little content; omitted or
 truncated text does not prove that a window cannot match. Identical native window
 identities remain ambiguous even when content might distinguish them. Broader
-platform coverage remains work. Shared input tools do not depend on choosing a
+platform coverage is deferred until after v1. Shared input tools do not depend on choosing a
 dedicated agent integration. See the
 [product backlog](../BACKLOG.md) for delivery order and acceptance trials.
 

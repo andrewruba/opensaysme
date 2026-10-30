@@ -3,6 +3,10 @@
 The product goal is to reduce friction between what the user wants and what their
 AI agents do. Each interaction should fit the request and available capabilities.
 
+V1 targets macOS 14+ only. Windows/Linux implementation, validation and distribution
+are deferred until after v1. Existing adapters, CI and platform notes remain for
+development; they do not establish v1 support or add release requirements.
+
 Today, the CLI records a spoken request with desktop context, then lets the agent
 gather more evidence, navigate, or answer naturally. Screens and application history provide context;
 selections and timed cursor paths can help clarify references. Gestures have no
@@ -12,8 +16,9 @@ current-screen capture, verified focus, and macOS background-window accessibilit
 inspection and image capture. A first macOS input slice adds pointer movement,
 single clicks, vertical scrolling, literal Accessibility text replacement (including
 multiline text in writable text areas) and Tab/Enter,
-with an independent request check before input. Windows/Linux input and background-window
-inspection/capture, broader keyboard entry, and live permission validation remain work.
+with an independent request check before input. Broader keyboard entry and live
+permission validation remain work; Windows/Linux input and background-window
+inspection/capture are deferred until after v1.
 Dedicated agent integrations and on-screen drawing overlays
 remain future work. Gaze stays optional.
 The voice runtime calls this host in the same Node.js process. See
@@ -97,7 +102,7 @@ model-dependent; there is no cross-turn content fingerprint or reusable approval
 Action records distinguish pre-dispatch control values from requested replacement
 text and the native result (`verified`, `issued`, `not-issued` or `uncertain`).
 Unit tests exercise retention, expiry, continuation and enforcement with mocked
-providers. Real-model acceptance belongs to the unified live suite after v1.
+providers. Real-model acceptance belongs to the unified live suite after v1 implementation.
 
 ## Attention history and reasoning
 
@@ -352,12 +357,15 @@ timings are not performance results.
 
 ## Platform prerequisites
 
+macOS is the v1 target. Other rows document existing experimental adapters for
+future platform work.
+
 | Platform | Prerequisites and limits |
 | --- | --- |
 | macOS | Xcode Command Line Tools for Swift helpers. Screenshots require macOS 14+ and Screen Recording permission for the terminal/helper. Accessibility enables window/selection capture; microphone access is separate. Development binaries are unsigned. |
-| Windows | Native Windows Node.js, Windows PowerShell 5.1, and an interactive desktop. Screen/cursor capture requires Windows 10 1703+ per-monitor DPI support. Uses Win32/UI Automation, System.Drawing, and .NET Framework. Execution policy is respected; WSL is unsupported. |
-| Linux/X11 | `xdotool`, `xprop`, `xsel`, Python 3, `libX11`, `arecord`, and Pillow with XCB support (`python3-pil` on Debian); an EWMH window manager. Frames cover the virtual root. PRIMARY selection may belong to another window, reported as a warning. |
-| Linux/Wayland | Native targeting and global activation are not implemented; voice mode rejects Wayland even when XWayland sets `DISPLAY`. |
+| Windows (deferred) | Native Windows Node.js, Windows PowerShell 5.1, and an interactive desktop. Screen/cursor capture requires Windows 10 1703+ per-monitor DPI support. Uses Win32/UI Automation, System.Drawing, and .NET Framework. Execution policy is respected; WSL is unsupported. |
+| Linux/X11 (deferred) | `xdotool`, `xprop`, `xsel`, Python 3, `libX11`, `arecord`, and Pillow with XCB support (`python3-pil` on Debian); an EWMH window manager. Frames cover the virtual root. PRIMARY selection may belong to another window, reported as a warning. |
+| Linux/Wayland (deferred) | Native targeting and global activation are not implemented; voice mode rejects Wayland even when XWayland sets `DISPLAY`. |
 
 Dependencies are never installed by the CLI. See platform protocols and
 permission instructions under [macOS](../native/macos/README.md),
@@ -414,7 +422,8 @@ test runner or per-feature live-test flag.
 
 ### Platform and regression checks
 
-The live X11 suite uses an isolated virtual desktop and synthetic recorder:
+The existing X11 suite is retained for later Linux work and does not gate macOS
+v1. It uses an isolated virtual desktop and synthetic recorder:
 
 ```sh
 docker build -f scripts/Dockerfile.x11 -t opensaysme-x11-test .
