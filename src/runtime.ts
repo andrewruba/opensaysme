@@ -55,7 +55,7 @@ export interface VoiceRuntimeOptions {
   captureContext: (signal: AbortSignal) => Promise<DesktopContext>;
   captureFrame: (signal: AbortSignal) => Promise<ScreenFrameCapture>;
   reason: ReasoningFactory;
-  createTools?: () => ToolHost;
+  createTools?: (request: string, referenceContext: ReturnType<AttentionCollector['freeze']>['contexts']) => ToolHost;
   debug?: DebugSession;
   apiKey: string; model: string;
   emit: (output: VoiceOutput) => void;
@@ -264,7 +264,7 @@ export class VoiceRuntime {
     turn.metrics.visualPreparationMs = this.elapsed(started);
     this.debugInput(turn);
     this.diagnostic('runtime', 'visuals-prepared', turn, { frames: history.frames.length, trailCopies: visual.frames.filter((frame) => frame.image).length, durationMs: turn.metrics.visualPreparationMs });
-    turn.tools = this.options.createTools?.();
+    turn.tools = this.options.createTools?.(transcript, structuredClone(history.contexts));
     const reasoningStarted = this.now();
     const response = await this.options.reason({ transcript, history, visual, signal: turn.abort.signal,
       tools: turn.tools,

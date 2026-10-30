@@ -75,6 +75,35 @@ non-rendered content may be blank; images are not redacted. Direct helper use pr
 image data to stdout; the voice runtime sends it to the reasoning provider and
 retains it only for the turn unless debug output is enabled.
 
+The input adapter uses internal `--inspect-input` and `--execute-input` commands.
+Both read one strictly validated, bounded JSON payload from stdin. Text and target
+evidence never appear in argv or temporary files. Inspection resolves the discovered
+window, requires it to be focused/unhidden/unminimized, maps the screenshot's logical
+bounds, and hit-tests the visible AX control. Protected ancestors and oversized or
+unreadable evidence are rejected. The returned fingerprint includes control labels,
+value, identifier, bounds, focus/editability, window bounds, pointer position and HID
+event counts. Execute recomputes it after the independent provider check; changes
+produce `not-issued`. Held modifiers, keys, or mouse buttons also prevent input.
+
+Pointer movement uses `CGWarpMouseCursorPosition`. Click, scroll, and unmodified
+Tab/Return events target the validated process using `CGEvent.postToPid`; Tab/Return
+also require the intended input to remain focused. Down/up pairs briefly ignore
+SIGTERM process-wide while queuing release, then the one-shot helper exits; the
+parent retains a bounded SIGKILL fallback. Literal single-line text uses
+[AXUIElementSetAttributeValue](https://developer.apple.com/documentation/applicationservices/1460434-axuielementsetattributevalue)
+on a settable AXTextField/AXTextArea value, with no pasteboard or synthetic text keys.
+The helper verifies resulting text/pointer state where possible and otherwise reports
+only `issued`; failures after issuing input are `uncertain`. The parent stops retries
+after uncertain results and stops further input after a submitted effect.
+
+The helper validates targets and mechanics; request authorization belongs to the
+TypeScript tool host, which is the only input path exposed to the agent. Direct local
+helper use does not interpret a spoken request. Native checks cannot make OS event
+dispatch atomic, detect every same-evidence control replacement, or prove arbitrary
+web/application side effects. Live click routing, scrolling, text application state,
+keyboard delivery and cancellation races remain unverified. No desktop input is
+issued by the synthetic test suite.
+
 Interactive tests are separate, deliberate commands:
 
 ```sh

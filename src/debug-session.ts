@@ -27,7 +27,7 @@ const requestSchema = z.object({
 });
 const toolEventSchema = z.object({
   callId: z.string().min(1).max(512), name: identifier, arguments: z.record(z.string(), z.unknown()),
-  effect: z.enum(['read', 'focus']), phase: z.enum(['started', 'completed']), durationMs: time.optional(),
+  effect: z.enum(['read', 'focus', 'input']), phase: z.enum(['started', 'completed']), durationMs: time.optional(),
   result: z.object({ isError: z.boolean().optional(), content: z.array(z.union([
     z.object({ type: z.literal('text'), text: z.string().max(512 * 1024) }),
     z.object({ type: z.literal('image'), mimeType: z.literal('image/jpeg'), data: z.string().max(1_400_000) }),

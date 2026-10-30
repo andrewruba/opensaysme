@@ -4,7 +4,7 @@ export interface ToolDescriptor {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  effect: 'read' | 'focus';
+  effect: 'read' | 'focus' | 'input';
 }
 export type ToolContent = { type: 'text'; text: string }
   | { type: 'image'; mimeType: 'image/jpeg'; data: string };
@@ -19,6 +19,7 @@ export interface ToolDefinition {
   description: string;
   input: z.ZodObject;
   effect: ToolDescriptor['effect'];
+  timeoutMs?: number;
   run(args: Record<string, unknown>, signal: AbortSignal): Promise<ToolResult>;
 }
 export interface ToolEvent {

@@ -4,6 +4,7 @@ export interface CommandOptions {
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
+  input?: string;
 }
 
 const shutdown = new AbortController();
@@ -17,17 +18,19 @@ export function runCommand(
   return new Promise((resolve, reject) => {
     const signal = options.signal ? AbortSignal.any([options.signal, shutdown.signal]) : shutdown.signal;
     if (signal.aborted) return reject(new Error('Desktop helper was stopped.'));
+    if (options.input !== undefined && Buffer.byteLength(options.input) > 65_536) return reject(new Error('Desktop helper input exceeded its limit.'));
     const child = spawn(file, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       windowsHide: true,
       env: options.env,
     });
     const chunks: Buffer[] = [];
     let outputBytes = 0;
     let failure: string | undefined;
+    let finished = false;
     let forceKill: NodeJS.Timeout | undefined;
     const terminate = (reason: string) => {
-      if (failure) return;
+      if (failure || finished) return;
       failure = reason;
       child.kill('SIGTERM');
       // Some native tools handle SIGTERM and exit zero; failure remains set.
@@ -37,6 +40,7 @@ export function runCommand(
     const deadline = setTimeout(() => terminate('timed out'), options.timeoutMs ?? 8_000);
     signal.addEventListener('abort', onAbort, { once: true });
     const cleanup = () => {
+      finished = true;
       clearTimeout(deadline);
       clearTimeout(forceKill);
       signal.removeEventListener('abort', onAbort);
@@ -45,11 +49,15 @@ export function runCommand(
       outputBytes += chunk.length;
       if (outputBytes > 1024 * 1024) terminate('exceeded its output limit');
     };
-    child.stdout.on('data', (chunk: Buffer) => {
+    child.stdout!.on('data', (chunk: Buffer) => {
       count(chunk);
       if (!failure) chunks.push(chunk);
     });
-    child.stderr.on('data', count);
+    child.stderr!.on('data', count);
+    if (child.stdin) {
+      child.stdin.on('error', () => terminate('could not receive input'));
+      child.stdin.end(options.input);
+    }
     child.once('error', (error: NodeJS.ErrnoException) => {
       cleanup();
       reject(new Error(`Desktop helper could not start (${error.code ?? 'unknown'}). Run opensaysme doctor for prerequisites.`));

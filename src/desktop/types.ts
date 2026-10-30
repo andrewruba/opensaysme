@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { DesktopContext, VoiceHelperSpec } from './voice-types.js';
 import { frameBoundsSchema, frameImageSchema, type ScreenFrameCapture } from './visual-types.js';
+import type { DesktopInputAdapter } from './input-types.js';
 
 export const capabilityNames = [
   'activeWindow', 'focusWindow', 'selectedText', 'globalHotkey', 'microphone', 'screenCapture',
@@ -89,6 +90,7 @@ export const desktopTestResultSchema = z.object({
 export type DesktopTestResult = z.infer<typeof desktopTestResultSchema>;
 
 export interface DesktopAdapter {
+  input?: DesktopInputAdapter;
   probe(): Promise<DesktopReport>;
   listWindows(signal?: AbortSignal): Promise<WindowInventory>;
   // Omitted when the platform has no implementation; do not advertise a phantom tool.

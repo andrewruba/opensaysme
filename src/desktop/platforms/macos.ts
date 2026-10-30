@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 import { runCommand } from '../process.js';
+import { desktopInputSchema, inputEvidenceSchema, inputResultSchema, inputTargetSchema, type DesktopInputAdapter } from '../input-types.js';
 import { desktopContextSchema, type DesktopContext, type VoiceHelperSpec } from '../voice-types.js';
 import { screenFrameCaptureSchema, type ScreenFrameCapture } from '../visual-types.js';
 import {
@@ -162,6 +163,24 @@ export async function captureMacOSWindow(targetId: string, signal?: AbortSignal)
     throw error;
   }
 }
+
+async function inputCommand(mode: 'inspect' | 'execute', target: unknown, action: unknown,
+  fingerprint: string | null, signal: AbortSignal): Promise<string> {
+  const parsed = inputTargetSchema.parse(target);
+  if (!targetIdSchema.safeParse(parsed.windowId).success) throw new Error('Invalid macOS input target.');
+  const input = JSON.stringify({ target: parsed, action: desktopInputSchema.parse(action), fingerprint });
+  signal.throwIfAborted(); await requireHelper(); signal.throwIfAborted();
+  // Text and captured context never appear in process arguments or a temporary file.
+  return runCommand(helperPath, [`--${mode}-input`], { input, timeoutMs: 3_000, signal });
+}
+
+export const macOSInput: DesktopInputAdapter = {
+  inspect: async (target, action, signal) => decode(inputEvidenceSchema, await inputCommand('inspect', target, action, null, signal)),
+  execute: async (target, action, fingerprint, signal) => {
+    if (!/^[a-f0-9]{64}$/.test(fingerprint)) throw new Error('Invalid macOS input evidence.');
+    return decode(inputResultSchema, await inputCommand('execute', target, action, fingerprint, signal));
+  },
+};
 
 export async function inspectMacOS(includeSelection: boolean, signal?: AbortSignal): Promise<DesktopSnapshot> {
   const result = parseMacOSSnapshot(await invoke([includeSelection ? '--inspect-selection' : '--inspect'], 10_000, signal));

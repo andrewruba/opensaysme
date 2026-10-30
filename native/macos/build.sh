@@ -15,6 +15,7 @@ xcrun swiftc -O \
   -Xlinker -weak_framework -Xlinker ScreenCaptureKit \
   -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$helper_dir/Info.plist" \
   "$helper_dir/Desktop.swift" "$helper_dir/WindowContent.swift" "$helper_dir/WindowCapture.swift" \
+  "$helper_dir/InputProtocol.swift" "$helper_dir/DesktopInput.swift" \
   "$helper_dir/Voice.swift" "$helper_dir/Visual.swift" -o "$helper_dir/bin/opensaysme-desktop"
 
 echo "Built $helper_dir/bin/opensaysme-desktop"

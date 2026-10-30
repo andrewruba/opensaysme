@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { runCommand } from '../src/desktop/process.js';
 
 describe('native command lifecycle', () => {
+  it('sends private text over stdin without arguments or shell interpretation', async () => {
+    const input = 'private text\n$(not-a-command)';
+    expect(await runCommand(process.execPath, ['-e', 'process.stdin.pipe(process.stdout)'], { input })).toBe(input);
+    await expect(runCommand(process.execPath, ['-e', ''], { input: 'x'.repeat(65_537) })).rejects.toThrow('input exceeded');
+    await expect(runCommand('/nonexistent/opensaysme-helper', [], { input })).rejects.toThrow('could not start');
+  });
   it('preserves whitespace and treats arguments literally', async () => {
     const value = '  selected text\n$(echo not-a-command)\n';
     const output = await runCommand(process.execPath, ['-e', 'process.stdout.write(process.argv[1])', value]);

@@ -95,6 +95,8 @@ describe('live voice turn lifecycle', () => {
         latency: { toolCalls: 1, toolMs: 12 } });
     }
     expect(createTools).toHaveBeenCalledTimes(2);
+    expect(createTools).toHaveBeenNthCalledWith(1, 'Switch to the frontend', expect.any(Array));
+    expect(createTools).toHaveBeenNthCalledWith(2, 'Switch to the frontend', expect.any(Array));
     expect(hosts[0]).not.toBe(hosts[1]);
     expect(f.outputs).toContainEqual(expect.objectContaining({ type: 'state', state: 'acting' }));
     expect(d.debug.request.mock.calls.map((call) => call[2])).toEqual([1, 2, 1, 2]);

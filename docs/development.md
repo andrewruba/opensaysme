@@ -9,9 +9,11 @@ selections and timed cursor paths can help clarify references. Gestures have no
 predefined command meanings, content categories, or required response types.
 The shared tool host supports window discovery, current-context inspection,
 current-screen capture, verified focus, and macOS background-window accessibility
-inspection and image capture. Windows/Linux background-window inspection/capture,
-pointer control, clicking, scrolling, typing, and request-scoped edit/submit permissions
-remain core work. Dedicated agent integrations and on-screen drawing overlays
+inspection and image capture. A first macOS input slice adds pointer movement,
+single clicks, vertical scrolling, literal Accessibility text replacement and Tab/Enter,
+with an independent request check before input. Windows/Linux input and background-window
+inspection/capture, broader keyboard entry, and live permission validation remain work.
+Dedicated agent integrations and on-screen drawing overlays
 remain future work. Gaze stays optional.
 The voice runtime calls this host in the same Node.js process. See
 [the tool framework](tools.md) for the catalog and extension points.
@@ -50,7 +52,7 @@ configuration and provider keys are unchanged.
   is needed. Silence does not automatically finish a turn.
 - Final transcript feedback appears immediately when transcription finishes.
   `interpreting` prepares visual evidence and runs the agent loop; `inspecting`
-  indicates evidence gathering and `acting` a requested focus operation.
+  indicates evidence gathering and `acting` a requested focus/input operation (including its internal permission check).
 - **Escape** cancels recording, interpretation, or pending tools. **Ctrl+C** quits and cleans up
   native hooks, microphone capture, screenshot processes, and provider requests.
 - The runtime returns to `ready` after each turn. Activation is ignored during
@@ -62,7 +64,7 @@ reasoning, and native cleanup have deadlines. If microphone cleanup cannot be
 confirmed, the runtime exits rather than claiming it is ready to record again.
 Automatic history capture stops at the second tap. The agent may request fresh
 desktop evidence while fulfilling that activated turn. Cancellation cannot undo
-a focus change already issued to the OS.
+an input or focus change already issued to the OS.
 
 ## Attention history and reasoning
 
@@ -136,8 +138,11 @@ directly or call local tools and inspect their results before answering. There i
 no fixed action enum or required per-phrase outcome. The agent discovers window
 references itself; no user naming or routing rules are required.
 
-The loop permits six provider requests and five tool calls within 45 seconds.
-Each provider request has a twenty-second deadline; each local tool has six seconds.
+Without input tools the loop permits six provider requests/five tools within 45 seconds.
+With input tools it permits thirteen provider requests/twelve tools within 90 seconds,
+including authorization time. Each acting-provider request has a twenty-second deadline;
+read/focus tools have six seconds and input tools have twenty. The runtime's outer
+deadline is 95 seconds with input capabilities and 50 seconds otherwise.
 Tool results, including requested screenshots, enter subsequent model requests.
 On macOS, `inspect_window` can read a discovered window's accessibility content
 without switching to it. Its results retain source identity and capture time;
@@ -151,6 +156,16 @@ foreground-screen fallback. The image comes with its window reference, capture
 time, logical desktop bounds, and pixel dimensions. It is independent of historical
 full-screen frames and cursor trails. Protected or non-rendered content may be blank.
 The operation has a four-second native deadline and five-second parent timeout.
+On macOS, successful window captures also return a short-lived `observationId` for
+input. Input coordinates use that image's pixels. The host retains original speech
+and desktop reference context; each input is independently checked by the reasoning
+provider against that request and fresh native evidence. This uses one additional,
+tool-free, structured-output request (ten-second maximum) per proposed input. Only
+the validated exact action proceeds to native revalidation. Enter requires a submit
+decision; text replacement cannot contain key/control characters. A submission or
+uncertain outcome stops further input for the turn, while read tools can verify it.
+See [input and execution permissions](tools.md#input-and-execution-permissions) for
+coordinates, lifecycle, supported operations, model-dependent limits and sharing.
 Requests remain stateless with `store: false`, replaying tool outputs and encrypted
 reasoning context. More tool steps can increase latency and provider usage; simple
 answers still need just one reasoning request. The model is instructed to gather
@@ -201,7 +216,11 @@ Activated audio streams directly to OpenAI. After stopping, full screenshots and
 optional trail copies, window titles, selected text, cursor history, and transcripts
 go directly to the reasoning provider. Requested tool results can include window
 inventory, current context, macOS window accessibility content, and additional screen
-or window screenshots. Setup explains this sharing. Provider
+or window screenshots. Setup explains this sharing.
+Input checks additionally send the original request, reference context, proposed
+text/action, control metadata and window image to the configured reasoning provider.
+These guard requests are not currently saved as separate debug request files;
+tool results record the decision's effect and supporting quote/reason. Provider
 charges and data policies apply. The Responses request uses `store: false`;
 provider retention policies still apply.
 
@@ -409,6 +428,18 @@ covered-window behavior, and multi-display coordinates remain unverified. No rea
 desktop captures or provider requests were made. Windows/Linux window capture is
 not implemented or advertised.
 
+Input/permission checks (2026-10-29): `npm run check` passed on macOS (307 tests
+passed; 14 X11 tests skipped), followed by passing typecheck, lint, build and focused
+input/process/reasoning regressions after the final lifecycle and budget changes.
+The macOS helper builds and all four native synthetic suites pass. Fixtures cover
+original-request isolation, fill/submit and prepare/send decisions, Enter and text
+control-character boundaries, autosave ambiguity, misleading UI text, stale targets,
+cancelled/invalid authorization and prevention of uncertain/repeated input. Native
+protocol checks issue no desktop events. These tests validate enforcement with
+scripted guard decisions; they do not establish real model permission accuracy.
+The native probe still reports no foreground desktop. No live desktop input,
+submission, screenshot capture, or paid provider request was performed in this slice.
+
 Manual acceptance: ask about visible content using existing context, then try
 pointing or selecting to clarify a reference and a request spanning several windows.
 Inspect `visualContext.frames` and compare phrase, cursor, and frame times with
@@ -435,3 +466,14 @@ a moved/resized/closed target, duplicate matching candidates, a minimized/hidden
 window, denied Screen Recording access, and windows on a display with a negative
 origin or different scale. Inspect the source identity, bounds, and capture time
 in opt-in debug output; confirm failures do not contain substitute screen pixels.
+
+For input acceptance, use a controlled form or disposable agent-input fixture.
+Try “fill this form” and “fill this form and submit it”; verify exact field values,
+no send in the first case and exactly one send in the second. Repeat prepare/send
+through both a button and Enter, with negative instructions, an autosaving field,
+similarly titled destinations and misleading instructions in UI content. Point
+without clicking, scroll and inspect again, and check image coordinates across
+display scales/negative origins. Change focus, move the pointer, hold a key, resize
+the window, edit another field, and cancel during authorization/input; inspect and
+record actual effects rather than assuming cancellation undid them. Measure guard
+latency and unnecessary denials/clarifications separately from actor reasoning.

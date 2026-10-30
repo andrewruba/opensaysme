@@ -21,3 +21,8 @@ xcrun swiftc -O \
   -framework AppKit -Xlinker -weak_framework -Xlinker ScreenCaptureKit \
   "$helper_dir/Visual.swift" "$helper_dir/WindowCapture.swift" "$helper_dir/WindowCaptureTests.swift" -o "$helper_dir/bin/window-capture-tests"
 "$helper_dir/bin/window-capture-tests"
+xcrun swiftc -O \
+  -target "$(uname -m)-apple-macosx12.0" \
+  -module-cache-path "$helper_dir/bin/module-cache" \
+  "$helper_dir/InputProtocol.swift" "$helper_dir/InputProtocolTests.swift" -o "$helper_dir/bin/input-protocol-tests"
+"$helper_dir/bin/input-protocol-tests"

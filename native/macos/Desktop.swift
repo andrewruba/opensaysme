@@ -642,6 +642,8 @@ struct DesktopMain {
             case ["--context"]: try output(captureContext())
             case ["--frame"]: try output(captureFrame())
             case ["--voice"]: VoiceSession().run()
+            case ["--inspect-input"]: try desktopInput(execute: false)
+            case ["--execute-input"]: try desktopInput(execute: true)
             case let args where args.count == 2 && args[0] == "--inspect-window":
                 try output(inspectWindow(args[1]))
             case let args where args.count == 2 && args[0] == "--capture-window":

@@ -8,6 +8,7 @@ import {
   captureMacOSContext,
   captureMacOSFrame,
   captureMacOSWindow,
+  macOSInput,
   macOSVoiceHelper,
   parseMacOSSnapshot,
   inspectMacOS,
@@ -177,6 +178,29 @@ const windowFrame = {
   bounds: { x: -1200, y: -100, width: 800, height: 600 },
   image: { mimeType: 'image/jpeg', width: 1600, height: 1200, data: '/9j/AA==' }, warnings: [],
 };
+
+test('mouse/keyboard adapters send typed payloads over stdin and validate native evidence and outcomes', async () => {
+  const target = { windowId: inspectionId, bounds: windowFrame.bounds, point: { x: -1100, y: 0 } };
+  const action = { kind: 'type_text' as const, text: 'private input $(literal)' };
+  const evidence = { fingerprint: 'a'.repeat(64), role: 'AXTextField', title: 'Name', description: '', value: '',
+    bounds: { x: -1100, y: 0, width: 100, height: 30 }, focused: true, editable: true };
+  const signal = new AbortController().signal;
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(evidence));
+  assert.deepEqual(await macOSInput.inspect(target, action, signal), evidence);
+  assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.slice(1), [['--inspect-input'], {
+    input: JSON.stringify({ target, action, fingerprint: null }), timeoutMs: 3000, signal,
+  }]);
+  vi.mocked(runCommand).mockResolvedValueOnce('{"status":"not-issued"}');
+  assert.deepEqual(await macOSInput.execute(target, action, evidence.fingerprint, signal), { status: 'not-issued' });
+  assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.[1], ['--execute-input']);
+  const calls = vi.mocked(runCommand).mock.calls.length;
+  await assert.rejects(macOSInput.execute(target, { kind: 'type_text', text: '\n' }, evidence.fingerprint, signal));
+  await assert.rejects(macOSInput.execute(target, action, 'forged', signal));
+  await assert.rejects(macOSInput.inspect(target, action, AbortSignal.abort()));
+  assert.equal(vi.mocked(runCommand).mock.calls.length, calls);
+  vi.mocked(runCommand).mockResolvedValueOnce('{"status":"success","private":"data"}');
+  await assert.rejects(macOSInput.execute(target, action, evidence.fingerprint, signal), /invalid response/);
+});
 
 test('window capture keeps its source and coordinate metadata and propagates cancellation', async () => {
   const signal = new AbortController().signal;

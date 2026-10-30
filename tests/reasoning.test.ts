@@ -496,13 +496,16 @@ describe('desktop tool reasoning loop', () => {
     expect(host.call).toHaveBeenCalledOnce(); expect(f.fetcher).toHaveBeenCalledTimes(2);
   });
 
-  it('limits a turn to five tools and six model requests even if the model ignores tool_choice none', async () => {
+  it.each([false, true])('enforces the tool budget even if the model ignores tool_choice none (input=%s)', async (inputEnabled) => {
     let index = 0;
     const f = fixture(vi.fn<typeof fetch>().mockImplementation(async () => callResponse(callItem('list_windows', {}, `call-${++index}`))));
     const host = toolHost(); f.input.tools = host;
+    const limit = inputEnabled ? 12 : 5;
+    if (inputEnabled) host.list.mockReturnValue([...descriptors, { name: 'click', description: 'Guarded input fixture',
+      effect: 'input', inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false } }]);
     await expect(f.reason(f.input)).resolves.toContain('tool limit');
-    expect(host.call).toHaveBeenCalledTimes(5); expect(f.fetcher).toHaveBeenCalledTimes(6);
-    expect(JSON.parse(String(f.fetcher.mock.calls[5]![1]!.body)).tool_choice).toBe('none');
+    expect(host.call).toHaveBeenCalledTimes(limit); expect(f.fetcher).toHaveBeenCalledTimes(limit + 1);
+    expect(JSON.parse(String(f.fetcher.mock.calls[limit]![1]!.body)).tool_choice).toBe('none');
   });
 
   it('cancels immediately before a tool and during a tool without publishing or requesting anything later', async () => {

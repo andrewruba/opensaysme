@@ -46,7 +46,7 @@ The goal is to complement the mouse and keyboard, not replace them or build anot
 
 Early development prototype. Tap-to-talk combines speech with desktop history and a local tool loop: the agent can discover windows, inspect current context, capture the current screen, and focus a verified target. On macOS it can also read bounded accessibility text and controls from a discovered background window, or capture that window's image on macOS 14+, without changing focus. You do not need to name windows or define routing rules. Historical full-screen images remain paired with nearby speech phrases and timed cursor trails.
 
-The voice agent calls desktop tools directly within the local runtime. Background-window inspection/capture on Windows/Linux, pointer control, clicking, scrolling, typing, and enforcement of edit/submit permissions remain core work. Agent-specific integrations can follow where useful. Live accuracy of target resolution still needs validation; some apps expose little accessibility content, and ambiguous native window identities remain a limitation.
+The voice agent calls desktop tools directly within the local runtime. On macOS 14+, a first mouse/keyboard slice adds pointing, single clicks, scrolling, literal text replacement in accessible inputs, and Tab/Enter. Each input is checked independently against the original spoken request and target evidence; filling and submission are distinct effects. Targets must be focused, visible, and grounded in a recent window screenshot. The guard interprets natural language with the configured reasoning model; live permission accuracy and desktop input behavior still need validation. Windows/Linux input and background-window inspection/capture remain work. Some apps expose little accessibility content, and ambiguous native window identities remain a limitation.
 
 See the [MVP backlog](BACKLOG.md) for feature status and remaining work.
 
@@ -63,7 +63,7 @@ node dist/cli.js setup
 node dist/cli.js       # Requires the API-key environment variable chosen in setup
 ```
 
-Tap Ctrl+Shift+Space to start and stop; Escape cancels. Activated audio streams to OpenAI using your key. After stopping, the agent can gather additional evidence and switch windows to fulfill your request. Context and tool results go to your independently configured reasoning provider. macOS screen capture requires Screen Recording permission.
+Tap Ctrl+Shift+Space to start and stop; Escape cancels pending work but cannot undo input already issued. Activated audio streams to OpenAI using your key. After stopping, the agent can gather additional evidence and use available desktop actions within your request. Context, tool results, and input authorization checks go to your independently configured reasoning provider. macOS screen capture requires Screen Recording permission, and input also requires Accessibility access.
 
 Run `npm run dev -- tools` to inspect the catalog without reading the desktop. See [the tool framework](docs/tools.md) for how to add capabilities.
 

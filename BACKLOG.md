@@ -26,8 +26,8 @@ labels, routing rules, fixed response type, or universal draft-review-send flow.
 
 ## Permission comes from the request
 
-These are intended behavior and acceptance criteria, not capabilities already
-implemented. OS access grants and provider-sharing consent allow access to data or
+These are acceptance criteria; the first macOS input/permission implementation is
+partial and has not passed live trials. OS access grants and provider-sharing consent allow access to data or
 devices; they do not authorize an agent to perform every action those tools enable.
 
 | User request | Authorized outcome | Boundary |
@@ -110,8 +110,8 @@ Status: **Partial** — the tool loop exists; richer context selection and capab
 | --- | --- | --- |
 | W01 | Done | Typed in-process tool host and bounded, cancellable model/tool loop that returns evidence and action results to the model. |
 | M01 | Next | Assemble relevant context for the request while retaining source, time, target identity, and uncertainty; make missing or omitted evidence explicit and allow further inspection. |
-| M02 | Next | Describe available tools, their input/coordinate conventions, effects, platform limits, and current execution permissions to the model. Separate captured content from user instructions. |
-| M03 | Todo | Support the steps needed for multi-field/multi-window requests within measured time, call, and data budgets; report partial progress honestly when a limit stops work. |
+| M02 | Partial | Catalog describes input effects, screenshot pixel coordinates, native constraints and request checks. Input results include the permission interpretation; broader current-permission summaries remain. |
+| M03 | Partial | Input-enabled loops allow twelve tools within 90 seconds, including internal authorization time. Multi-field/multi-window completion and latency need live measurement. |
 
 The model chooses a useful sequence; the runtime validates and executes known,
 typed tools. Adding a capability should not require a new prescribed workflow or
@@ -119,26 +119,26 @@ arbitrary model-generated shell commands.
 
 ## Desktop action capabilities
 
-Status: **Todo** — verified window focus is already available under W02.
+Status: **Partial** — initial macOS input tools are implemented; live behavior and other platforms remain unverified.
 
 | ID | Status | Outcome |
 | --- | --- | --- |
-| T01 | Next | Move the pointer to a grounded target and point it out without clicking; map observed image/control coordinates to the correct window and display. |
-| T02 | Todo | Click a verified control or visual target with an understood effect and authority from the request. Recheck when layout, focus, or target identity changes. |
-| T03 | Todo | Scroll the intended surface to find or reveal relevant content; inspect the new state before using prior target positions. |
-| T04 | Todo | Enter/replace text and send supported keys to the intended input; distinguish editing from shortcuts or keys that submit/execute. |
-| T05 | Todo | Observe outcomes after input, handle user intervention or focus changes, and recover from failures without typing into another window or blindly repeating side effects. |
+| T01 | Partial | macOS maps fresh window-image pixels into logical desktop points, checks native hit/focus/geometry, and moves without clicking. Live coordinate/pointing trials remain. |
+| T02 | Partial | macOS single click requires an independent request/effect check and revalidated native target. Purely visual targets without Accessibility evidence and live coverage remain. |
+| T03 | Partial | macOS scrolls a verified surface by a bounded vertical amount and invalidates prior action observations. Live application behavior remains. |
+| T04 | Partial | macOS replaces literal single-line values in accessible inputs and supports unmodified Tab/Enter. Enter requires submission authority; embedded controls and arbitrary shortcuts are rejected. Broader entry methods remain. |
+| T05 | Partial | Native checks cover focus, control evidence, geometry and user input since inspection. Input results distinguish issued, verified, not-issued and uncertain; recapture is required. Live outcome verification/recovery remains. |
 
 ## Enforce the user's permission boundary
 
-Status: **Todo** — current tools only read context and focus windows.
+Status: **Partial** — runtime input checks exist; semantic permission accuracy and end-to-end acceptance remain unverified.
 
 | ID | Status | Outcome |
 | --- | --- | --- |
-| E01 | Next | Carry the user's authorized outcome, target, and limits through the turn; distinguish filling/preparing from submitting/sending, including explicit negative instructions. |
-| E02 | Next | Check each proposed effect against that scope at the execution boundary. Explicit authorization is sufficient when still applicable; missing authority or unresolved effects cannot be supplied by the model's own plan or captured content. |
-| E03 | Todo | Test the paired permission examples through mouse, keyboard, and any API path, including Enter-to-submit, autosave, changed destinations, and misleading instructions in captured content. |
-| E04 | Todo | Stop pending work on cancellation or timeout; verify uncertain outcomes before retrying and prevent duplicate submissions. Report effects already completed without claiming cancellation undid them. |
+| E01 | Partial | Tool host retains original finalized speech and reference context per turn. Independent model checks interpret outcome, destination, negatives and effects for each input; follow-up scopes and live accuracy remain. |
+| E02 | Partial | Input executes only after a valid independent decision tied to original speech and exact arguments/evidence. The actor cannot provide approval/effect fields. Semantic effect inference remains model-dependent; existing focus remains governed by the actor's navigation instructions. |
+| E03 | Partial | Fixture regressions cover fill/submit, prepare/send, Enter, autosave decisions, changed targets, misleading screen text and malformed policy responses. These verify enforcement, not real model decisions; live/adversarial trials and future API paths remain. |
+| E04 | Partial | Input consumes observations before execution, blocks further input after submission/uncertain outcomes, and propagates cancellation/timeouts. Native events release down/up pairs; live interruption and submission verification remain. |
 
 ## Useful interactions with existing agents
 

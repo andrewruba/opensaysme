@@ -18,6 +18,11 @@ to the model.
 | `inspect_window` | Read bounded accessibility text/control roles from a discovered window without focusing it (macOS only). |
 | `capture_window` | Capture a discovered window's own image without focusing it, including when obscured (macOS 14+). |
 | `focus_window` | Recheck a discovered target, focus it, and verify the result. |
+| `move_pointer` | Indicate a target without clicking (macOS input tools require a recent window screenshot). |
+| `click` | Issue a single left click on a visible, accessible target after a request/effect check. |
+| `scroll` | Scroll vertically at the target by up to 600 logical pixels; positive means content down. |
+| `type_text` | Replace the entire value of a supported Accessibility input with literal single-line text; empty text clears it. |
+| `press_key` | Send unmodified Tab or Enter to the focused editable input; Enter always requires submission authority. |
 
 Window references are internal tool handles. Unchanged windows keep their references
 across relisting; removed, retitled, or replaced windows lose theirs. They are never
@@ -52,15 +57,14 @@ required separately. Pixels may contain private data and are not redacted; prote
 or non-rendered content may be blank. Normal captures stay in memory; opt-in debug
 bundles save tool images. The catalog omits window capture on Windows/Linux.
 
-These tools cannot yet click, type, or submit to another agent. Accessibility may expose little content; omitted or
+Accessibility may expose little content; omitted or
 truncated text does not prove that a window cannot match. Identical native window
 identities remain ambiguous even when content might distinguish them. Broader
-platform coverage remains work. Pointer
-movement/pointing, clicking, scrolling, and typing are core planned capabilities;
-they do not depend on choosing a dedicated agent integration. See the
+platform coverage remains work. Shared input tools do not depend on choosing a
+dedicated agent integration. See the
 [product backlog](../BACKLOG.md) for delivery order and acceptance trials.
 
-## Planned execution permissions
+## Input and execution permissions
 
 The request defines the authorized outcome. “Fill this form” permits filling it
 and stops before submission; “fill this form and submit it” also permits submission
@@ -68,12 +72,55 @@ without another confirmation when the target, contents, and consequences match.
 Likewise, populating an agent input and sending it are distinct effects. Ask when
 material ambiguity remains or additional authority is needed, not after every step.
 
-Before enabling editing or submission, extend the runtime to check effects against
-the request at execution time. A click, keypress, or API call can submit or otherwise
-commit a change; the input mechanism does not determine permission. Revalidate the
-target and expected effect, inspect uncertain outcomes before retrying, and apply
-the same boundary to every path. Captured content and model plans cannot authorize
-actions. These checks are planned work; the current catalog only reads and focuses.
+The first macOS implementation retains the finalized spoken request and its desktop
+reference context in a fresh tool host. Before each input, an independent call to the
+configured reasoning model checks that exact action against the original request,
+window image and freshly inspected native control. The acting model cannot supply
+an approval, permission scope, or effect label. The guard has no tools, sees UI and
+proposed input as untrusted evidence, and must return a strict decision with an exact
+supporting excerpt from the original speech. Malformed, unavailable, denied, unknown,
+or materially ambiguous decisions issue no input. This is an internal check, not a
+user confirmation after every step. Explicit applicable submission requests suffice.
+The provider uses [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
+
+Effect interpretation is model-dependent, not a deterministic guarantee about
+arbitrary application behavior. Fixtures test enforcement of decisions; live model
+accuracy, prompt injection resistance and application effects still need acceptance
+trials. Text may autosave and Tab may save on blur; the guard must account for such
+effects. Enter cannot pass an edit-only decision, even where it would insert a
+newline. Embedded control characters, arbitrary shortcuts, held keys/buttons,
+clipboard operations and model-supplied shell commands are unavailable. Existing
+`focus_window` is still governed by the acting model's navigation instructions;
+the independent gate currently covers the five input tools.
+
+Input tools require `observationId` from the most recent successful `capture_window`
+and `x`/`y` in that image's pixel coordinates. Focus the window before capturing the
+action observation. The host maps pixels through the captured global logical bounds;
+native code hit-tests the actual visible control and checks window identity, focus,
+geometry, protected fields, and whether keys/buttons are held. Immediately before
+input it checks the same control evidence and an interaction fingerprint again.
+Movement, focus changes and user input during authorization can reject the action.
+The observation expires after 30 seconds and is consumed before input; a focus
+operation, rediscovery, new capture, or any issued input invalidates it. Recapture
+to inspect the result before another action. Purely visual targets without accessible
+hit-test evidence are not yet supported.
+
+`type_text` uses a direct Accessibility value write, avoiding clipboard changes and
+synthetic Enter/Tab characters. Keyboard input goes only to the validated process
+and requires the intended editable control to remain focused. Text value equality
+or pointer position can be verified locally; click/scroll/key events report `issued`,
+which does not prove the intended application outcome. Any uncertain native result
+stops input for the turn, including transport failure after execution may have begun.
+A submission decision also stops subsequent input after one issued action, preventing
+blind repeat submissions. Read tools remain available to inspect and report. A native
+`not-issued` result permits a fresh observation and retry. Cancellation stops pending
+work; it cannot undo effects already issued. The remaining OS dispatch race and
+same-evidence control replacement are not eliminated by these checks.
+
+Scopes and references end with the turn. A later “submit it” does not yet inherit
+the prior form or permission; conversational follow-ups remain backlog work. Each
+guard call adds provider usage and up to ten seconds of latency. No live provider or
+desktop input trial has established completion accuracy or latency yet.
 
 ## Inspect the catalog
 
@@ -94,13 +141,16 @@ Input properties must be required (use nullable values where appropriate).
 Return text or JPEG content, or a bounded `isError` result with actionable guidance.
 Handlers receive an `AbortSignal`; pass it to OS/provider work and check it before
 any side effect or state update after an await. Keep OS details in platform adapters.
-Read tools and focus are the initial effects. Adding input or other consequential
+Descriptors distinguish read, focus, and input. Adding other consequential
 capabilities requires the request-scoped execution policy described above, alongside
 tests for authorized, unauthorized, ambiguous, stale-target, and cancelled actions.
 
-The registry bounds each call to six seconds. The voice loop allows six model
-requests and five tool calls within 45 seconds; each provider request has a
-20-second deadline. It replays tool results and reasoning context with `store: false`.
+The registry bounds read/focus calls to six seconds and input calls to twenty seconds
+(native inspection, up to ten seconds of authorization, then native revalidation/input).
+Without input capabilities the loop allows six model requests/five tools within 45
+seconds. With input it allows thirteen model requests/twelve tools within 90 seconds;
+each acting-provider request has a 20-second deadline. It replays tool results and
+reasoning context with `store: false`; independent checks also use `store: false`.
 It does not run arbitrary shell commands or load model-supplied code. Normal runs
 retain context only for the turn. `--debug` saves numbered requests and tool exchanges;
 provider keys, raw audio, and opaque encrypted reasoning are excluded.

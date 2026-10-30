@@ -46,7 +46,8 @@ export class ToolRegistry implements ToolHost {
     for (const definition of definitions) {
       if (!toolName.test(definition.name) || this.tools.has(definition.name)
         || !definition.description.trim() || definition.description.length > 4096
-        || !['read', 'focus'].includes(definition.effect) || !(definition.input instanceof z.ZodObject)) {
+        || !['read', 'focus', 'input'].includes(definition.effect) || !(definition.input instanceof z.ZodObject)
+        || (definition.timeoutMs !== undefined && (!Number.isInteger(definition.timeoutMs) || definition.timeoutMs < 1 || definition.timeoutMs > 20_000))) {
         throw new Error('Invalid or duplicate tool definition.');
       }
       const input = definition.input.strict();
@@ -85,7 +86,7 @@ export class ToolRegistry implements ToolHost {
     const abort = () => operation.abort();
     signal.addEventListener('abort', abort, { once: true });
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; operation.abort(); }, this.timeoutMs);
+    const timer = setTimeout(() => { timedOut = true; operation.abort(); }, entry.definition.timeoutMs ?? this.timeoutMs);
     let onAbort: () => void = () => {};
     const aborted = new Promise<never>((_resolve, reject) => {
       onAbort = () => reject(cancelled());
