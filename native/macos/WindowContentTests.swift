@@ -70,13 +70,13 @@ struct WindowContentTests {
 
         // A button can remain identical while another form field changes without
         // a hardware input event. The whole-window input digest must then differ.
-        func form(_ email: String) -> WindowContent {
+        func form(_ email: String, valueLimit: Int = 2048) -> WindowContent {
             let values: [Int: [String: String]] = [
                 0: [kAXRoleAttribute: "AXWindow", kAXTitleAttribute: "Feedback"],
                 1: [kAXRoleAttribute: "AXTextField", kAXTitleAttribute: "Email", kAXValueAttribute: email],
                 2: [kAXRoleAttribute: "AXButton", kAXTitleAttribute: "Submit"],
             ]
-            return collectWindowContent(root: 0, deadline: 10, now: { 0 }, same: ==,
+            return collectWindowContent(root: 0, deadline: 10, valueLimit: valueLimit, now: { 0 }, same: ==,
                 read: { node, name in values[node]?[name] },
                 children: { node, _ in node == 0 ? [1, 2] : [] })
         }
@@ -85,6 +85,18 @@ struct WindowContentTests {
         let beforeDigest = try windowContentFingerprint(before)
         let changedDigest = try windowContentFingerprint(form("different@example.test"))
         precondition(before.fullyTraversed && beforeDigest == unchanged && beforeDigest != changedDigest)
+        // Valid input can contain 4096 UTF-16 units. A later Send check must hash
+        // its entire value, including edits beyond public inspection's 2048 cap.
+        let prompt = String(repeating: "x", count: 4092) + "\n🌱\t"
+        precondition(prompt.utf16.count == 4096)
+        let publicView = form(prompt)
+        precondition(!publicView.fullyTraversed && publicView.nodes[1].value!.utf16.count == 2048)
+        let inputView = form(prompt, valueLimit: 4096)
+        precondition(inputView.fullyTraversed && inputView.nodes[1].value!.utf16.elementsEqual(prompt.utf16))
+        let inputDigest = try windowContentFingerprint(inputView)
+        let changedTail = try windowContentFingerprint(form(String(prompt.dropLast()) + " ", valueLimit: 4096))
+        precondition(inputDigest != changedTail)
+        precondition(!form(prompt + "x", valueLimit: 4096).fullyTraversed)
         for partial in [content, large, wide, deep, cycle, timed, inaccessible] {
             precondition(!partial.fullyTraversed)
             do {

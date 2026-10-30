@@ -10,7 +10,8 @@ predefined command meanings, content categories, or required response types.
 The shared tool host supports window discovery, current-context inspection,
 current-screen capture, verified focus, and macOS background-window accessibility
 inspection and image capture. A first macOS input slice adds pointer movement,
-single clicks, vertical scrolling, literal Accessibility text replacement and Tab/Enter,
+single clicks, vertical scrolling, literal Accessibility text replacement (including
+multiline text in writable text areas) and Tab/Enter,
 with an independent request check before input. Windows/Linux input and background-window
 inspection/capture, broader keyboard entry, and live permission validation remain work.
 Dedicated agent integrations and on-screen drawing overlays
@@ -194,10 +195,20 @@ and desktop reference context; each input is independently checked by the reason
 provider against that request and fresh native evidence. This uses one additional,
 tool-free, structured-output request (ten-second maximum) per proposed input. Only
 the validated exact action proceeds to native revalidation. Enter requires a submit
-decision; text replacement cannot contain key/control characters. A submission or
+decision. Text replacement accepts literal line breaks and tab indentation only in
+writable AXTextArea controls; other C0 controls and DEL remain rejected. A submission or
 uncertain outcome stops further input for the turn, while read tools can verify it.
 See [input and execution permissions](tools.md#input-and-execution-permissions) for
 coordinates, lifecycle, supported operations, model-dependent limits and sharing.
+For “put this error and my explanation into the agent's input,” the model can
+assemble selected or inspected text with the spoken instructions and replace the
+intended text area's value. Replacement is bounded to 4096 UTF-16 code units and
+verified by exact read-back; existing content is replaced, not appended. Line
+breaks and tabs are text, never Enter/Tab key events. The runtime uses no clipboard
+or keyboard fallback for unsupported controls. A later “send it” needs fresh
+evidence and a separate submission check. Actual agent-composer compatibility and
+model target accuracy remain unverified; routine tests use mocked providers and
+synthetic native checks.
 Requests remain stateless with `store: false`, replaying tool outputs and encrypted
 reasoning context. More tool steps can increase latency and provider usage; simple
 answers still need just one reasoning request. The model is instructed to gather

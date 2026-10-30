@@ -43,11 +43,15 @@ func windowContentFingerprint(_ content: WindowContent) throws -> String {
 // the user's desktop. Children reads must return at most the requested count.
 func collectWindowContent<Element>(
     root: Element, deadline: TimeInterval,
+    valueLimit: Int = 2048,
     now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
     same: (Element, Element) -> Bool,
     read: (Element, String) throws -> String?,
     children: (Element, Int) throws -> [Element]
 ) -> WindowContent {
+    // Input revalidation needs the full permitted 4096-unit text value; public
+    // inspection retains its smaller default and the same total content budget.
+    precondition(valueLimit > 0 && valueLimit <= 4096)
     var pending: [(Element, Int?, Int)] = [(root, nil, 0)]
     var visited: [Element] = []
     var nodes: [WindowContentNode] = []
@@ -75,7 +79,7 @@ func collectWindowContent<Element>(
             guard let boundedRole = clipped(role, maximum: 128) else { limited = true; break }
             let title = clipped(try read(element, kAXTitleAttribute), maximum: 2048)
             let description = clipped(try read(element, kAXDescriptionAttribute), maximum: 2048)
-            let value = clipped(try read(element, kAXValueAttribute), maximum: 2048)
+            let value = clipped(try read(element, kAXValueAttribute), maximum: valueLimit)
             let index = nodes.count
             nodes.append(WindowContentNode(parent: parent, role: boundedRole, title: title, description: description, value: value))
             let capacity = max(0, 128 - visited.count - pending.count)

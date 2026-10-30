@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { desktopInputSchema, inputEvidenceSchema, inputResultSchema, type DesktopInput, type DesktopInputAdapter } from '../desktop/input-types.js';
+import { desktopInputSchema, inputEvidenceSchema, inputResultSchema, textRequiresTextArea, type DesktopInput, type DesktopInputAdapter } from '../desktop/input-types.js';
 import type { WindowFrameCapture } from '../desktop/types.js';
 import { permissionDecisionSchema, permits, type ActionAuthorizer, type ActionReview } from './permissions.js';
 import { toolError } from './registry.js';
@@ -17,7 +17,7 @@ const descriptions = {
   move_pointer: 'Move the pointer to indicate a target without clicking.',
   click: 'Issue one left click on a visible, accessible target. A click may edit or submit.',
   scroll: 'Scroll vertically at the target; positive deltaY scrolls content down, negative up, in logical pixels (at most 600).',
-  type_text: 'Replace the entire value of an editable Accessibility input with literal single-line text. This is not append, paste, or key simulation; some applications autosave. Empty text clears the field.',
+  type_text: 'Replace the entire value of a writable Accessibility input with literal text (at most 4096 UTF-16 code units). Tabs and line breaks require AXTextArea; ordinary single-line text also supports AXTextField. Preserves exact text, including indentation and line endings, without keyboard events or clipboard use. This is not append. Empty text clears the field. Some applications autosave; entering text does not authorize sending. Unsupported targets fail without a typing or paste fallback.',
   press_key: 'Send one unmodified Tab or Enter to the already-focused editable input under this point. Enter requires submission authority. Tab can trigger blur/save. No other keys or shortcuts are supported.',
 };
 
@@ -56,8 +56,19 @@ export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestSc
         const target = { windowId: seen.frame.window.id, bounds, point };
         let evidence;
         try { evidence = inputEvidenceSchema.parse(await adapter.inspect(target, action, signal)); }
-        catch { signal.throwIfAborted(); invalidate(); return toolError('input-target-unavailable', 'Input target could not be verified. Check focus, occlusion, Accessibility access and fresh window content. No input was issued.'); }
+        catch {
+          signal.throwIfAborted(); invalidate();
+          return toolError('input-target-unavailable', 'Input target could not be verified or does not support this action. Check focus, occlusion, Accessibility access and fresh window content. '
+            + (action.kind === 'type_text' && textRequiresTextArea(action.text) ? 'Tabs and multiline text require a writable AXTextArea; do not substitute keystrokes or paste. ' : '')
+            + 'No input was issued.');
+        }
         signal.throwIfAborted();
+        if (action.kind === 'type_text' && (!evidence.editable
+          || !['AXTextField', 'AXTextArea'].includes(evidence.role)
+          || (textRequiresTextArea(action.text) && evidence.role !== 'AXTextArea'))) {
+          invalidate();
+          return toolError('unsupported-text-target', 'This target does not support the requested literal text replacement. Tabs and line breaks require a writable AXTextArea. No input was issued; do not use a keyboard or paste fallback.');
+        }
         const decision = permissionDecisionSchema.parse(await authorize(structuredClone({ request, referenceContext, conversation, action, target: evidence,
           frame: seen.frame, point, completed }), signal));
         signal.throwIfAborted();

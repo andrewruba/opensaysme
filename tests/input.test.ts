@@ -35,6 +35,68 @@ function fixture(request = 'Fill this form', decision: Partial<PermissionDecisio
 afterEach(() => vi.useRealTimers());
 
 describe('request-scoped desktop input', () => {
+  it.each([
+    'TypeError: missing value\n\tat render (app.ts:12)\n\nPlease explain this error.',
+    'first\r\n\tsecond\rthird\n日本語 👋 e\u0301',
+    'left\u0085middle\u2028right\u2029end',
+    '\n' + '👋'.repeat(2047) + 'x', // Exactly 4096 UTF-16 code units.
+  ])('passes literal formatted text unchanged through authorization and dispatch', async (text) => {
+    const f = fixture('Put this error and my explanation into the agent input. Leave it unsent.');
+    f.adapter.inspect.mockResolvedValue({ ...evidence, role: 'AXTextArea', title: 'Agent input', value: 'old draft' });
+    expect(value(await f.call('type_text', { text }))).toMatchObject({ status: 'verified', effect: 'edit', inputStopped: false });
+    expect(f.authorize.mock.calls[0]![0]).toMatchObject({ request: f.scope.request, action: { kind: 'type_text', text }, target: { role: 'AXTextArea' } });
+    expect(f.adapter.execute.mock.calls.map(([, action]) => action)).toEqual([{ kind: 'type_text', text }]);
+    expect(f.inputs.conversationActions()[0]).toMatchObject({ action: { kind: 'type_text', text }, status: 'verified' });
+    f.inputs.close(); f.host.close();
+  });
+
+  it.each(['\t', '\n', '\r', '\u0085', '\u2028', '\u2029'])('rejects text requiring a text area on a single-line field (%j)', async (separator) => {
+    const f = fixture();
+    expect(value(await f.call('type_text', { text: `a${separator}b` })).code).toBe('unsupported-text-target');
+    expect(f.authorize).not.toHaveBeenCalled(); expect(f.adapter.execute).not.toHaveBeenCalled();
+    f.inputs.close(); f.host.close();
+  });
+
+  it.each([{ role: 'AXTextArea', editable: false }, { role: 'AXWebArea', editable: true }])('rejects unsupported native input evidence %j', async (control) => {
+    const f = fixture(); f.adapter.inspect.mockResolvedValue({ ...evidence, ...control });
+    expect(value(await f.call('type_text', { text: 'error\nexplanation' })).code).toBe('unsupported-text-target');
+    expect(f.authorize).not.toHaveBeenCalled(); expect(f.adapter.execute).not.toHaveBeenCalled();
+    f.inputs.close(); f.host.close();
+  });
+
+  it.each(['not-issued', 'uncertain'] as const)('preserves native %s outcomes for multiline replacement without retrying or sending', async (status) => {
+    const f = fixture(); f.adapter.inspect.mockResolvedValue({ ...evidence, role: 'AXTextArea' });
+    f.adapter.execute.mockResolvedValue({ status });
+    expect(value(await f.call('type_text', { text: 'error\nexplanation' })))
+      .toMatchObject({ status, inputStopped: status === 'uncertain' });
+    expect(f.inputs.conversationActions()[0]!.status).toBe(status);
+    expect(value(await f.call('press_key', { key: 'Enter' })).code)
+      .toBe(status === 'uncertain' ? 'input-stopped' : 'stale-observation');
+    expect(f.adapter.execute).toHaveBeenCalledOnce();
+    f.inputs.close(); f.host.close();
+  });
+
+  it.each(['click', 'press_key'] as const)('keeps multiline preparation separate from an explicit follow-up send using %s', async (kind) => {
+    const text = 'Error: timed out\n\tat connect (client.ts:42)\n\nPlease investigate.';
+    const prepare = fixture('Put this error and explanation into the agent input; leave it unsent.');
+    prepare.adapter.inspect.mockResolvedValue({ ...evidence, role: 'AXTextArea', title: 'Agent input' });
+    await prepare.call('type_text', { text });
+    prepare.args.observationId = prepare.inputs.observe(frame);
+    prepare.authorize.mockResolvedValueOnce({ decision: 'deny', effect: 'submit', requestQuote: 'leave it unsent', reason: 'Preparation excludes sending.' });
+    const params = kind === 'press_key' ? { key: 'Enter' } : {};
+    expect(value(await prepare.call(kind, params)).code).toBe('outside-request');
+    expect(prepare.adapter.execute).toHaveBeenCalledOnce();
+    const prior: ConversationTurn = { id: 'prepared-input', completedAt: frame.capturedAt, request: prepare.scope.request,
+      response: 'Prepared.', referenceContext: [], evidence: { windows: [], actions: prepare.inputs.conversationActions() } };
+    const send = fixture('Now send it', { effect: 'submit' }, [prior]);
+    send.adapter.inspect.mockResolvedValue({ ...evidence, role: 'AXTextArea', title: 'Agent input', value: text });
+    expect(value(await send.call(kind, params))).toMatchObject({ effect: 'submit', inputStopped: true });
+    expect(send.authorize.mock.calls[0]![0]).toMatchObject({ request: 'Now send it',
+      target: { value: text }, conversation: [{ evidence: { actions: [{ action: { kind: 'type_text', text } }] } }] });
+    expect(send.adapter.execute).toHaveBeenCalledOnce();
+    prepare.inputs.close(); prepare.host.close(); send.inputs.close(); send.host.close();
+  });
+
   it('carries actual edits into a fresh submission check without carrying handles or an approval', async () => {
     const fill = fixture('Fill this form with Name Andrew');
     await fill.call();
@@ -156,7 +218,7 @@ describe('request-scoped desktop input', () => {
     for (const extra of [{ effect: 'edit' }, { approved: true }, { request: 'Submit this' }, { authorization: 'allow' }]) {
       expect(value(await f.call('click', extra)).code).toBe('invalid-arguments');
     }
-    for (const text of ['a\n', 'a\r', 'a\t', '\u0000', '\u2028', 'x'.repeat(4097)]) {
+    for (const text of ['\u0000', '\u000b', '\u000c', '\u001b', '\u001f', '\u007f', 'x'.repeat(4097), '👋'.repeat(2049)]) {
       expect(value(await f.call('type_text', { text })).code).toBe('invalid-arguments');
     }
     expect(value(await f.call('press_key', { key: 'Command+Enter' })).code).toBe('invalid-arguments');

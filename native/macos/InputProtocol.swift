@@ -28,6 +28,32 @@ struct InputEvidence: Encodable {
 }
 struct InputResult: Encodable { let status: String }
 
+func validInputText(_ text: String) -> Bool {
+    text.utf16.count <= 4096 && text.unicodeScalars.allSatisfy {
+        [9, 10, 13].contains($0.value) || ($0.value >= 32 && $0.value != 127)
+    }
+}
+
+func inputTextRequiresTextArea(_ text: String) -> Bool {
+    text.unicodeScalars.contains { [9, 10, 13, 0x85, 0x2028, 0x2029].contains($0.value) }
+}
+
+func supportsInputText(_ text: String, role: String, editable: Bool) -> Bool {
+    validInputText(text) && editable && ["AXTextField", "AXTextArea"].contains(role)
+        && (!inputTextRequiresTextArea(text) || role == "AXTextArea")
+}
+
+// The only write path is literal value replacement. There is deliberately no
+// key or clipboard fallback, including when a control rejects or normalizes text.
+func replaceInputText(_ text: String, role: String, editable: Bool,
+                      write: (String) -> Bool, read: () -> String?) -> InputResult {
+    guard supportsInputText(text, role: role, editable: editable) else { return InputResult(status: "not-issued") }
+    guard write(text), let actual = read(), actual.utf16.elementsEqual(text.utf16) else {
+        return InputResult(status: "uncertain")
+    }
+    return InputResult(status: "verified")
+}
+
 func parseInputCommand(_ data: Data, execute: Bool) throws -> InputCommand {
     guard data.count <= 65536,
           let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -55,8 +81,7 @@ func parseInputCommand(_ data: Data, execute: Bool) throws -> InputCommand {
     } else if command.fingerprint != nil { throw InputError.invalid }
     switch kind {
     case "type_text":
-        guard let text = command.action.text, text.utf16.count <= 4096,
-              text.unicodeScalars.allSatisfy({ $0.value >= 32 && $0.value != 127 && $0.value != 0x2028 && $0.value != 0x2029 }) else { throw InputError.invalid }
+        guard let text = command.action.text, validInputText(text) else { throw InputError.invalid }
     case "press_key": guard let key = command.action.key, ["Tab", "Enter"].contains(key) else { throw InputError.invalid }
     case "scroll": guard let delta = command.action.deltaY, delta != 0, delta >= -600, delta <= 600 else { throw InputError.invalid }
     default: break

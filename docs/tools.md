@@ -21,7 +21,7 @@ to the model.
 | `move_pointer` | Indicate a target without clicking (macOS input tools require a recent window screenshot). |
 | `click` | Issue a single left click on a visible, accessible target after a request/effect check. |
 | `scroll` | Scroll vertically at the target by up to 600 logical pixels; positive means content down. |
-| `type_text` | Replace the entire value of a supported Accessibility input with literal single-line text; empty text clears it. |
+| `type_text` | Replace the entire value of a writable Accessibility input with literal text, up to 4096 UTF-16 code units. Line breaks and tabs require AXTextArea; empty text clears it. |
 | `press_key` | Send unmodified Tab or Enter to the focused editable input; Enter always requires submission authority. |
 
 Window references are internal tool handles. Unchanged windows keep their references
@@ -93,7 +93,7 @@ arbitrary application behavior. Fixtures test enforcement of decisions; live mod
 accuracy, prompt injection resistance and application effects still need acceptance
 trials. Text may autosave and Tab may save on blur; the guard must account for such
 effects. Enter cannot pass an edit-only decision, even where it would insert a
-newline. Embedded control characters, arbitrary shortcuts, held keys/buttons,
+newline. C0 controls other than literal tab, LF and CR, DEL, arbitrary shortcuts, held keys/buttons,
 clipboard operations and model-supplied shell commands are unavailable. Existing
 `focus_window` is still governed by the acting model's navigation instructions;
 the independent gate currently covers the five input tools.
@@ -116,7 +116,14 @@ to inspect the result before another action. Purely visual targets without acces
 hit-test evidence are not yet supported.
 
 `type_text` uses a direct Accessibility value write, avoiding clipboard changes and
-synthetic Enter/Tab characters. Keyboard input goes only to the validated process
+synthetic key events. It supports single-line text in writable AXTextField or
+AXTextArea controls; line breaks and tab indentation require AXTextArea. Literal
+newlines do not invoke Enter or authorize sending. It replaces the entire value,
+preserves the supplied text without newline normalization, and reports `verified`
+only when exact read-back matches. Applications that normalize, truncate or reject
+the value yield an uncertain outcome; unsupported controls reject entry without
+a keyboard or clipboard fallback. Other C0 controls, DEL and oversized text
+are rejected. Keyboard input goes only to the validated process
 and requires the intended editable control to remain focused. Text value equality
 or pointer position can be verified locally; click/scroll/key events report `issued`,
 which does not prove the intended application outcome. Any uncertain native result

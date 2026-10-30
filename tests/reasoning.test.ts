@@ -353,6 +353,42 @@ function assistantItem(text: string) {
 function callResponse(...output: unknown[]) { return Response.json({ status: 'completed', output }); }
 
 describe('desktop tool reasoning loop', () => {
+  it('carries selected multiline context through the actor tool call without sending it', async () => {
+    const selected = 'TypeError: missing value\r\n\tat render (app.ts:12)\n';
+    const text = `${selected}\nPlease explain why this happens with 日本語 input.`;
+    const request = 'Put this error and my explanation into the agent input. Leave it unsent.';
+    const window = { id: 'agent-window', application: 'Editor', title: 'Agent' };
+    const target = { fingerprint: 'a'.repeat(64), role: 'AXTextArea', title: 'Agent input', description: '', value: '',
+      bounds: { x: 0, y: 0, width: 800, height: 600 }, focused: true, editable: true };
+    const execute = vi.fn(async () => ({ status: 'verified' as const }));
+    const authorize = vi.fn(async () => ({ decision: 'allow' as const, effect: 'edit' as const,
+      requestQuote: request, reason: 'Scripted preparation decision.' }));
+    const host = createDesktopTools({ listWindows: async () => ({ windows: [window], warnings: [] }),
+      focus: async () => {}, inspect: async () => ({ platform: 'test', window }), captureContext: vi.fn(), captureFrame: vi.fn(),
+      captureWindow: async () => ({ status: 'ok', window, capturedAt: '2026-10-30T12:00:00Z', bounds: target.bounds,
+        image: { mimeType: 'image/jpeg', width: 800, height: 600, data: '/9j/AA==' }, warnings: [] }),
+      input: { inspect: async () => target, execute },
+    }, { request, authorize });
+    const fetcher = vi.fn<typeof fetch>()
+      .mockImplementationOnce(async (_url, init) => {
+        const metadata = JSON.parse(JSON.parse(String(init?.body)).input[0].content[0].text);
+        expect(metadata.attention.contexts[0].context.selectedText).toBe(selected);
+        return callResponse(callItem());
+      })
+      .mockResolvedValueOnce(callResponse(callItem('focus_window', { windowId: 'window-1' }, 'focus')))
+      .mockResolvedValueOnce(callResponse(callItem('capture_window', { windowId: 'window-1' }, 'capture')))
+      .mockResolvedValueOnce(callResponse(callItem('type_text', { observationId: 'observation-1', x: 100, y: 100, text }, 'write')))
+      .mockResolvedValueOnce(response('Prepared the explanation and left it unsent.'));
+    const f = fixture(fetcher); f.input.transcript = request; f.input.tools = host;
+    f.input.history.contexts[0]!.context.selectedText = selected;
+    try {
+      await f.reason(f.input);
+      expect(execute).toHaveBeenCalledExactlyOnceWith({ windowId: window.id, bounds: target.bounds, point: { x: 100, y: 100 } },
+        { kind: 'type_text', text }, target.fingerprint, expect.any(AbortSignal));
+      expect(authorize).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ request, action: { kind: 'type_text', text } }), expect.any(AbortSignal));
+    } finally { host.close(); }
+  });
+
   it('passes a verified window image to reasoning after unavailable accessibility content', async () => {
     const window = { id: 'native-target', application: 'Editor', title: 'Project' };
     const image = { mimeType: 'image/jpeg' as const, width: 1600, height: 1200, data: '/9j/AA==' };

@@ -44,7 +44,9 @@ content atomic or detect every edit inside an unchanged window.
 
 Traversal stops at 128 elements, eight child levels, 16,384 UTF-16 text units total,
 or its time budget (at most 1.5 seconds for content within a three-second operation).
-Individual text attributes are limited to 2,048 units. Reads use short Accessibility
+Individual text attributes are limited to 2,048 units during public inspection.
+Input revalidation allows values up to 4,096 units so prepared text remains fully
+covered by the fingerprint; the total text budget is unchanged. Reads use short Accessibility
 message deadlines; the parent also cancels the child at four seconds. Secure text
 fields and their descendants are skipped before reading labels or values. Failed
 protection checks skip that subtree. Truncation, inaccessible elements, and protected
@@ -108,11 +110,17 @@ Pointer movement uses `CGWarpMouseCursorPosition`. Click, scroll, and unmodified
 Tab/Return events target the validated process using `CGEvent.postToPid`; Tab/Return
 also require the intended input to remain focused. Down/up pairs briefly ignore
 SIGTERM process-wide while queuing release, then the one-shot helper exits; the
-parent retains a bounded SIGKILL fallback. Literal single-line text uses
+parent retains a bounded SIGKILL fallback. Literal text uses
 [AXUIElementSetAttributeValue](https://developer.apple.com/documentation/applicationservices/1460434-axuielementsetattributevalue)
 on a settable AXTextField/AXTextArea value, with no pasteboard or synthetic text keys.
-The helper verifies resulting text/pointer state where possible and otherwise reports
-only `issued`; failures after issuing input are `uncertain`. The parent stops retries
+Line breaks and tab indentation require AXTextArea at inspection and execution;
+single-line controls and unsupported roles reject that payload. Text is bounded
+to 4096 UTF-16 code units, with no newline normalization. Exact read-back is
+required for `verified`; a changed, truncated or normalized value is `uncertain`,
+and no fallback key sequence is attempted. Literal newlines never become Return
+events. Other C0 controls and DEL remain rejected. The helper verifies resulting
+pointer state where possible; click/scroll/key events report only `issued`.
+Failures after issuing input are `uncertain`. The parent stops retries
 after uncertain results and stops further input after a submitted effect.
 
 The helper validates targets and mechanics; request authorization belongs to the

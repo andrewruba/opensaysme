@@ -54,7 +54,7 @@ private func inputWindowContentFingerprint(_ window: AXUIElement, deadline: Time
         guard ProcessInfo.processInfo.systemUptime < deadline else { throw InputError.unavailable }
         AXUIElementSetMessagingTimeout(element, 0.03)
     }
-    let content = collectWindowContent(root: window, deadline: deadline,
+    let content = collectWindowContent(root: window, deadline: deadline, valueLimit: 4096,
         same: { CFEqual($0, $1) }, read: { element, name in
             try check(element)
             var raw: CFTypeRef?
@@ -118,7 +118,9 @@ private func resolveInput(_ command: InputCommand) throws -> ResolvedInput {
     let editable = [kAXTextFieldRole, kAXTextAreaRole].contains(role)
         && AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success && settable.boolValue
     let focused = (try? focusedElement(applicationElement(application))).map { CFEqual($0, element) } ?? false
-    if command.action.kind == "type_text" { guard editable else { throw InputError.unavailable } }
+    if command.action.kind == "type_text" {
+        guard let text = command.action.text, supportsInputText(text, role: role, editable: editable) else { throw InputError.unavailable }
+    }
     if command.action.kind == "press_key" { guard editable && focused else { throw InputError.unavailable } }
     // Other fields can change programmatically without a HID event or changing
     // the hit Submit button. Include their observed values in the revalidation.
@@ -179,9 +181,12 @@ private func executeInput(_ command: InputCommand) -> InputResult {
         event.location = point; event.flags = []; event.postToPid(pid)
     case "type_text":
         guard (try? assertInputFocus(resolved.application, resolved.window)) != nil else { return InputResult(status: "not-issued") }
-        let status = AXUIElementSetAttributeValue(resolved.element, kAXValueAttribute as CFString, command.action.text! as CFString)
-        guard status == .success, stringAttribute(resolved.element, kAXValueAttribute) == command.action.text else { return InputResult(status: "uncertain") }
-        return InputResult(status: "verified")
+        return replaceInputText(action.text!, role: resolved.evidence.role, editable: resolved.evidence.editable,
+            write: { AXUIElementSetAttributeValue(resolved.element, kAXValueAttribute as CFString, $0 as CFString) == .success },
+            read: {
+                guard let actual = stringAttribute(resolved.element, kAXValueAttribute), actual.utf16.count <= 4096 else { return nil }
+                return actual
+            })
     case "press_key":
         let code = CGKeyCode(action.key == "Enter" ? kVK_Return : kVK_Tab)
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),

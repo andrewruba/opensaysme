@@ -131,7 +131,7 @@ Status: **Partial** — initial macOS input tools are implemented; live behavior
 | T01 | Partial | macOS maps fresh window-image pixels into logical desktop points, checks native hit/focus/geometry, and moves without clicking. Live coordinate/pointing trials remain. |
 | T02 | Partial | macOS single click requires an independent request/effect check and revalidated native target. Purely visual targets without Accessibility evidence and live coverage remain. |
 | T03 | Partial | macOS scrolls a verified surface by a bounded vertical amount and invalidates prior action observations. Live application behavior remains. |
-| T04 | Partial | macOS replaces literal single-line values in accessible inputs and supports unmodified Tab/Enter. Enter requires submission authority; embedded controls and arbitrary shortcuts are rejected. Broader entry methods remain. |
+| T04 | Partial | macOS replaces literal text in accessible inputs, including multiline text and indentation in writable AXTextArea controls, with exact value read-back. Newlines never become key presses. Unmodified Tab/Enter remain separate; Enter requires submission authority. Unsupported controls and arbitrary shortcuts are rejected; broader entry methods and live coverage remain. |
 | T05 | Partial | Native checks cover focus, geometry, user input and the complete bounded AX window content since inspection, rejecting changed non-target fields and incomplete trees. Live application outcome validation/recovery remains; tool/model success claims alone are insufficient. |
 
 ## Enforce the user's permission boundary
@@ -153,7 +153,7 @@ Status: **Partial** — conversational context is implemented; concrete agent in
 | --- | --- | --- |
 | A01 | Todo | Prove a useful context-to-agent request through an existing agent UI using the shared desktop capabilities; choose the test surface without making a dedicated integration a prerequisite. |
 | A02 | Todo | Discover the intended agent/session and inspect its input or status from reliable UI evidence or a documented API; do not infer status from a window title alone. |
-| A03 | Todo | Deliver dictated instructions and relevant context to the right agent, with distinct acceptance for prepare-only and explicitly send/start requests. |
+| A03 | Partial | Literal multiline entry can transfer prompts, code and error details into a supported accessible agent text area. Preparation and explicit send/start requests retain separate permission checks and follow-up context. Unit coverage verifies preservation and enforcement; real agent-composer compatibility and live completion remain unverified. |
 | A04 | Todo | Add a dedicated adapter only where a concrete interaction needs more reliable or efficient access; apply the same permission and verification rules to UI and API paths. |
 | A05 | Partial | Retain up to three completed turns and 64 KiB in memory, with two-minute per-turn expiry. Fresh tool sessions, captures and independent checks are required; cancellation, failed turns and shutdown clear history. Unit coverage includes continuation and invalidation; live follow-up interpretation remains unverified. |
 | A06 | Todo | Run the core acceptance trials, including multiple source windows, ambiguous agents, stale targets, cancellation, and action outcomes. |

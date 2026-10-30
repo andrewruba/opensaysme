@@ -183,8 +183,8 @@ const windowFrame = {
 
 test('mouse/keyboard adapters send typed payloads over stdin and validate native evidence and outcomes', async () => {
   const target = { windowId: inspectionId, bounds: windowFrame.bounds, point: { x: -1100, y: 0 } };
-  const action = { kind: 'type_text' as const, text: 'private input $(literal)' };
-  const evidence = { fingerprint: 'a'.repeat(64), role: 'AXTextField', title: 'Name', description: '', value: '',
+  const action = { kind: 'type_text' as const, text: 'private input $(literal)\r\n\tstack trace\n日本語 👋\u2028last line' };
+  const evidence = { fingerprint: 'a'.repeat(64), role: 'AXTextArea', title: 'Agent input', description: '', value: '',
     bounds: { x: -1100, y: 0, width: 100, height: 30 }, focused: true, editable: true };
   const signal = new AbortController().signal;
   vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(evidence));
@@ -195,8 +195,10 @@ test('mouse/keyboard adapters send typed payloads over stdin and validate native
   vi.mocked(runCommand).mockResolvedValueOnce('{"status":"not-issued"}');
   assert.deepEqual(await macOSInput.execute(target, action, evidence.fingerprint, signal), { status: 'not-issued' });
   assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.[1], ['--execute-input']);
+  assert.equal(JSON.parse(vi.mocked(runCommand).mock.lastCall![2]!.input!).action.text, action.text);
+  assert.equal(vi.mocked(runCommand).mock.lastCall![1].some((argument) => argument.includes('private input')), false);
   const calls = vi.mocked(runCommand).mock.calls.length;
-  await assert.rejects(macOSInput.execute(target, { kind: 'type_text', text: '\n' }, evidence.fingerprint, signal));
+  await assert.rejects(macOSInput.execute(target, { kind: 'type_text', text: '\u001b' }, evidence.fingerprint, signal));
   await assert.rejects(macOSInput.execute(target, action, 'forged', signal));
   await assert.rejects(macOSInput.inspect(target, action, AbortSignal.abort()));
   assert.equal(vi.mocked(runCommand).mock.calls.length, calls);
