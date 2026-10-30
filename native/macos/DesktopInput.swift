@@ -49,6 +49,38 @@ private func assertInputFocus(_ application: NSRunningApplication, _ window: AXU
           !(0..<128).contains(where: { CGEventSource.keyState(.hidSystemState, key: CGKeyCode($0)) }) else { throw InputError.unavailable }
 }
 
+private func inputWindowContentFingerprint(_ window: AXUIElement, deadline: TimeInterval) throws -> String {
+    func check(_ element: AXUIElement) throws {
+        guard ProcessInfo.processInfo.systemUptime < deadline else { throw InputError.unavailable }
+        AXUIElementSetMessagingTimeout(element, 0.03)
+    }
+    let content = collectWindowContent(root: window, deadline: deadline,
+        same: { CFEqual($0, $1) }, read: { element, name in
+            try check(element)
+            var raw: CFTypeRef?
+            let status = AXUIElementCopyAttributeValue(element, name as CFString, &raw)
+            if status == .noValue || status == .attributeUnsupported { return nil }
+            guard status == .success else { throw InputError.unavailable }
+            if let value = raw as? String { return value }
+            if name == kAXValueAttribute, let value = raw as? NSNumber { return value.stringValue }
+            throw InputError.unavailable
+        }, children: { element, limit in
+            try check(element)
+            var count = 0
+            let status = AXUIElementGetAttributeValueCount(element, kAXChildrenAttribute as CFString, &count)
+            if status == .noValue || status == .attributeUnsupported { return [] }
+            guard status == .success, count >= 0 else { throw InputError.unavailable }
+            if count == 0 { return [] }
+            try check(element)
+            let requested = min(count, limit)
+            var values: CFArray?
+            guard AXUIElementCopyAttributeValues(element, kAXChildrenAttribute as CFString, 0, requested, &values) == .success,
+                  let children = values as? [AXUIElement], children.count == requested else { throw InputError.unavailable }
+            return children
+        })
+    return try windowContentFingerprint(content)
+}
+
 private func resolveInput(_ command: InputCommand) throws -> ResolvedInput {
     let deadline = ProcessInfo.processInfo.systemUptime + 2
     let (application, window) = try resolveWindow(command.target.windowId, deadline: deadline)
@@ -88,10 +120,14 @@ private func resolveInput(_ command: InputCommand) throws -> ResolvedInput {
     let focused = (try? focusedElement(applicationElement(application))).map { CFEqual($0, element) } ?? false
     if command.action.kind == "type_text" { guard editable else { throw InputError.unavailable } }
     if command.action.kind == "press_key" { guard editable && focused else { throw InputError.unavailable } }
+    // Other fields can change programmatically without a HID event or changing
+    // the hit Submit button. Include their observed values in the revalidation.
+    let contentFingerprint = try inputWindowContentFingerprint(window, deadline: deadline)
     guard let pointer = CGEvent(source: nil)?.location else { throw InputError.unavailable }
     let events: [CGEventType] = [.mouseMoved, .leftMouseDown, .rightMouseDown, .keyDown, .scrollWheel]
     let fingerprintData = try JSONSerialization.data(withJSONObject: [
         "window": command.target.windowId, "windowBounds": [bounds.x, bounds.y, bounds.width, bounds.height],
+        "windowContent": contentFingerprint,
         "role": role, "title": title, "description": description, "value": value,
         "identifier": try inputString(element, kAXIdentifierAttribute, limit: 1024),
         "bounds": [elementBounds.x, elementBounds.y, elementBounds.width, elementBounds.height],

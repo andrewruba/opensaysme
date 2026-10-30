@@ -95,14 +95,14 @@ func requireAccessibility() throws {
 // Public AX APIs do not expose a universal stable window ID. These short-lived
 // tokens fail closed when titles change, the app restarts, or windows collide.
 func targetID(_ application: NSRunningApplication, _ window: AXUIElement) throws -> String {
-    guard let launched = application.launchDate else {
+    guard let started = try? processStartIdentity(application.processIdentifier) else {
         throw DesktopError("This application's launch identity is unavailable; it cannot be targeted safely.")
     }
     let title = stringAttribute(window, kAXTitleAttribute) ?? ""
     let identifier = stringAttribute(window, kAXIdentifierAttribute) ?? ""
     let data = try JSONSerialization.data(withJSONObject: [identifier, title])
     let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    return "mac:\(application.processIdentifier):\(Int64(launched.timeIntervalSince1970 * 1000)):\(digest)"
+    return "mac:\(application.processIdentifier):\(started):\(digest)"
 }
 
 func listWindows() throws -> WindowInventory {

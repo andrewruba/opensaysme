@@ -139,6 +139,7 @@ export function createDesktopTools(adapter: Adapter, scope?: RequestScope): Tool
           inaccessible: 'The window is hidden, minimized, or unavailable for capture. Use other evidence; no focus or restore was attempted.',
           timeout: 'Window capture timed out. No verified image was returned.',
           'capture-failed': 'The requested window could not be captured. No verified image was returned.',
+          'helper-crashed': 'The native window capture helper crashed before returning an image. Check the local helper build and macOS crash report; no pixels were returned.',
         };
         return toolError(result.reason, messages[result.reason]);
       }

@@ -88,6 +88,7 @@ private func captureCandidate(_ window: SCWindow) -> WindowCaptureCandidate {
 }
 
 @available(macOS 14.0, *)
+@MainActor
 private func captureWindowImage(_ target: WindowCaptureTarget) async throws -> CapturedWindowImage {
     try Task.checkCancellation()
     guard CGPreflightScreenCaptureAccess() else { throw VisualCaptureError.permissionRequired }
@@ -124,19 +125,11 @@ private func captureWindowImage(_ target: WindowCaptureTarget) async throws -> C
 func captureWindowFrame(_ target: WindowCaptureTarget, deadline: TimeInterval) throws -> CapturedWindowImage {
     guard #available(macOS 14.0, *) else { throw WindowCaptureError.unsupported }
     guard CGPreflightScreenCaptureAccess() else { throw VisualCaptureError.permissionRequired }
-    guard ProcessInfo.processInfo.systemUptime < deadline else { throw WindowCaptureError.timeout }
-    var result: Result<CapturedWindowImage, Error>?
-    let task = Task { @MainActor in
-        do { result = .success(try await captureWindowImage(target)) }
-        catch { result = .failure(error) }
+    do {
+        return try runMainActorCapture(deadline: deadline) { try await captureWindowImage(target) }
     }
-    while result == nil && ProcessInfo.processInfo.systemUptime < deadline {
-        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-    }
-    guard let result, ProcessInfo.processInfo.systemUptime < deadline else {
-        task.cancel(); throw WindowCaptureError.timeout
-    }
-    do { return try result.get() }
+    catch CaptureExecutionError.timeout { throw WindowCaptureError.timeout }
+    catch CaptureExecutionError.displayUnavailable { throw WindowCaptureError.unavailable }
     catch let error as WindowCaptureError { throw error }
     catch {
         if !CGPreflightScreenCaptureAccess() { throw VisualCaptureError.permissionRequired }

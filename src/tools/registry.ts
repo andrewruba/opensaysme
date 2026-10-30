@@ -103,7 +103,7 @@ export class ToolRegistry implements ToolHost {
     } catch {
       if (signal.aborted || this.closed) throw cancelled();
       return timedOut ? toolError('timeout', 'The tool timed out. Check desktop access before retrying.')
-        : toolError('tool-failed', 'The tool could not complete or returned invalid data. Run opensaysme doctor and check desktop permissions.');
+        : toolError('tool-failed', 'The tool failed before returning a valid result. Inspect local diagnostics for the cause.');
     } finally {
       clearTimeout(timer);
       signal.removeEventListener('abort', abort);

@@ -361,6 +361,13 @@ exit 0 for passed, 1 for not observed, and 2 for unavailable. Routine provider
 tests use fixtures without keys or paid requests. Windows CI compiles helpers,
 parses PowerShell scripts, and runs device-free protocol/image encoding tests.
 
+Continue v1 development with unit tests and mocked provider responses. Once the
+v1 implementation is ready, add one unified live-provider suite with explicit
+expected outcomes for the acceptance trials. There is currently no live-provider
+test runner or per-feature live-test flag.
+
+### Platform and regression checks
+
 The live X11 suite uses an isolated virtual desktop and synthetic recorder:
 
 ```sh
@@ -368,77 +375,36 @@ docker build -f scripts/Dockerfile.x11 -t opensaysme-x11-test .
 docker run --rm --init --network none opensaysme-x11-test
 ```
 
-Prior prototype verification (2026-10-28):
+Current validation coverage and limits:
 
-- **macOS:** native build, synthetic audio/pointer/JPEG checks, and screen permission
-  denial passed. A user-run session of the earlier visual-history prototype captured
-  five screen frames with cursor/window context and returned a live preview after
-  granting Screen Recording permission. Multi-monitor behavior and visual reference
-  accuracy remain unverified.
-- **Linux/X11:** eleven isolated Xvfb/Openbox tests passed, including in-memory
-  screenshots, cursor samples, recording stop/cancellation, and cleanup. Audio is
-  synthetic; this does not verify a physical desktop or microphone.
-- **Windows:** adapter fixtures, C#5 compilation, protocol and synthetic image
-  checks passed. Native Windows desktop and PowerShell behavior remain unverified.
-- **Providers:** protocol fixtures covered multimodal requests and structured references,
-  cancellation, timeouts, refusal, and bounded/redacted failures. The earlier live
-  session completed transcription and a multimodal preview, with 3.48 seconds from
-  the stopping tap to the preview. This single run is not a performance benchmark.
-- **Audio/phrase timing:** native sample-clock and resampling checks, twelve isolated
-  X11 tests, and provider fixtures verify sample ranges, delayed/out-of-order results,
-  pause/limit boundaries, and cancellation. Windows timing helpers compile and pass
-  synthetic checks under Mono. Subsequent user-run sessions exercised phrase timing;
-  physical device timing accuracy remains unverified. No paid request was made by
-  the automated checks.
+- Routine provider/tool tests cover multimodal request construction, source and
+  timing metadata, tool sequencing, stale targets, bounded errors, cancellation
+  and request-scoped input enforcement. Provider and authorization decisions are
+  scripted, so these checks do not establish model understanding or permission accuracy.
+- Native macOS checks cover process identity, Accessibility traversal and protected
+  fields, complete-content input fingerprints, capture source/geometry validation,
+  initialization, main-thread resumption, synthetic audio and JPEG encoding. They
+  issue no desktop input and do not capture the screen.
+- The isolated Linux/X11 suite exercises window discovery, screenshots, cursor
+  sampling, recording lifecycle and cleanup. Its synthetic audio and virtual desktop
+  do not establish physical-device behavior. Windows adapter/protocol/image checks
+  likewise do not establish native desktop operation.
+- User-run macOS sessions have exercised transcription, visual history, window
+  discovery, accessibility inspection and focus. Complete background-window capture,
+  target accuracy, desktop input outcomes, cancellation races and multi-display
+  coordinates remain unverified. Earlier preview timings are individual observations,
+  not performance benchmarks.
 
-Full-frame trail checks (2026-10-28): `npm run check` passed on macOS
-(176 tests; the 12 X11 tests skip there). All 188 tests passed in the isolated
-Linux container, including rendering and X11 integration. A synthetic twelve-frame
-1600×900 rendering run took 323 ms on macOS arm64; that measures local preparation,
-not provider latency. Windows rendering and live provider reference accuracy remain
-unverified. These checks made no paid requests or physical desktop captures.
-
-Tool framework checks (2026-10-29): `npm run check` passed on macOS
-(256 tests; 14 X11 tests skip there). Provider fixtures
-exercise discovery of two editor windows, evidence-based target choice, verified
-focus, screenshot results, stateless replay, budgets, and cancellation.
-All 14 isolated Xvfb tests passed, including window inventory and stale-owner
-rejection. The macOS helper builds and passes synthetic checks. Windows native
-enumeration, physical desktop navigation, and live model target inference remain
-unverified; no paid provider calls were made by these checks.
-
-Window inspection checks (2026-10-29): `npm run check` passed on macOS
-(269 tests passed; 14 X11 tests skipped), and the macOS helper builds. Native
-synthetic checks cover accessibility traversal, protected subtrees, text/node/depth
-limits, cycles, deadlines, and inaccessible elements. Provider fixtures pass source
-content from two equally titled windows through the tool loop before verified focus;
-they test evidence delivery, not live model inference. A read-only native probe
-reported no foreground desktop in this execution environment, so live application
-inspection and focus behavior remain unverified. No provider requests or real
-desktop captures were made. Windows/Linux do not yet advertise `inspect_window`.
-
-Window screenshot checks (2026-10-29): `npm run check` passed on macOS
-(286 tests passed; 14 X11 tests skipped). The macOS helper builds; native synthetic
-checks cover source matching on both AX/capture sides, ambiguity, replacement,
-geometry changes, negative origins, and pixel scaling. Fixtures verify window
-image delivery after unavailable accessibility content, source/time metadata,
-permission/error handling, cancellation, and rejection without foreground fallback.
-The native probe still reports no foreground desktop; live screenshot accuracy,
-covered-window behavior, and multi-display coordinates remain unverified. No real
-desktop captures or provider requests were made. Windows/Linux window capture is
-not implemented or advertised.
-
-Input/permission checks (2026-10-29): `npm run check` passed on macOS (307 tests
-passed; 14 X11 tests skipped), followed by passing typecheck, lint, build and focused
-input/process/reasoning regressions after the final lifecycle and budget changes.
-The macOS helper builds and all four native synthetic suites pass. Fixtures cover
-original-request isolation, fill/submit and prepare/send decisions, Enter and text
-control-character boundaries, autosave ambiguity, misleading UI text, stale targets,
-cancelled/invalid authorization and prevention of uncertain/repeated input. Native
-protocol checks issue no desktop events. These tests validate enforcement with
-scripted guard decisions; they do not establish real model permission accuracy.
-The native probe still reports no foreground desktop. No live desktop input,
-submission, screenshot capture, or paid provider request was performed in this slice.
+Two native fixes from those checks remain part of the runtime. Window identity uses
+validated kernel process start time because directly launched applications may lack
+`NSRunningApplication.launchDate`; PID reuse still invalidates old targets. Capture
+initializes CoreGraphics through public `CGMainDisplayID()` before ScreenCaptureKit
+filter construction. This addresses the confirmed `CGS_REQUIRE_INIT: did_initialize`
+assertion; moving work to the main thread alone did not address it. The capture
+bridge also retains main-thread execution across awaits, bounds execution time,
+and reports missing displays or helper crashes without exposing native output.
+Rebuild with `npm run build:native` after updating. Successful compilation and
+synthetic checks do not replace a live capture check from the authorized terminal.
 
 Manual acceptance: ask about visible content using existing context, then try
 pointing or selecting to clarify a reference and a request spanning several windows.

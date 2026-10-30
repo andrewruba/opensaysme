@@ -100,6 +100,11 @@ native code hit-tests the actual visible control and checks window identity, foc
 geometry, protected fields, and whether keys/buttons are held. Immediately before
 input it checks the same control evidence and an interaction fingerprint again.
 Movement, focus changes and user input during authorization can reject the action.
+The fingerprint also hashes the bounded Accessibility content of the whole window,
+so a changed form field can invalidate a pending Submit click even when the button
+is unchanged. Input requires a complete traversal of the exposed tree: truncated,
+protected or inaccessible subtrees reject the action. Hidden/virtualized application
+state is still unavailable, and this does not make capture, inspection and input atomic.
 The observation expires after 30 seconds and is consumed before input; a focus
 operation, rediscovery, new capture, or any issued input invalidates it. Recapture
 to inspect the result before another action. Purely visual targets without accessible
@@ -120,7 +125,15 @@ same-evidence control replacement are not eliminated by these checks.
 Scopes and references end with the turn. A later “submit it” does not yet inherit
 the prior form or permission; conversational follow-ups remain backlog work. Each
 guard call adds provider usage and up to ten seconds of latency. No live provider or
-desktop input trial has established completion accuracy or latency yet.
+desktop input trial has established completion accuracy or latency yet. Routine
+tests use scripted provider responses to check tool behavior and permission
+enforcement; they do not establish model permission accuracy or successful native input.
+
+Window capture distinguishes a helper terminated by a signal (`helper-crashed`)
+from an explicit permission denial or timeout. No image or input observation is
+returned after a crash. Unexpected tool failures report an unknown cause rather
+than attributing them to permissions; native output and crash-report contents are
+not forwarded to the model.
 
 ## Inspect the catalog
 

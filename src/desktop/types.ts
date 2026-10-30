@@ -76,7 +76,7 @@ export const windowFrameCaptureSchema = z.discriminatedUnion('status', [
   }).strict(),
   z.object({ status: z.literal('unavailable'), reason: z.enum([
     'accessibility-permission-required', 'screen-permission-required', 'unsupported',
-    'stale-target', 'ambiguous-target', 'inaccessible', 'timeout', 'capture-failed',
+    'stale-target', 'ambiguous-target', 'inaccessible', 'timeout', 'capture-failed', 'helper-crashed',
   ]) }).strict(),
 ]);
 export type WindowFrameCapture = z.infer<typeof windowFrameCaptureSchema>;

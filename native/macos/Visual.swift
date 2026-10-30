@@ -109,6 +109,7 @@ func encodeFrameImage(_ image: CGImage) throws -> FrameImage {
 }
 
 @available(macOS 14.0, *)
+@MainActor
 private func captureScreenFrame() async throws -> ScreenFrame {
     guard CGPreflightScreenCaptureAccess() else { throw VisualCaptureError.permissionRequired }
     guard let point = CGEvent(source: nil)?.location, let displayID = displayAt(point) else {
@@ -140,17 +141,11 @@ private func captureScreenFrame() async throws -> ScreenFrame {
 func captureFrame() throws -> ScreenFrame {
     guard #available(macOS 14.0, *) else { throw VisualCaptureError.unavailable }
     guard CGPreflightScreenCaptureAccess() else { throw VisualCaptureError.permissionRequired }
-    var result: Result<ScreenFrame, Error>?
-    let task = Task { @MainActor in
-        do { result = .success(try await captureScreenFrame()) }
-        catch { result = .failure(error) }
-    }
     let deadline = ProcessInfo.processInfo.systemUptime + 3
-    while result == nil && ProcessInfo.processInfo.systemUptime < deadline {
-        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+    do {
+        return try runMainActorCapture(deadline: deadline) { try await captureScreenFrame() }
     }
-    guard let result else { task.cancel(); throw VisualCaptureError.failed }
-    do { return try result.get() }
+    catch CaptureExecutionError.displayUnavailable { throw VisualCaptureError.unavailable }
     catch let error as VisualCaptureError { throw error }
     catch { throw VisualCaptureError.failed }
 }

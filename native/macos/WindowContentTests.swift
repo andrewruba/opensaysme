@@ -67,6 +67,31 @@ struct WindowContentTests {
                 return "AXTextField"
             }, children: { _, _ in preconditionFailure("Do not descend through inaccessible protection metadata") })
         precondition(inaccessible.nodes.isEmpty && inaccessible.warnings.contains { $0.contains("inaccessible") })
-        print("Window content checks passed (target text, protected subtrees, bounds, cycles, deadlines, inaccessible elements).")
+
+        // A button can remain identical while another form field changes without
+        // a hardware input event. The whole-window input digest must then differ.
+        func form(_ email: String) -> WindowContent {
+            let values: [Int: [String: String]] = [
+                0: [kAXRoleAttribute: "AXWindow", kAXTitleAttribute: "Feedback"],
+                1: [kAXRoleAttribute: "AXTextField", kAXTitleAttribute: "Email", kAXValueAttribute: email],
+                2: [kAXRoleAttribute: "AXButton", kAXTitleAttribute: "Submit"],
+            ]
+            return collectWindowContent(root: 0, deadline: 10, now: { 0 }, same: ==,
+                read: { node, name in values[node]?[name] },
+                children: { node, _ in node == 0 ? [1, 2] : [] })
+        }
+        let before = form("morgan@example.test")
+        let unchanged = try windowContentFingerprint(form("morgan@example.test"))
+        let beforeDigest = try windowContentFingerprint(before)
+        let changedDigest = try windowContentFingerprint(form("different@example.test"))
+        precondition(before.fullyTraversed && beforeDigest == unchanged && beforeDigest != changedDigest)
+        for partial in [content, large, wide, deep, cycle, timed, inaccessible] {
+            precondition(!partial.fullyTraversed)
+            do {
+                _ = try windowContentFingerprint(partial)
+                preconditionFailure("Partial content must not authorize a whole-window input fingerprint")
+            } catch WindowContentFingerprintError.incomplete { }
+        }
+        print("Window content checks passed (target text, protected subtrees, bounds, cycles, deadlines, inaccessible elements, complete input fingerprints and non-target field changes).")
     }
 }

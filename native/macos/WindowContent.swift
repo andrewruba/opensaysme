@@ -1,4 +1,5 @@
 import ApplicationServices
+import CryptoKit
 import Foundation
 
 struct WindowContentNode: Encodable {
@@ -22,6 +23,20 @@ struct WindowContentNode: Encodable {
 struct WindowContent {
     let nodes: [WindowContentNode]
     let warnings: [String]
+    // Completeness of this exposed AX tree, not proof that an application exposes
+    // hidden/virtualized state or that the observation was atomic.
+    let fullyTraversed: Bool
+}
+
+enum WindowContentFingerprintError: Error { case incomplete }
+
+// Input may commit values outside the hit control (e.g. a Submit button). Bind the
+// entire observed window's bounded content, and never hash a silently partial tree.
+func windowContentFingerprint(_ content: WindowContent) throws -> String {
+    guard content.fullyTraversed, !content.nodes.isEmpty else { throw WindowContentFingerprintError.incomplete }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    return SHA256.hash(data: try encoder.encode(content.nodes)).map { String(format: "%02x", $0) }.joined()
 }
 
 // The injected reads keep the same bounded traversal testable without reading
@@ -77,5 +92,5 @@ func collectWindowContent<Element>(
     if limited { warnings.append("Content was limited by time, depth, node count, or text size; missing content does not establish absence.") }
     if omitted { warnings.append("Some inaccessible, changed, or repeated elements were omitted.") }
     if protected { warnings.append("Secure text fields and their descendants were omitted.") }
-    return WindowContent(nodes: nodes, warnings: warnings)
+    return WindowContent(nodes: nodes, warnings: warnings, fullyTraversed: !limited && !omitted && !protected)
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, vi } from 'vitest';
 import { access } from 'node:fs/promises';
-import { runCommand } from '../src/desktop/process.js';
+import { CommandError, runCommand } from '../src/desktop/process.js';
 
 import {
   focusMacOS,
@@ -20,7 +20,9 @@ import {
 } from '../src/desktop/platforms/macos.js';
 
 vi.mock('node:fs/promises', () => ({ access: vi.fn().mockResolvedValue(undefined) }));
-vi.mock('../src/desktop/process.js', () => ({ runCommand: vi.fn() }));
+vi.mock('../src/desktop/process.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/desktop/process.js')>(), runCommand: vi.fn(),
+}));
 
 test('doctor reports missing helper prerequisites without recursing into doctor', async () => {
   vi.mocked(access).mockRejectedValueOnce(new Error('missing native binary'));
@@ -239,6 +241,18 @@ test('window capture preserves permission, stale, ambiguous, platform, and timeo
   }
   vi.mocked(runCommand).mockResolvedValueOnce('{"error":"private pixels"}');
   await assert.rejects(captureMacOSWindow(inspectionId), { message: 'The macOS desktop helper failed with an unknown error.' });
+});
+
+test('window capture distinguishes a crashed helper from timeout and caller cancellation', async () => {
+  vi.mocked(runCommand).mockRejectedValueOnce(new CommandError('signal', { signal: 'SIGABRT' }));
+  assert.deepEqual(await captureMacOSWindow(inspectionId), { status: 'unavailable', reason: 'helper-crashed' });
+  vi.mocked(runCommand).mockRejectedValueOnce(new CommandError('timeout'));
+  assert.deepEqual(await captureMacOSWindow(inspectionId), { status: 'unavailable', reason: 'timeout' });
+  const controller = new AbortController();
+  vi.mocked(runCommand).mockImplementationOnce(async () => {
+    controller.abort(); throw new CommandError('signal', { signal: 'SIGTERM' });
+  });
+  await assert.rejects(captureMacOSWindow(inspectionId, controller.signal), { name: 'AbortError' });
 });
 
 test('window inspection is bounded, targeted, and cancellable without requesting focus', async () => {

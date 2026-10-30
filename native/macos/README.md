@@ -26,8 +26,12 @@ them or reading selections. It retains up to 128 windows, stops discovery after
 three seconds, and reports inaccessible, ambiguous, or truncated results. Rebuild
 the helper after updating to make this operation available.
 
-Window IDs combine process launch identity with a hash of the window's title and
-AX identifier. They are temporary: title changes and app restarts invalidate
+Window IDs combine PID and kernel process start time (microseconds, read with
+Darwin `sysctl` / `KERN_PROC_PID`) with a hash of the window's title and AX identifier.
+The kernel query must return a complete record with the matching PID and a valid
+start time. This supports directly launched executables, for which LaunchServices
+does not supply `NSRunningApplication.launchDate`, while rejecting reused PIDs.
+They are temporary: title changes and app restarts invalidate
 them, and identical windows fail as ambiguous. Applications vary in Accessibility
 support, so this is a feasibility adapter rather than universal window targeting.
 
@@ -75,14 +79,29 @@ non-rendered content may be blank; images are not redacted. Direct helper use pr
 image data to stdout; the voice runtime sends it to the reasoning provider and
 retains it only for the turn unless debug output is enabled.
 
+Both window and display capture isolate their entire async capture body to
+`@MainActor`, including filter construction and image encoding after awaited
+framework callbacks. A synchronous main-run-loop bridge keeps those tasks running
+until completion or cancellation. Each fresh helper calls the public
+`CGMainDisplayID()` before ScreenCaptureKit work to initialize CoreGraphics.
+Without this initialization, window-filter construction crashed at the SkyLight
+assertion `CGS_REQUIRE_INIT: did_initialize`, including on the main thread.
+Permission preflight alone does not initialize it. A missing display fails explicitly.
+Synthetic checks cover initialization order, missing displays, physical main-thread
+resumption, error propagation and cancellation; they do not replace a live capture check.
+
 The input adapter uses internal `--inspect-input` and `--execute-input` commands.
 Both read one strictly validated, bounded JSON payload from stdin. Text and target
 evidence never appear in argv or temporary files. Inspection resolves the discovered
 window, requires it to be focused/unhidden/unminimized, maps the screenshot's logical
 bounds, and hit-tests the visible AX control. Protected ancestors and oversized or
 unreadable evidence are rejected. The returned fingerprint includes control labels,
-value, identifier, bounds, focus/editability, window bounds, pointer position and HID
-event counts. Execute recomputes it after the independent provider check; changes
+value, identifier, bounds, focus/editability, window bounds, pointer position, HID
+event counts, and a SHA-256 digest of the bounded window Accessibility content.
+This catches changes to other fields while the target control remains unchanged.
+Input rejects incomplete traversal (including protected, inaccessible, truncated
+or repeated elements); hidden/virtualized state remains outside the observation.
+Execute recomputes it after the independent provider check; changes
 produce `not-issued`. Held modifiers, keys, or mouse buttons also prevent input.
 
 Pointer movement uses `CGWarpMouseCursorPosition`. Click, scroll, and unmodified
@@ -162,14 +181,18 @@ ID. Sampling also covers microphone startup, stops on the finishing tap or
 cancellation, and stays off during transcription/preview processing. Cursor paths
 carry attention evidence only; the helper does not recognize gesture categories.
 
-Run native conversion and protocol checks without microphone access:
+Run native identity, conversion and protocol checks without microphone access:
 
 ```sh
 sh native/macos/test.sh
 ```
 
+Process identity checks cover direct launches, stable reads, PID reuse, invalid
+timestamps, and missing or partial kernel records without desktop access.
 The same command exercises synthetic accessibility trees for correct source text,
 protected subtrees, Unicode/text/node/depth limits, cycles, deadlines, and failures.
+They also check complete-content fingerprints and rejection of non-target field
+changes or incomplete evidence before input.
 It reads no real application content. These checks do not verify live application
 coverage, Accessibility permission grants, or model target inference.
 Synthetic window-capture checks cover unique source matching, ambiguous/replaced

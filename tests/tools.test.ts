@@ -220,13 +220,14 @@ describe('desktop tool primitives', () => {
   });
 
   it.each(['accessibility-permission-required', 'screen-permission-required', 'unsupported', 'stale-target',
-    'ambiguous-target', 'inaccessible', 'timeout', 'capture-failed'] as const)('reports %s without substituting a foreground screenshot', async (reason) => {
+    'ambiguous-target', 'inaccessible', 'timeout', 'capture-failed', 'helper-crashed'] as const)('reports %s without substituting a foreground screenshot', async (reason) => {
     const { host, adapter } = desktopFixture();
     await host.call('list_windows', {}, signal());
     adapter.captureWindow.mockResolvedValue({ status: 'unavailable', reason });
     const result = await host.call('capture_window', { windowId: 'window-1' }, signal());
     expect(result.isError).toBe(true);
     expect(value(result).code).toBe(reason === 'stale-target' ? 'stale-window' : reason);
+    if (reason === 'helper-crashed') expect(value(result).message).not.toContain('permission');
     expect(result.content.every((part) => part.type === 'text')).toBe(true);
     if (reason === 'stale-target') expect(value(await host.call('focus_window', { windowId: 'window-1' }, signal())).code).toBe('unknown-window');
     expect(adapter.focus).not.toHaveBeenCalled();

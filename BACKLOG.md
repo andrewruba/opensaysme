@@ -85,6 +85,11 @@ supported Linux desktops. Wayland is currently unsupported.
 MVP. `Done` does not imply live validation on every desktop. Keep existing IDs for
 continuing work; update statuses when behavior lands, not when it is planned.
 
+During v1 development, use unit tests and mocked provider responses. Once the v1
+implementation is ready, build one unified suite that calls the live provider and
+asserts expected behavior across the acceptance trials. Avoid separate live-test
+flags and runners for individual features.
+
 ## Collect and resolve context
 
 Status: **Partial** — capture exists; relevance and live reference accuracy need work.
@@ -100,7 +105,7 @@ Status: **Partial** — capture exists; relevance and live reference accuracy ne
 | W03 | Partial | macOS can inspect bounded accessibility text/control roles from a discovered background window without changing focus, omitting protected fields. Windows/Linux implementations and live application coverage remain. |
 | W04 | Partial | macOS 14+ can capture a discovered background window without focusing it, with source identity, bounds, capture time, and stale/ambiguous-source rejection. Windows/Linux support and live capture/coordinate validation remain. |
 | W05 | Partial | Unchanged windows retain discovery references across refreshes; macOS inspection/capture revalidates sources and reports stale, ambiguous, inaccessible, and permission failures. Broader evidence reuse and invalidation remain. |
-| W06 | Next | Live trial: distinguish similarly titled windows by contents and resolve spoken/pointed references; record accuracy, ambiguity, and latency. |
+| W06 | Todo | In the unified live suite after v1 implementation, distinguish similarly titled windows by contents and resolve spoken/pointed references; record accuracy, ambiguity, and latency. |
 
 ## Give the model useful context and tools
 
@@ -127,7 +132,7 @@ Status: **Partial** — initial macOS input tools are implemented; live behavior
 | T02 | Partial | macOS single click requires an independent request/effect check and revalidated native target. Purely visual targets without Accessibility evidence and live coverage remain. |
 | T03 | Partial | macOS scrolls a verified surface by a bounded vertical amount and invalidates prior action observations. Live application behavior remains. |
 | T04 | Partial | macOS replaces literal single-line values in accessible inputs and supports unmodified Tab/Enter. Enter requires submission authority; embedded controls and arbitrary shortcuts are rejected. Broader entry methods remain. |
-| T05 | Partial | Native checks cover focus, control evidence, geometry and user input since inspection. Input results distinguish issued, verified, not-issued and uncertain; recapture is required. Live outcome verification/recovery remains. |
+| T05 | Partial | Native checks cover focus, geometry, user input and the complete bounded AX window content since inspection, rejecting changed non-target fields and incomplete trees. Live application outcome validation/recovery remains; tool/model success claims alone are insufficient. |
 
 ## Enforce the user's permission boundary
 
@@ -137,8 +142,8 @@ Status: **Partial** — runtime input checks exist; semantic permission accuracy
 | --- | --- | --- |
 | E01 | Partial | Tool host retains original finalized speech and reference context per turn. Independent model checks interpret outcome, destination, negatives and effects for each input; follow-up scopes and live accuracy remain. |
 | E02 | Partial | Input executes only after a valid independent decision tied to original speech and exact arguments/evidence. The actor cannot provide approval/effect fields. Semantic effect inference remains model-dependent; existing focus remains governed by the actor's navigation instructions. |
-| E03 | Partial | Fixture regressions cover fill/submit, prepare/send, Enter, autosave decisions, changed targets, misleading screen text and malformed policy responses. These verify enforcement, not real model decisions; live/adversarial trials and future API paths remain. |
-| E04 | Partial | Input consumes observations before execution, blocks further input after submission/uncertain outcomes, and propagates cancellation/timeouts. Native events release down/up pairs; live interruption and submission verification remain. |
+| E03 | Partial | Fixture regressions cover fill/submit, prepare/send, Enter, autosave decisions, changed targets, misleading screen text and malformed policy responses. These validate enforcement of scripted decisions; live model permission accuracy, adversarial trials and future API paths remain. |
+| E04 | Partial | Input consumes observations before execution, blocks further input after submission/uncertain outcomes, and propagates cancellation/timeouts. Native events release down/up pairs. Real input, physical Escape and dispatch-race validation remain. |
 
 ## Useful interactions with existing agents
 
@@ -162,7 +167,7 @@ Status: **Partial**
 | R01 | Done | Measure audio/transcript delivery, visual preparation, tool time, and stop-to-response latency. |
 | R02 | Todo | Show minimal listening/processing/completion/error feedback usable away from the terminal, including the current target when acting. |
 | R03 | Todo | Ask necessary clarification or permission questions near the user's work and resume from the answer; do not reconfirm an already explicit, still-applicable request. |
-| R04 | Todo | Establish live accuracy, friction, and latency baselines/targets for the acceptance trials, rapid navigation, scrolling, and incidental cursor movement. |
+| R04 | Todo | Measure actual completion accuracy, unintended actions, unnecessary clarifications and user corrections against manual interaction baselines; separate capture, authorization and actor latency. |
 | R05 | Todo | Reduce measured capture/preparation delays and unnecessary model/tool round trips; verify improvements against the same trials. |
 
 ## Setup, permissions, and providers

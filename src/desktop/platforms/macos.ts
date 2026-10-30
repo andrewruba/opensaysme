@@ -3,7 +3,7 @@ import { constants } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-import { runCommand } from '../process.js';
+import { CommandError, runCommand } from '../process.js';
 import { desktopInputSchema, inputEvidenceSchema, inputResultSchema, inputTargetSchema, type DesktopInputAdapter } from '../input-types.js';
 import { desktopContextSchema, type DesktopContext, type VoiceHelperSpec } from '../voice-types.js';
 import { screenFrameCaptureSchema, type ScreenFrameCapture } from '../visual-types.js';
@@ -150,6 +150,10 @@ export async function captureMacOSWindow(targetId: string, signal?: AbortSignal)
     return result;
   } catch (error) {
     signal?.throwIfAborted();
+    if (error instanceof CommandError) {
+      if (error.reason === 'signal') return { status: 'unavailable', reason: 'helper-crashed' };
+      if (error.reason === 'timeout') return { status: 'unavailable', reason: 'timeout' };
+    }
     const reasons: Record<string, Extract<WindowFrameCapture, { status: 'unavailable' }>['reason']> = {
       'permission-required': 'accessibility-permission-required', 'screen-permission-required': 'screen-permission-required',
       'invalid-target': 'stale-target', 'stale-or-ambiguous-target': 'stale-target', 'window-capture-stale': 'stale-target',
