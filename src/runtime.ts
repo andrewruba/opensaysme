@@ -3,6 +3,7 @@ import { performance } from 'node:perf_hooks';
 import type { DesktopContext, NativeVoiceEvent } from './desktop/voice-types.js';
 import type { ScreenFrameCapture } from './desktop/visual-types.js';
 import { AttentionCollector, attentionSummary } from './attention.js';
+import { RecentConversation, type ConversationTurn } from './conversation.js';
 import type { DebugSession, DiagnosticEvent, DebugTurnResult } from './diagnostics.js';
 import type { ReasoningFactory } from './reasoning/types.js';
 import type { ToolHost } from './tools/types.js';
@@ -45,6 +46,7 @@ interface Turn {
   attention?: AttentionCollector; session?: TranscriptionSession;
   visual?: PreparedVisualContext;
   tools?: ToolHost;
+  conversation?: ConversationTurn[];
   transcript?: string; debugInputRecorded?: boolean; debugResultRecorded?: boolean;
   metrics: LatencyMeasurements; partial: string; timers: Set<NodeJS.Timeout>;
   startupTimer?: NodeJS.Timeout; stopTimer?: NodeJS.Timeout; captureTimer?: NodeJS.Timeout;
@@ -55,7 +57,8 @@ export interface VoiceRuntimeOptions {
   captureContext: (signal: AbortSignal) => Promise<DesktopContext>;
   captureFrame: (signal: AbortSignal) => Promise<ScreenFrameCapture>;
   reason: ReasoningFactory;
-  createTools?: (request: string, referenceContext: ReturnType<AttentionCollector['freeze']>['contexts']) => ToolHost;
+  createTools?: (request: string, referenceContext: ReturnType<AttentionCollector['freeze']>['contexts'],
+    conversation: ConversationTurn[]) => ToolHost;
   debug?: DebugSession;
   apiKey: string; model: string;
   emit: (output: VoiceOutput) => void;
@@ -75,10 +78,12 @@ export class VoiceRuntime {
   private state: VoiceState = 'ready';
   private closed = false;
   private readonly now: () => number;
+  private readonly conversation: RecentConversation;
   private rejectFatal!: (error: Error) => void;
   readonly fatal: Promise<never>;
   constructor(private readonly options: VoiceRuntimeOptions) {
     this.now = options.now ?? (() => performance.now());
+    this.conversation = new RecentConversation(this.now);
     this.fatal = new Promise((_, reject) => { this.rejectFatal = reject; });
     void this.fatal.catch(() => {});
   }
@@ -264,10 +269,11 @@ export class VoiceRuntime {
     turn.metrics.visualPreparationMs = this.elapsed(started);
     this.debugInput(turn);
     this.diagnostic('runtime', 'visuals-prepared', turn, { frames: history.frames.length, trailCopies: visual.frames.filter((frame) => frame.image).length, durationMs: turn.metrics.visualPreparationMs });
-    turn.tools = this.options.createTools?.(transcript, structuredClone(history.contexts));
+    turn.conversation = this.conversation.recent();
+    turn.tools = this.options.createTools?.(transcript, structuredClone(history.contexts), structuredClone(turn.conversation));
     const reasoningStarted = this.now();
     const response = await this.options.reason({ transcript, history, visual, signal: turn.abort.signal,
-      tools: turn.tools,
+      tools: turn.tools, conversation: turn.conversation,
       onTool: turn.tools ? (event) => {
         if (this.turn !== turn || turn.abort.signal.aborted || this.closed) return;
         if (event.phase === 'completed') {
@@ -286,6 +292,14 @@ export class VoiceRuntime {
     if (this.turn !== turn || turn.abort.signal.aborted || this.closed) return;
     turn.metrics.totalMs = this.elapsed(turn.activated);
     turn.metrics.stopToResultMs = this.elapsed(turn.stopped);
+    let retained = false;
+    try {
+      retained = this.conversation.remember({ id: turn.id, completedAt: new Date().toISOString(), request: transcript, response,
+        referenceContext: structuredClone(history.contexts.slice(-3)),
+        evidence: turn.tools?.conversationEvidence?.() ?? { windows: [], actions: [] } });
+    } catch { this.conversation.clear(); }
+    if (!retained) this.options.emit({ type: 'warning', turnId: turn.id,
+      message: 'Recent conversation context could not be retained. Include the target in your next request.' });
     this.debugResult(turn, { status: 'completed', response });
     this.options.emit({ type: 'result', turnId: turn.id, transcript, attention: attentionSummary(history),
       visualContext: visualContextSummary(visual), response,
@@ -294,6 +308,7 @@ export class VoiceRuntime {
   }
 
   cancel(message?: string): void {
+    this.conversation.clear();
     const turn = this.turn;
     if (!turn || this.state === 'cancelling' || this.closed) return;
     this.debugResult(turn, message ? { status: 'failed', error: { component: 'runtime', message } } : { status: 'cancelled' });
@@ -305,6 +320,7 @@ export class VoiceRuntime {
     if (turn.visual) discardVisualContext(turn.visual);
     turn.abort.abort();
     turn.tools?.close();
+    if (turn.conversation) turn.conversation.length = 0;
     turn.session?.close();
     turn.partial = '';
     this.options.emit(message ? { type: 'error', turnId: turn.id, message } : { type: 'cancelled', turnId: turn.id });
@@ -321,6 +337,7 @@ export class VoiceRuntime {
     if (turn.visual) discardVisualContext(turn.visual);
     turn.abort.abort();
     turn.tools?.close();
+    if (turn.conversation) turn.conversation.length = 0;
     turn.session?.close();
     turn.partial = '';
     try { this.options.input.send({ type: 'settled', turnId: turn.id }); }
@@ -330,6 +347,7 @@ export class VoiceRuntime {
     this.publishState('ready');
   }
   close(): void {
+    this.conversation.clear();
     if (this.closed) return;
     this.closed = true;
     const turn = this.turn;
@@ -341,6 +359,7 @@ export class VoiceRuntime {
     if (turn.visual) discardVisualContext(turn.visual);
     turn.abort.abort();
     turn.tools?.close();
+    if (turn.conversation) turn.conversation.length = 0;
     turn.session?.close();
     turn.partial = '';
     this.turn = undefined;

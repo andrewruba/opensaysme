@@ -4,9 +4,13 @@ import type { WindowFrameCapture } from '../desktop/types.js';
 import { permissionDecisionSchema, permits, type ActionAuthorizer, type ActionReview } from './permissions.js';
 import { toolError } from './registry.js';
 import type { ToolDefinition, ToolResult } from './types.js';
+import { conversationSchema, type ConversationTurn, type ConversationEvidence } from '../conversation.js';
 
 type Frame = Extract<WindowFrameCapture, { status: 'ok' }>;
-export interface RequestScope { request: string; authorize: ActionAuthorizer; referenceContext?: ActionReview['referenceContext'] }
+export interface RequestScope {
+  request: string; authorize: ActionAuthorizer; referenceContext?: ActionReview['referenceContext'];
+  conversation?: ConversationTurn[];
+}
 const position = { observationId: z.string().regex(/^observation-[1-9]\d{0,15}$/),
   x: z.number().finite().min(0).max(1600), y: z.number().finite().min(0).max(1600) };
 const descriptions = {
@@ -22,6 +26,8 @@ export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestSc
   const request = scope?.request ?? '';
   const authorize = scope?.authorize;
   const referenceContext = structuredClone(scope?.referenceContext ?? []);
+  const conversation = conversationSchema.parse(scope?.conversation ?? []);
+  const actions: ConversationEvidence['actions'] = [];
   let observation: { id: string; frame: Frame; at: number } | undefined;
   let next = 0;
   let stopped = false;
@@ -52,7 +58,7 @@ export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestSc
         try { evidence = inputEvidenceSchema.parse(await adapter.inspect(target, action, signal)); }
         catch { signal.throwIfAborted(); invalidate(); return toolError('input-target-unavailable', 'Input target could not be verified. Check focus, occlusion, Accessibility access and fresh window content. No input was issued.'); }
         signal.throwIfAborted();
-        const decision = permissionDecisionSchema.parse(await authorize(structuredClone({ request, referenceContext, action, target: evidence,
+        const decision = permissionDecisionSchema.parse(await authorize(structuredClone({ request, referenceContext, conversation, action, target: evidence,
           frame: seen.frame, point, completed }), signal));
         signal.throwIfAborted();
         if (!permits(request, action, decision)) return toolError('outside-request',
@@ -60,10 +66,20 @@ export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestSc
         if (closed || observation !== seen || performance.now() - seen.at > 30_000) return toolError('stale-observation', 'The observation expired during permission checking. Inspect again.');
         // Consume evidence and block retries BEFORE touching the OS, including timeouts/cancellation.
         invalidate(); stopped = true;
+        const { fingerprint, ...control } = evidence;
+        const recorded: ConversationEvidence['actions'][number] = structuredClone({
+          window: seen.frame.window, capturedAt: seen.frame.capturedAt, action, target: control,
+          point, effect: decision.effect, status: 'uncertain',
+        });
+        // Record uncertainty before dispatch: a throw or timeout cannot turn a
+        // potentially issued commitment into permission to repeat it next turn.
+        actions.push(recorded);
+        if (actions.length > 12) actions.shift();
         let result;
-        try { result = inputResultSchema.parse(await adapter.execute(target, action, evidence.fingerprint, signal)); }
+        try { result = inputResultSchema.parse(await adapter.execute(target, action, fingerprint, signal)); }
         catch { signal.throwIfAborted(); return toolError('input-uncertain', 'The native action may have taken effect. Input is stopped for this turn; inspect and report the outcome without retrying.'); }
         signal.throwIfAborted();
+        recorded.status = result.status;
         completed.push({ action: action.kind, effect: decision.effect, status: result.status });
         if (result.status === 'not-issued') stopped = false;
         else if (result.status !== 'uncertain' && decision.effect !== 'submit') stopped = false;
@@ -77,12 +93,12 @@ export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestSc
       },
     };
   });
-  return { definitions, invalidate,
+  return { definitions, invalidate, conversationActions: () => structuredClone(actions),
     observe: (frame: Frame) => {
       const id = `observation-${++next}`;
       observation = { id, frame: structuredClone(frame), at: performance.now() };
       return id;
     },
-    close: () => { closed = true; invalidate(); completed.length = 0; },
+    close: () => { closed = true; invalidate(); completed.length = 0; actions.length = 0; conversation.length = 0; },
   };
 }

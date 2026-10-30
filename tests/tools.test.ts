@@ -4,6 +4,7 @@ import { ToolRegistry } from '../src/tools/registry.js';
 import { createDesktopTools } from '../src/tools/desktop.js';
 import type { ToolDefinition, ToolResult } from '../src/tools/types.js';
 import type { DesktopAdapter, WindowInventory } from '../src/desktop/types.js';
+import type { ConversationTurn } from '../src/conversation.js';
 
 const signal = () => new AbortController().signal;
 const text = (value: unknown): ToolResult => ({ content: [{ type: 'text', text: JSON.stringify(value) }] });
@@ -138,6 +139,39 @@ function desktopFixture() {
 }
 
 describe('desktop tool primitives', () => {
+  it('maps fresh discoveries to prior native sources, rejecting same-title replacements as matches', async () => {
+    const { adapter, state } = desktopFixture();
+    const prior: ConversationTurn = { id: 'previous', completedAt: '2026-10-30T12:00:00Z', request: 'Switch to the frontend',
+      response: 'Switched.', referenceContext: [], evidence: { windows: [{ window: editor, capturedAt: '2026-10-30T12:00:00Z', warnings: [] }], actions: [] } };
+    const host = createDesktopTools(adapter, { request: 'Use that window', authorize: vi.fn(), conversation: [prior] });
+    // A prior identity is evidence, not a directly executable target.
+    expect((await host.call('focus_window', { windowId: editor.id }, signal())).isError).toBe(true);
+    expect(value(await host.call('focus_window', { windowId: 'window-1' }, signal())).code).toBe('unknown-window');
+    state.inventory = [browser, editor];
+    const listed = value(await host.call('list_windows', {}, signal()));
+    expect(listed.windows[1]).toMatchObject({ windowId: 'window-2', previousTurnIds: ['previous'] });
+    expect(listed.windows[0]).not.toHaveProperty('previousTurnIds');
+    state.inventory = [browser, { ...editor, id: 'replacement' }];
+    expect(value(await host.call('list_windows', {}, signal())).windows[1]).not.toHaveProperty('previousTurnIds');
+    host.close();
+  });
+
+  it('retains bounded text evidence with its original time and drops image data and handles', async () => {
+    const { host } = desktopFixture();
+    await host.call('list_windows', {}, signal());
+    await host.call('inspect_window', { windowId: 'window-1' }, signal());
+    await host.call('capture_window', { windowId: 'window-1' }, signal());
+    const evidence = host.conversationEvidence!();
+    expect(evidence).toMatchObject({ windows: [{ window: editor, capturedAt: '2026-10-29T12:00:00.000Z',
+      nodes: [{ role: 'AXWindow' }, { value: 'frontend/src/App.tsx' }] }], actions: [] });
+    expect(JSON.stringify(evidence)).not.toMatch(/windowId|observationId|mimeType|\/9j\//);
+    evidence.windows[0]!.nodes![1]!.value = 'mutated';
+    expect(host.conversationEvidence!().windows[0]!.nodes![1]!.value).toBe('frontend/src/App.tsx');
+    host.close();
+    expect(host.conversationEvidence!()).toEqual({ windows: [], actions: [] });
+    expect(evidence.windows).toHaveLength(1);
+  });
+
   it('discovers windows without manual names or exposing native IDs', async () => {
     const { host, adapter } = desktopFixture();
     expect(host.list().map((tool) => tool.name)).toEqual(['list_windows', 'inspect_desktop', 'capture_screen', 'focus_window', 'inspect_window', 'capture_window']);

@@ -32,12 +32,16 @@ macOS title changes and process restarts can invalidate targets. Ambiguous and
 inaccessible windows are omitted with warnings. Same-process window-handle reuse
 remains a platform limitation.
 Focus also rechecks the title evidence; a changed title prompts rediscovery.
+Fresh window labels can include `previousTurnIds` for retained turns whose native
+window identity, application and title match. This links historical evidence to a
+current tool handle; it neither proves unchanged contents nor grants permission.
 
 `inspect_window` returns its source window, capture time, control roles, available
 titles/descriptions/string values, and omission warnings. Parent indices describe
 only this observation; they are not action handles. The helper resolves the target
 before and after reading; changed or ambiguous source identities discard the result.
-Inspection does not focus the window, read the clipboard, or cache its contents.
+Inspection reads fresh content without focusing the window or reading the clipboard.
+Bounded textual observations can enter recent conversation after the turn completes.
 Permission denial and unavailable content are explicit tool errors. The catalog
 omits this tool on Windows/Linux, where no implementation exists yet.
 
@@ -72,13 +76,14 @@ without another confirmation when the target, contents, and consequences match.
 Likewise, populating an agent input and sending it are distinct effects. Ask when
 material ambiguity remains or additional authority is needed, not after every step.
 
-The first macOS implementation retains the finalized spoken request and its desktop
-reference context in a fresh tool host. Before each input, an independent call to the
-configured reasoning model checks that exact action against the original request,
-window image and freshly inspected native control. The acting model cannot supply
+The macOS implementation retains the current finalized spoken request, its desktop
+reference context and bounded recent conversation in a fresh tool host. Before each
+input, an independent call to the configured reasoning model checks that exact action
+against current speech, relevant prior user requests, the window image and freshly
+inspected native control. The acting model cannot supply
 an approval, permission scope, or effect label. The guard has no tools, sees UI and
 proposed input as untrusted evidence, and must return a strict decision with an exact
-supporting excerpt from the original speech. Malformed, unavailable, denied, unknown,
+supporting excerpt from the current speech. Malformed, unavailable, denied, unknown,
 or materially ambiguous decisions issue no input. This is an internal check, not a
 user confirmation after every step. Explicit applicable submission requests suffice.
 The provider uses [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
@@ -122,9 +127,22 @@ blind repeat submissions. Read tools remain available to inspect and report. A n
 work; it cannot undo effects already issued. The remaining OS dispatch race and
 same-evidence control replacement are not eliminated by these checks.
 
-Scopes and references end with the turn. A later “submit it” does not yet inherit
-the prior form or permission; conversational follow-ups remain backlog work. Each
-guard call adds provider usage and up to ten seconds of latency. No live provider or
+Tool handles, observations and permission decisions end with the turn. Recent
+conversation preserves requests, assistant responses, window/control observations
+and native outcomes for up to three turns, 64 KiB total, and two minutes per turn.
+It excludes screenshots and audio. Action targets record pre-dispatch control
+values; `action.text` describes a requested replacement, whose outcome is established
+only to the extent reported by native status. The actor and guard use prior user speech to
+interpret a current follow-up or clarification answer; assistant responses and
+historical evidence cannot expand authority. “Now submit it” may authorize a new
+commitment after filling; a destination clarification alone cannot. Fresh discovery,
+capture and native inspection remain required. Changed-content and prior-commitment
+comparison across turns is model-dependent, not a deterministic fingerprint check.
+Cancellation, failed turns and shutdown clear recent context. Escape in the CLI terminal
+also clears context while idle; the global Escape shortcut applies only during a turn.
+An invalid or individually oversized turn clears it rather than dropping user constraints.
+
+Each guard call adds provider usage and up to ten seconds of latency. No live provider or
 desktop input trial has established completion accuracy or latency yet. Routine
 tests use scripted provider responses to check tool behavior and permission
 enforcement; they do not establish model permission accuracy or successful native input.
@@ -165,8 +183,10 @@ seconds. With input it allows thirteen model requests/twelve tools within 90 sec
 each acting-provider request has a 20-second deadline. It replays tool results and
 reasoning context with `store: false`; independent checks also use `store: false`.
 It does not run arbitrary shell commands or load model-supplied code. Normal runs
-retain context only for the turn. `--debug` saves numbered requests and tool exchanges;
-provider keys, raw audio, and opaque encrypted reasoning are excluded.
+release images at the end of the turn and retain only the bounded recent conversation
+described above. `--debug` saves numbered requests, including recent conversation,
+and tool exchanges; these files remain until deleted. Provider keys, raw audio,
+and opaque encrypted reasoning are excluded.
 
 Use mocked adapters for routine tests. Test validation, cancellation, stale targets,
 and errors at the tool boundary; test provider sequencing with fixture responses.

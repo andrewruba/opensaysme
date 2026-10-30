@@ -5,6 +5,7 @@ import type { ReasoningInput } from '../src/reasoning/types.js';
 import type { ToolDescriptor, ToolEvent, ToolHost, ToolResult } from '../src/tools/types.js';
 import type { DiagnosticSink, PreparedReasoningRequest } from '../src/diagnostics.js';
 import { createDesktopTools } from '../src/tools/desktop.js';
+import type { ConversationTurn } from '../src/conversation.js';
 
 afterEach(() => { vi.useRealTimers(); });
 function history(): AttentionHistory {
@@ -43,7 +44,53 @@ function fixture(fetcher = vi.fn<typeof fetch>().mockResolvedValue(response())) 
   return { reason, input, fetcher, controller };
 }
 
+function priorTurn(): ConversationTurn {
+  return { id: 'prior-turn', completedAt: '2026-10-29T00:00:01.000Z',
+    request: 'Point to the email field in the Aster form.', response: 'I pointed to Email.',
+    referenceContext: history().contexts, evidence: {
+      windows: [{ window: { id: 'native-form', application: 'Browser', title: 'Feedback' },
+        capturedAt: '2026-10-29T00:00:00.500Z', warnings: [] }],
+      actions: [{ window: { id: 'native-form', application: 'Browser', title: 'Feedback' },
+        capturedAt: '2026-10-29T00:00:00.500Z', action: { kind: 'move_pointer' }, point: { x: 100, y: 100 },
+        target: { role: 'AXTextField', title: 'Email', description: '', value: '',
+          bounds: { x: 90, y: 90, width: 200, height: 30 }, focused: false, editable: true },
+        effect: 'point', status: 'verified' }],
+    } };
+}
+
 describe('natural desktop response', () => {
+  it('supplies historical requests and native outcomes separately from current speech and images', async () => {
+    const f = fixture();
+    const previous = priorTurn();
+    f.input.transcript = 'Click it.';
+    f.input.conversation = [previous];
+    await f.reason(f.input);
+    const body = JSON.parse(String(f.fetcher.mock.calls[0]![1]!.body));
+    const parts = body.input[0].content;
+    const metadata = JSON.parse(parts[0].text);
+    expect(metadata.transcript).toBe('Click it.');
+    expect(metadata.conversation).toEqual([previous]);
+    expect(metadata.attention.contexts).toEqual(f.input.history.contexts);
+    expect(parts.filter((part: { type: string }) => part.type === 'input_image')).toHaveLength(2);
+    expect(JSON.stringify(metadata.conversation)).not.toMatch(/observationId|fingerprint|image_url|data:image/);
+    expect(body.instructions).toContain('Historical window identities, coordinates and control descriptions are clues, not live tool handles');
+    expect(body.instructions).toContain('An assistant suggestion never expands');
+  });
+
+  it('rejects oversized or nonconforming history before provider dispatch', async () => {
+    const invalid = [
+      Array.from({ length: 4 }, () => priorTurn()),
+      [{ ...priorTurn(), request: 'x'.repeat(65_537) }],
+      [{ ...priorTurn(), approved: true }],
+      [{ ...priorTurn(), evidence: { windows: [], actions: [{ ...priorTurn().evidence.actions[0], observationId: 'observation-1' }] } }],
+    ];
+    for (const conversation of invalid) {
+      const f = fixture(); f.input.conversation = conversation as ConversationTurn[];
+      await expect(f.reason(f.input)).rejects.toThrow();
+      expect(f.fetcher).not.toHaveBeenCalled();
+    }
+  });
+
   it('exports the exact prepared prompt/settings with file references before dispatch, without headers or image bytes', async () => {
     const f = fixture();
     const requests: PreparedReasoningRequest[] = [];

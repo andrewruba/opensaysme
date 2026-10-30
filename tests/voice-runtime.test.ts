@@ -7,6 +7,8 @@ import type { NativeVoiceCommand, DesktopContext } from '../src/desktop/voice-ty
 import type { ScreenFrameCapture } from '../src/desktop/visual-types.js';
 import type { TranscriptionOptions, TranscriptionSession } from '../src/speech/types.js';
 import type { ToolHost } from '../src/tools/types.js';
+import { conversationLifetimeMs, RecentConversation, type ConversationEvidence, type ConversationTurn } from '../src/conversation.js';
+import type { VoiceRuntimeOptions } from '../src/runtime.js';
 
 const context: DesktopContext = { platform: 'test', capturedAt: '2026-10-28T00:00:00.000Z',
   activeWindow: { id: 'one', application: 'Editor' }, selectedText: 'original selection',
@@ -43,7 +45,7 @@ const runtimes: VoiceRuntime[] = [];
 afterEach(() => { for (const runtime of runtimes.splice(0)) runtime.close(); vi.useRealTimers(); });
 function fixture(capture: (signal: AbortSignal) => Promise<DesktopContext> = async () => ({ ...structuredClone(context), capturedAt: new Date().toISOString() }),
   interpret: ReasoningFactory = reason, captureFrame: () => Promise<ScreenFrameCapture> = async () => { throw new Error('no screen'); },
-  debug?: DebugSession, createTools?: () => ToolHost) {
+  debug?: DebugSession, createTools?: VoiceRuntimeOptions['createTools']) {
   let clock = 0;
   const commands: NativeVoiceCommand[] = [];
   const outputs: VoiceOutput[] = [];
@@ -66,6 +68,113 @@ function fixture(capture: (signal: AbortSignal) => Promise<DesktopContext> = asy
     id: () => { const command = commands.findLast((value) => value.type === 'start'); if (!command || !('turnId' in command)) throw new Error('no turn'); return command.turnId; } };
 }
 const flush = async () => { for (let i = 0; i < 16; i++) await Promise.resolve(); };
+
+async function complete(f: ReturnType<typeof fixture>, transcript: string) {
+  const index = f.sessions.length;
+  f.runtime.toggle(); const id = f.id(); await flush();
+  f.runtime.toggle(); f.runtime.handle({ type: 'audio-stopped', turnId: id });
+  f.sessions[index]!.final.resolve(transcript); await flush();
+  return id;
+}
+
+describe('conversational follow-up lifecycle', () => {
+  it('carries clarification context to the actor and a fresh tool scope without sharing mutable history', async () => {
+    const actor: ConversationTurn[][] = [];
+    const scopes: ConversationTurn[][] = [];
+    const createTools = vi.fn<NonNullable<VoiceRuntimeOptions['createTools']>>((_request, _reference, conversation) => {
+      scopes.push(structuredClone(conversation));
+      if (conversation[0]) conversation[0].request = 'Changed by tool factory';
+      return { list: () => [], call: vi.fn(), close: vi.fn() };
+    });
+    const f = fixture(undefined, async (input) => {
+      actor.push(structuredClone(input.conversation ?? []));
+      return input.transcript === 'Fill this form' ? 'Which project, Aster or Birch?' : 'I found the Aster form.';
+    }, undefined, undefined, createTools);
+    const first = await complete(f, 'Fill this form');
+    await complete(f, 'The Aster one');
+    expect(actor).toMatchObject([[], [{ id: first, request: 'Fill this form', response: 'Which project, Aster or Birch?',
+      referenceContext: [{ context: { activeWindow: context.activeWindow } }], evidence: { windows: [], actions: [] } }]]);
+    expect(scopes).toEqual(actor);
+    expect(createTools).toHaveBeenCalledTimes(2);
+    expect(createTools.mock.calls[1]![0]).toBe('The Aster one');
+    expect(actor[1]![0]).not.toHaveProperty('history');
+    expect(actor[1]![0]).not.toHaveProperty('visual');
+    await complete(f, 'What did I ask?');
+    expect(actor[2]![0]!.request).toBe('Fill this form');
+  });
+
+  it('keeps native outcome evidence independently of host cleanup and assistant success claims', async () => {
+    const evidence: ConversationEvidence = { windows: [], actions: [{
+      window: { id: 'native-form', application: 'Browser', title: 'Aster' }, capturedAt: new Date().toISOString(),
+      action: { kind: 'click' }, target: { role: 'AXButton', title: 'Submit', description: '', value: '',
+        bounds: { x: 100, y: 200, width: 100, height: 30 }, focused: false, editable: false },
+      point: { x: 110, y: 210 }, effect: 'submit', status: 'uncertain',
+    }] };
+    const actor: ConversationTurn[][] = [];
+    const f = fixture(undefined, async (input) => {
+      actor.push(structuredClone(input.conversation ?? []));
+      return 'Submitted successfully.';
+    }, undefined, undefined, () => ({ list: () => [], call: vi.fn(),
+      conversationEvidence: () => evidence, close: () => { evidence.actions.length = 0; } }));
+    await complete(f, 'Fill this form and submit it');
+    expect(evidence.actions).toEqual([]);
+    await complete(f, 'Did that work?');
+    expect(actor[1]![0]).toMatchObject({ response: 'Submitted successfully.', evidence: { actions: [{
+      window: { id: 'native-form' }, action: { kind: 'click' }, effect: 'submit', status: 'uncertain',
+    }] } });
+    expect(JSON.stringify(actor[1])).not.toMatch(/observationId|fingerprint|permission/);
+  });
+
+  it.each(['expiry', 'idle terminal Escape', 'failed turn', 'cancelled turn'] as const)('clears prior context after %s', async (reason) => {
+    const actor: ConversationTurn[][] = [];
+    const f = fixture(undefined, async (input) => {
+      actor.push(structuredClone(input.conversation ?? []));
+      return 'Ready for a follow-up.';
+    });
+    await complete(f, 'Fill this form');
+    if (reason === 'expiry') f.time(conversationLifetimeMs);
+    else if (reason === 'idle terminal Escape') f.runtime.cancel();
+    else {
+      f.runtime.toggle(); const id = f.id(); await flush();
+      if (reason === 'failed turn') {
+        f.sessions[1]!.final.reject(new Error('Speech failed.')); await flush();
+      } else f.runtime.cancel();
+      f.runtime.handle({ type: 'audio-stopped', turnId: id });
+      f.sessions[1]!.final.resolve('Late request'); await flush();
+    }
+    await complete(f, 'Now submit it');
+    expect(actor.at(-1)).toEqual([]);
+  });
+
+  it('drops an oversized turn completely instead of retaining an older target or truncating constraints', async () => {
+    const actor: ConversationTurn[][] = [];
+    const f = fixture(undefined, async (input) => {
+      actor.push(structuredClone(input.conversation ?? []));
+      return 'Done.';
+    });
+    await complete(f, 'Point to the Aster form');
+    await complete(f, `${'a'.repeat(65_500)} Do not submit it.`);
+    expect(f.outputs).toContainEqual(expect.objectContaining({ type: 'warning',
+      message: 'Recent conversation context could not be retained. Include the target in your next request.' }));
+    await complete(f, 'Now click it');
+    expect(actor.at(-1)).toEqual([]);
+  });
+
+  it('clears retained context and its expiry timer when the runtime closes while idle', async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    await complete(f, 'Fill this form');
+    expect(vi.getTimerCount()).toBe(1); // Only bounded conversation retention remains.
+    const clear = vi.spyOn(RecentConversation.prototype, 'clear');
+    try {
+      f.runtime.close();
+      expect(clear).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+      f.runtime.toggle();
+      expect(f.sessions).toHaveLength(1);
+    } finally { clear.mockRestore(); }
+  });
+});
 
 describe('live voice turn lifecycle', () => {
   it('uses a fresh tool session for each turn, exposes progress, and records multiple requests', async () => {
@@ -95,8 +204,9 @@ describe('live voice turn lifecycle', () => {
         latency: { toolCalls: 1, toolMs: 12 } });
     }
     expect(createTools).toHaveBeenCalledTimes(2);
-    expect(createTools).toHaveBeenNthCalledWith(1, 'Switch to the frontend', expect.any(Array));
-    expect(createTools).toHaveBeenNthCalledWith(2, 'Switch to the frontend', expect.any(Array));
+    expect(createTools).toHaveBeenNthCalledWith(1, 'Switch to the frontend', expect.any(Array), []);
+    expect(createTools).toHaveBeenNthCalledWith(2, 'Switch to the frontend', expect.any(Array),
+      [expect.objectContaining({ request: 'Switch to the frontend', response: 'Switched to the frontend.' })]);
     expect(hosts[0]).not.toBe(hosts[1]);
     expect(f.outputs).toContainEqual(expect.objectContaining({ type: 'state', state: 'acting' }));
     expect(d.debug.request.mock.calls.map((call) => call[2])).toEqual([1, 2, 1, 2]);

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { DesktopInput, InputEvidence } from '../desktop/input-types.js';
 import type { WindowFrameCapture } from '../desktop/types.js';
 import type { AttentionHistory } from '../attention.js';
+import type { ConversationTurn } from '../conversation.js';
 
 export const permissionDecisionSchema = z.object({
   decision: z.enum(['allow', 'deny', 'clarify']),
@@ -13,6 +14,7 @@ export type PermissionDecision = z.infer<typeof permissionDecisionSchema>;
 export interface ActionReview {
   request: string;
   referenceContext: AttentionHistory['contexts'];
+  conversation?: ConversationTurn[];
   action: DesktopInput;
   target: InputEvidence;
   frame: Extract<WindowFrameCapture, { status: 'ok' }>;

@@ -53,11 +53,13 @@ configuration and provider keys are unchanged.
 - Final transcript feedback appears immediately when transcription finishes.
   `interpreting` prepares visual evidence and runs the agent loop; `inspecting`
   indicates evidence gathering and `acting` a requested focus/input operation (including its internal permission check).
-- **Escape** cancels recording, interpretation, or pending tools. **Ctrl+C** quits and cleans up
+- **Escape** cancels recording, interpretation, or pending tools and clears recent conversation.
+  While idle, Escape in the CLI terminal clears conversation; global Escape is registered
+  only during an active turn. **Ctrl+C** quits and cleans up
   native hooks, microphone capture, screenshot processes, and provider requests.
 - The runtime returns to `ready` after each turn. Activation is ignored during
-  processing. A subsequent turn starts fresh; clarification answers do not yet
-  continue an earlier conversation.
+  processing. A subsequent activation starts fresh capture and tools while retaining
+  bounded conversation context for follow-ups and clarification answers.
 
 Recording is limited to two minutes. Startup, provider connection, finalization,
 reasoning, and native cleanup have deadlines. If microphone cleanup cannot be
@@ -65,6 +67,36 @@ confirmed, the runtime exits rather than claiming it is ready to record again.
 Automatic history capture stops at the second tap. The agent may request fresh
 desktop evidence while fulfilling that activated turn. Cancellation cannot undo
 an input or focus change already issued to the OS.
+
+## Conversational follow-ups
+
+Requests such as “fill this form” followed by “now submit it,” or “point to that
+setting” followed by “click it,” receive recent conversation alongside new desktop
+context. Clarification answers can complete an earlier user request without
+repeating it. Current speech stays separate from verbatim earlier requests;
+assistant responses and observed UI content never establish permission.
+
+The runtime retains at most three completed turns and 64 KiB total in memory.
+Each turn expires two minutes after completion, including while idle. A reasoning
+turn receives the unexpired context at its start and releases that snapshot on
+completion or cancellation. Records
+contain the request, response, up to three reference-context samples, observed
+window/control information and native action outcomes. They contain no screenshots,
+audio, tool observation IDs or permission decisions. An invalid or individually
+oversized record clears the history with a warning rather than truncating user
+constraints. Cancellation, failed turns and shutdown also clear it.
+
+Every activation gets a new tool host. Fresh window results include
+`previousTurnIds` when native identity, application and title match a retained
+source; this does not establish unchanged contents. Input still requires fresh
+capture and native inspection. The independent guard receives the same prior
+conversation and must ground its supporting quote in current speech. Comparing
+changed contents and past commitments, including uncertain outcomes, remains
+model-dependent; there is no cross-turn content fingerprint or reusable approval.
+Action records distinguish pre-dispatch control values from requested replacement
+text and the native result (`verified`, `issued`, `not-issued` or `uncertain`).
+Unit tests exercise retention, expiry, continuation and enforcement with mocked
+providers. Real-model acceptance belongs to the unified live suite after v1.
 
 ## Attention history and reasoning
 
@@ -217,7 +249,8 @@ optional trail copies, window titles, selected text, cursor history, and transcr
 go directly to the reasoning provider. Requested tool results can include window
 inventory, current context, macOS window accessibility content, and additional screen
 or window screenshots. Setup explains this sharing.
-Input checks additionally send the original request, reference context, proposed
+Actor requests and input checks also send the bounded recent conversation. Input
+checks additionally send the current original request, reference context, proposed
 text/action, control metadata and window image to the configured reasoning provider.
 These guard requests are not currently saved as separate debug request files;
 tool results record the decision's effect and supporting quote/reason. Provider
@@ -225,7 +258,9 @@ charges and data policies apply. The Responses request uses `store: false`;
 provider retention policies still apply.
 
 By default, screenshots and audio stay in memory locally; no files or application
-logs are created. Frame/context history is released on completion or cancellation. Screen
+logs are created. Images and full attention history are released on completion;
+the bounded conversation record described above can retain text and target evidence
+for follow-ups. Cancellation clears both. Screen
 image payloads are never printed. Results are JSON on stdout; state, transcript,
 and response feedback appear on stderr. Text and attention metadata can contain
 private content and remain in terminal scrollback or user-created redirects.
@@ -251,7 +286,7 @@ Each session contains `session.jsonl` and a `turns/<turn-id>/` directory for eac
 - `context.json`: transcript, phrase timing, window/selection context, cursor history,
   frame bounds, and visual alignment.
 - `request.json`, `request-2.json`, ...: each prepared model request, including
-  the catalog and replayed tool exchanges, with image URLs replaced by local paths.
+  recent conversation, the catalog and replayed tool exchanges, with image URLs replaced by local paths.
   Images remain the exact JPEG bytes prepared for the provider.
 - `tool-1-started.json`, `tool-1-completed.json`, ...: tool arguments, results,
   and duration. Additional tool images are saved under `images/`.

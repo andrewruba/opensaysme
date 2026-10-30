@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import type { ConversationEvidence } from '../conversation.js';
 
 export interface ToolDescriptor {
   name: string;
@@ -12,6 +13,8 @@ export interface ToolResult { content: ToolContent[]; isError?: boolean }
 export interface ToolHost {
   list(): ToolDescriptor[];
   call(name: string, args: unknown, signal: AbortSignal): Promise<ToolResult>;
+  /** Historical native evidence only; never reusable tool handles or approvals. */
+  conversationEvidence?(): ConversationEvidence;
   close(): void;
 }
 export interface ToolDefinition {

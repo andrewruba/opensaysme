@@ -104,7 +104,7 @@ Status: **Partial** — capture exists; relevance and live reference accuracy ne
 | W02 | Done | Discover windows, inspect current context, capture the current screen, and revalidate/verify focus. |
 | W03 | Partial | macOS can inspect bounded accessibility text/control roles from a discovered background window without changing focus, omitting protected fields. Windows/Linux implementations and live application coverage remain. |
 | W04 | Partial | macOS 14+ can capture a discovered background window without focusing it, with source identity, bounds, capture time, and stale/ambiguous-source rejection. Windows/Linux support and live capture/coordinate validation remain. |
-| W05 | Partial | Unchanged windows retain discovery references across refreshes; macOS inspection/capture revalidates sources and reports stale, ambiguous, inaccessible, and permission failures. Broader evidence reuse and invalidation remain. |
+| W05 | Partial | Unchanged windows retain discovery references within a turn; fresh window outputs identify matching native sources from recent turns. macOS inspection/capture revalidates sources and reports stale, ambiguous, inaccessible, and permission failures. Broader evidence reuse and invalidation remain. |
 | W06 | Todo | In the unified live suite after v1 implementation, distinguish similarly titled windows by contents and resolve spoken/pointed references; record accuracy, ambiguity, and latency. |
 
 ## Give the model useful context and tools
@@ -114,7 +114,7 @@ Status: **Partial** — the tool loop exists; richer context selection and capab
 | ID | Status | Outcome |
 | --- | --- | --- |
 | W01 | Done | Typed in-process tool host and bounded, cancellable model/tool loop that returns evidence and action results to the model. |
-| M01 | Next | Assemble relevant context for the request while retaining source, time, target identity, and uncertainty; make missing or omitted evidence explicit and allow further inspection. |
+| M01 | Partial | Actor and guard receive bounded recent requests, responses, source observations and native action outcomes alongside current context. Fresh discovery links matching native sources to prior turns. Broader request-specific context selection and live reference accuracy remain. |
 | M02 | Partial | Catalog describes input effects, screenshot pixel coordinates, native constraints and request checks. Input results include the permission interpretation; broader current-permission summaries remain. |
 | M03 | Partial | Input-enabled loops allow twelve tools within 90 seconds, including internal authorization time. Multi-field/multi-window completion and latency need live measurement. |
 
@@ -140,14 +140,14 @@ Status: **Partial** — runtime input checks exist; semantic permission accuracy
 
 | ID | Status | Outcome |
 | --- | --- | --- |
-| E01 | Partial | Tool host retains original finalized speech and reference context per turn. Independent model checks interpret outcome, destination, negatives and effects for each input; follow-up scopes and live accuracy remain. |
+| E01 | Partial | Independent input checks receive current finalized speech separately from recent user requests and historical evidence, enabling follow-ups and clarification answers without reusing approvals. Supporting quotes must come from current speech. Semantic scope and changed-content comparison remain model-dependent; live accuracy is unverified. |
 | E02 | Partial | Input executes only after a valid independent decision tied to original speech and exact arguments/evidence. The actor cannot provide approval/effect fields. Semantic effect inference remains model-dependent; existing focus remains governed by the actor's navigation instructions. |
 | E03 | Partial | Fixture regressions cover fill/submit, prepare/send, Enter, autosave decisions, changed targets, misleading screen text and malformed policy responses. These validate enforcement of scripted decisions; live model permission accuracy, adversarial trials and future API paths remain. |
 | E04 | Partial | Input consumes observations before execution, blocks further input after submission/uncertain outcomes, and propagates cancellation/timeouts. Native events release down/up pairs. Real input, physical Escape and dispatch-race validation remain. |
 
 ## Useful interactions with existing agents
 
-Status: **Todo**
+Status: **Partial** — conversational context is implemented; concrete agent interactions remain.
 
 | ID | Status | Outcome |
 | --- | --- | --- |
@@ -155,7 +155,7 @@ Status: **Todo**
 | A02 | Todo | Discover the intended agent/session and inspect its input or status from reliable UI evidence or a documented API; do not infer status from a window title alone. |
 | A03 | Todo | Deliver dictated instructions and relevant context to the right agent, with distinct acceptance for prepare-only and explicitly send/start requests. |
 | A04 | Todo | Add a dedicated adapter only where a concrete interaction needs more reliable or efficient access; apply the same permission and verification rules to UI and API paths. |
-| A05 | Todo | Retain bounded, short-lived conversational context for references, corrections, clarification, and follow-ups; revalidate targets and permission before continuing. |
+| A05 | Partial | Retain up to three completed turns and 64 KiB in memory, with two-minute per-turn expiry. Fresh tool sessions, captures and independent checks are required; cancellation, failed turns and shutdown clear history. Unit coverage includes continuation and invalidation; live follow-up interpretation remains unverified. |
 | A06 | Todo | Run the core acceptance trials, including multiple source windows, ambiguous agents, stale targets, cancellation, and action outcomes. |
 
 ## Responsiveness and feedback
@@ -166,7 +166,7 @@ Status: **Partial**
 | --- | --- | --- |
 | R01 | Done | Measure audio/transcript delivery, visual preparation, tool time, and stop-to-response latency. |
 | R02 | Todo | Show minimal listening/processing/completion/error feedback usable away from the terminal, including the current target when acting. |
-| R03 | Todo | Ask necessary clarification or permission questions near the user's work and resume from the answer; do not reconfirm an already explicit, still-applicable request. |
+| R03 | Partial | CLI follow-ups can carry a clarification answer back to the prior request. Feedback near the user's work and live clarification accuracy remain; do not reconfirm an already explicit, still-applicable request. |
 | R04 | Todo | Measure actual completion accuracy, unintended actions, unnecessary clarifications and user corrections against manual interaction baselines; separate capture, authorization and actor latency. |
 | R05 | Todo | Reduce measured capture/preparation delays and unnecessary model/tool round trips; verify improvements against the same trials. |
 

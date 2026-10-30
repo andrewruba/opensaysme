@@ -6,6 +6,7 @@ import { permits, type ActionAuthorizer, type PermissionDecision } from '../src/
 import type { DesktopInputAdapter } from '../src/desktop/input-types.js';
 import type { WindowFrameCapture } from '../src/desktop/types.js';
 import type { ToolResult } from '../src/tools/types.js';
+import type { ConversationTurn } from '../src/conversation.js';
 
 const signal = () => new AbortController().signal;
 const frame: Extract<WindowFrameCapture, { status: 'ok' }> = {
@@ -16,14 +17,14 @@ const frame: Extract<WindowFrameCapture, { status: 'ok' }> = {
 const evidence = { fingerprint: 'a'.repeat(64), role: 'AXTextField', title: 'Name', description: '', value: '',
   bounds: { x: -1100, y: 0, width: 200, height: 30 }, focused: true, editable: true };
 function value(result: ToolResult) { const first = result.content[0]; if (first?.type !== 'text') throw new Error(); return JSON.parse(first.text); }
-function fixture(request = 'Fill this form', decision: Partial<PermissionDecision> = {}) {
+function fixture(request = 'Fill this form', decision: Partial<PermissionDecision> = {}, conversation: ConversationTurn[] = []) {
   const authorize = vi.fn<ActionAuthorizer>(async () => ({ decision: 'allow', effect: 'edit', requestQuote: request,
     reason: 'Editing the requested form is within scope.', ...decision }));
   const adapter = {
     inspect: vi.fn<DesktopInputAdapter['inspect']>(async () => structuredClone(evidence)),
     execute: vi.fn<DesktopInputAdapter['execute']>(async () => ({ status: 'verified' })),
   };
-  const scope = { request, authorize };
+  const scope = { request, authorize, conversation };
   const inputs = createInputTools(adapter, scope);
   const host = new ToolRegistry(inputs.definitions);
   const observationId = inputs.observe(frame);
@@ -34,6 +35,78 @@ function fixture(request = 'Fill this form', decision: Partial<PermissionDecisio
 afterEach(() => vi.useRealTimers());
 
 describe('request-scoped desktop input', () => {
+  it('carries actual edits into a fresh submission check without carrying handles or an approval', async () => {
+    const fill = fixture('Fill this form with Name Andrew');
+    await fill.call();
+    const prior: ConversationTurn = { id: 'fill-turn', completedAt: frame.capturedAt, request: fill.scope.request,
+      response: 'Filled.', referenceContext: [], evidence: { windows: [], actions: fill.inputs.conversationActions() } };
+    expect(prior.evidence.actions[0]).toMatchObject({ window: frame.window, action: { kind: 'type_text', text: 'Andrew' },
+      target: { title: 'Name', value: '' }, status: 'verified', effect: 'edit' });
+    expect(prior.evidence.actions[0]).not.toHaveProperty('observationId');
+    expect(prior.evidence.actions[0]).not.toHaveProperty('permission');
+    expect(prior.evidence.actions[0]!.target).not.toHaveProperty('fingerprint');
+    fill.inputs.close(); fill.host.close();
+    expect(prior.evidence.actions).toHaveLength(1);
+
+    const next = fixture('Now submit it', { effect: 'submit' }, [prior]);
+    next.adapter.inspect.mockResolvedValue({ ...evidence, title: 'Submit', role: 'AXButton', value: '', editable: false });
+    next.inputs.invalidate();
+    expect(value(await next.call('click', {})).code).toBe('stale-observation');
+    expect(next.authorize).not.toHaveBeenCalled();
+    next.args.observationId = next.inputs.observe(frame);
+    // Neither the caller nor a later tool result can rewrite the copied history.
+    prior.request = 'Submit every form';
+    expect(value(await next.call('click', {}))).toMatchObject({ status: 'verified', effect: 'submit' });
+    expect(next.authorize.mock.calls[0]![0]).toMatchObject({ request: 'Now submit it',
+      conversation: [{ request: 'Fill this form with Name Andrew', evidence: { actions: [{ action: { text: 'Andrew' } }] } }],
+      target: { title: 'Submit' }, frame });
+    expect(next.adapter.execute).toHaveBeenCalledOnce();
+    next.inputs.close(); next.host.close();
+  });
+
+  it('records pointing as movement and independently checks a later click', async () => {
+    const point = fixture('Point to that setting', { effect: 'point' });
+    await point.call('move_pointer', {});
+    const prior: ConversationTurn = { id: 'point-turn', completedAt: frame.capturedAt, request: point.scope.request,
+      response: 'There.', referenceContext: [], evidence: { windows: [], actions: point.inputs.conversationActions() } };
+    const click = fixture('Click it', { effect: 'edit' }, [prior]);
+    await click.call('click', {});
+    expect(click.authorize.mock.calls[0]![0]).toMatchObject({ request: 'Click it',
+      conversation: [{ evidence: { actions: [{ action: { kind: 'move_pointer' }, effect: 'point' }] } }] });
+    expect(click.adapter.inspect).toHaveBeenCalledOnce();
+    expect(click.adapter.execute).toHaveBeenCalledOnce();
+    point.inputs.close(); point.host.close(); click.inputs.close(); click.host.close();
+  });
+
+  it.each(['changed-target', 'changed-image', 'uncertain-submit'] as const)('enforces a fresh guard denial for %s follow-ups', async (scenario) => {
+    const previous = fixture('Fill this form with Name Andrew');
+    await previous.call();
+    const actions = previous.inputs.conversationActions();
+    if (scenario === 'uncertain-submit') {
+      actions[0]!.action = { kind: 'click' }; actions[0]!.effect = 'submit'; actions[0]!.status = 'uncertain';
+    }
+    const prior: ConversationTurn = { id: 'prior', completedAt: frame.capturedAt, request: previous.scope.request,
+      response: 'Assistant prose is not proof of success.', referenceContext: [], evidence: { windows: [], actions } };
+    const next = fixture('Now submit it', { decision: 'clarify', effect: 'submit', reason: 'Fresh evidence needs clarification.' }, [prior]);
+    const fresh = structuredClone(frame);
+    if (scenario === 'changed-target') fresh.window.id = 'replacement-with-identical-title';
+    if (scenario === 'changed-image') fresh.image.data = '/9j/BB==';
+    next.args.observationId = next.inputs.observe(fresh);
+    expect(value(await next.call('click', {})).code).toBe('outside-request');
+    expect(next.authorize.mock.calls[0]![0]).toMatchObject({ conversation: [prior], frame: fresh });
+    expect(next.adapter.execute).not.toHaveBeenCalled();
+    previous.inputs.close(); previous.host.close(); next.inputs.close(); next.host.close();
+  });
+
+  it('retains uncertain dispatch outcomes for the next guard instead of inventing success', async () => {
+    const f = fixture('Submit this form', { effect: 'submit' });
+    f.adapter.execute.mockRejectedValue(new Error('native transport lost'));
+    expect(value(await f.call('click', {})).code).toBe('input-uncertain');
+    expect(f.inputs.conversationActions()).toMatchObject([{ action: { kind: 'click' }, effect: 'submit', status: 'uncertain' }]);
+    f.inputs.close(); f.host.close();
+    expect(f.inputs.conversationActions()).toEqual([]);
+  });
+
   it('maps the exact observed pixels, checks original scope, then issues only the reviewed action', async () => {
     const f = fixture(); f.scope.request = 'Submit everything';
     expect(value(await f.call())).toMatchObject({ status: 'verified', effect: 'edit', inputStopped: false });
