@@ -9,7 +9,7 @@ selections and timed cursor paths can help clarify references. Gestures have no
 predefined command meanings, content categories, or required response types.
 The shared tool host supports window discovery, current-context inspection,
 current-screen capture, verified focus, and macOS background-window accessibility
-inspection. Background-window images, Windows/Linux accessibility inspection,
+inspection and image capture. Windows/Linux background-window inspection/capture,
 pointer control, clicking, scrolling, typing, and request-scoped edit/submit permissions
 remain core work. Dedicated agent integrations and on-screen drawing overlays
 remain future work. Gaze stays optional.
@@ -144,6 +144,13 @@ without switching to it. Its results retain source identity and capture time;
 protected fields, unavailable content, and truncation are explicit. The catalog
 omits the operation on Windows/Linux. Unchanged window references survive inventory
 refreshes within a turn, but content is read afresh and targets are revalidated.
+`capture_window` supplies a full window image on macOS 14+ without changing focus,
+including when another window covers it. It uses a uniquely matched, revalidated
+ScreenCaptureKit source; hidden/minimized or ambiguous targets fail without a
+foreground-screen fallback. The image comes with its window reference, capture
+time, logical desktop bounds, and pixel dimensions. It is independent of historical
+full-screen frames and cursor trails. Protected or non-rendered content may be blank.
+The operation has a four-second native deadline and five-second parent timeout.
 Requests remain stateless with `store: false`, replaying tool outputs and encrypted
 reasoning context. More tool steps can increase latency and provider usage; simple
 answers still need just one reasoning request. The model is instructed to gather
@@ -193,7 +200,8 @@ future work. Setup makes no provider request.
 Activated audio streams directly to OpenAI. After stopping, full screenshots and
 optional trail copies, window titles, selected text, cursor history, and transcripts
 go directly to the reasoning provider. Requested tool results can include window
-inventory, current context, macOS window accessibility content, and additional screenshots. Setup explains this sharing. Provider
+inventory, current context, macOS window accessibility content, and additional screen
+or window screenshots. Setup explains this sharing. Provider
 charges and data policies apply. The Responses request uses `store: false`;
 provider retention policies still apply.
 
@@ -390,6 +398,17 @@ reported no foreground desktop in this execution environment, so live applicatio
 inspection and focus behavior remain unverified. No provider requests or real
 desktop captures were made. Windows/Linux do not yet advertise `inspect_window`.
 
+Window screenshot checks (2026-10-29): `npm run check` passed on macOS
+(286 tests passed; 14 X11 tests skipped). The macOS helper builds; native synthetic
+checks cover source matching on both AX/capture sides, ambiguity, replacement,
+geometry changes, negative origins, and pixel scaling. Fixtures verify window
+image delivery after unavailable accessibility content, source/time metadata,
+permission/error handling, cancellation, and rejection without foreground fallback.
+The native probe still reports no foreground desktop; live screenshot accuracy,
+covered-window behavior, and multi-display coordinates remain unverified. No real
+desktop captures or provider requests were made. Windows/Linux window capture is
+not implemented or advertised.
+
 Manual acceptance: ask about visible content using existing context, then try
 pointing or selecting to clarify a reference and a request spanning several windows.
 Inspect `visualContext.frames` and compare phrase, cursor, and frame times with
@@ -409,3 +428,10 @@ the requested navigation. Verify protected fields are omitted, try an applicatio
 with limited accessibility support, and close or retitle a candidate during
 inspection. Native windows with identical title/AX-identifier tokens are still
 omitted as ambiguous; this slice does not resolve that platform limitation.
+For window screenshots, cover a target with another window and request a visual
+detail from the target when its accessibility text is insufficient. Verify
+`capture_window` returns that window's pixels without changing focus. Repeat with
+a moved/resized/closed target, duplicate matching candidates, a minimized/hidden
+window, denied Screen Recording access, and windows on a display with a negative
+origin or different scale. Inspect the source identity, bounds, and capture time
+in opt-in debug output; confirm failures do not contain substitute screen pixels.

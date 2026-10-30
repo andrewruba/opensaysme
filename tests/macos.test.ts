@@ -7,6 +7,7 @@ import {
   focusMacOS,
   captureMacOSContext,
   captureMacOSFrame,
+  captureMacOSWindow,
   macOSVoiceHelper,
   parseMacOSSnapshot,
   inspectMacOS,
@@ -170,6 +171,51 @@ const inspection = {
   window: { id: inspectionId, application: 'Code', title: 'Project' },
   nodes: [{ parent: null, role: 'AXWindow' }, { parent: 0, role: 'AXTextArea', value: 'frontend/App.tsx' }], warnings: [],
 };
+
+const windowFrame = {
+  status: 'ok', capturedAt: '2026-10-29T12:00:00Z', window: inspection.window,
+  bounds: { x: -1200, y: -100, width: 800, height: 600 },
+  image: { mimeType: 'image/jpeg', width: 1600, height: 1200, data: '/9j/AA==' }, warnings: [],
+};
+
+test('window capture keeps its source and coordinate metadata and propagates cancellation', async () => {
+  const signal = new AbortController().signal;
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(windowFrame));
+  assert.deepEqual(await captureMacOSWindow(inspectionId, signal), windowFrame);
+  assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.slice(1), [['--capture-window', inspectionId], { timeoutMs: 5000, signal }]);
+  const previous = vi.mocked(runCommand).mock.calls.length;
+  await assert.rejects(captureMacOSWindow('not-a-window'));
+  await assert.rejects(captureMacOSWindow(inspectionId, AbortSignal.abort()));
+  assert.equal(vi.mocked(runCommand).mock.calls.length, previous);
+});
+
+test('window capture rejects mismatched sources and malformed image/coordinate responses', async () => {
+  for (const result of [
+    { ...windowFrame, window: { ...windowFrame.window, id: `mac:123:1700000000000:${'b'.repeat(64)}` } },
+    { ...windowFrame, bounds: { ...windowFrame.bounds, width: 0 } },
+    { ...windowFrame, bounds: { ...windowFrame.bounds, x: 'private malformed coordinate' } },
+    { ...windowFrame, image: { ...windowFrame.image, width: 1601 } },
+    { ...windowFrame, image: { ...windowFrame.image, data: 'private malformed pixels' } },
+    { ...windowFrame, capturedAt: 'not a date' },
+  ]) {
+    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(result));
+    await assert.rejects(captureMacOSWindow(inspectionId), /invalid response|mismatched window/);
+  }
+});
+
+test('window capture preserves permission, stale, ambiguous, platform, and timeout failures', async () => {
+  for (const [code, reason] of [
+    ['permission-required', 'accessibility-permission-required'], ['screen-permission-required', 'screen-permission-required'],
+    ['stale-or-ambiguous-target', 'stale-target'], ['window-capture-stale', 'stale-target'],
+    ['window-capture-ambiguous', 'ambiguous-target'], ['window-capture-unavailable', 'inaccessible'],
+    ['window-capture-unsupported', 'unsupported'], ['window-capture-timeout', 'timeout'], ['window-capture-failed', 'capture-failed'],
+  ]) {
+    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify({ error: code }));
+    assert.deepEqual(await captureMacOSWindow(inspectionId), { status: 'unavailable', reason });
+  }
+  vi.mocked(runCommand).mockResolvedValueOnce('{"error":"private pixels"}');
+  await assert.rejects(captureMacOSWindow(inspectionId), { message: 'The macOS desktop helper failed with an unknown error.' });
+});
 
 test('window inspection is bounded, targeted, and cancellable without requesting focus', async () => {
   const signal = new AbortController().signal;

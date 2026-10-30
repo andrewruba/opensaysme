@@ -306,6 +306,43 @@ function assistantItem(text: string) {
 function callResponse(...output: unknown[]) { return Response.json({ status: 'completed', output }); }
 
 describe('desktop tool reasoning loop', () => {
+  it('passes a verified window image to reasoning after unavailable accessibility content', async () => {
+    const window = { id: 'native-target', application: 'Editor', title: 'Project' };
+    const image = { mimeType: 'image/jpeg' as const, width: 1600, height: 1200, data: '/9j/AA==' };
+    const capture = vi.fn(async () => ({ status: 'ok' as const, capturedAt: '2026-10-29T12:00:00Z', window,
+      bounds: { x: -1200, y: -100, width: 800, height: 600 }, image, warnings: ['Protected content may be blank.'] }));
+    const focus = vi.fn(async () => {});
+    const host = createDesktopTools({
+      listWindows: async () => ({ windows: [window], warnings: [] }),
+      inspectWindow: async () => ({ status: 'unavailable', reason: 'inaccessible' }),
+      captureWindow: capture, focus, inspect: async () => ({ platform: 'test', window }),
+      captureContext: vi.fn(), captureFrame: vi.fn(),
+    });
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(callResponse(callItem()))
+      .mockResolvedValueOnce(callResponse(callItem('inspect_window', { windowId: 'window-1' }, 'text')))
+      .mockImplementationOnce(async (_url, init) => {
+        expect(JSON.parse(String(init?.body)).input.at(-1).output[0]).toEqual({ type: 'input_text', text: '{"isError":true}' });
+        return callResponse(callItem('capture_window', { windowId: 'window-1' }, 'pixels'));
+      })
+      .mockImplementationOnce(async (_url, init) => {
+        expect(focus).not.toHaveBeenCalled();
+        const output = JSON.parse(String(init?.body)).input.at(-1).output;
+        expect(JSON.parse(output[1].text)).toMatchObject({ source: 'window-screenshot', window: { windowId: 'window-1', title: 'Project' },
+          capturedAt: '2026-10-29T12:00:00Z', bounds: { x: -1200, y: -100, width: 800, height: 600 },
+          image: { width: 1600, height: 1200 } });
+        expect(output[2]).toEqual({ type: 'input_image', image_url: `data:image/jpeg;base64,${image.data}`, detail: 'high' });
+        expect(JSON.stringify(output)).not.toContain('native-target');
+        return callResponse(callItem('focus_window', { windowId: 'window-1' }, 'focus'));
+      })
+      .mockResolvedValueOnce(response('Switched to the requested project.'));
+    const f = fixture(fetcher); f.input.tools = host; f.input.transcript = 'Switch to the project with the blue diagram';
+    await expect(f.reason(f.input)).resolves.toBe('Switched to the requested project.');
+    expect(capture).toHaveBeenCalledExactlyOnceWith('native-target', expect.any(AbortSignal));
+    expect(focus).toHaveBeenCalledExactlyOnceWith('native-target', expect.any(AbortSignal));
+    host.close();
+  });
+
   it('feeds candidate contents and their sources back before focusing one of two equally titled windows', async () => {
     const candidates = [
       { id: 'native-api', application: 'Editor', title: 'Project' },

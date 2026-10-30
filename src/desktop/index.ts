@@ -4,7 +4,8 @@ export async function desktopAdapter(platform = process.platform): Promise<Deskt
   switch (platform) {
     case 'darwin': {
       const m = await import('./platforms/macos.js');
-      return { probe: m.probeMacOS, listWindows: m.listMacOSWindows, inspectWindow: m.inspectMacOSWindow, inspect: m.inspectMacOS, focus: m.focusMacOS,
+      return { probe: m.probeMacOS, listWindows: m.listMacOSWindows, inspectWindow: m.inspectMacOSWindow,
+        captureWindow: m.captureMacOSWindow, inspect: m.inspectMacOS, focus: m.focusMacOS,
         testHotkey: m.testMacOSHotkey, testMicrophone: m.testMacOSMicrophone,
         voiceHelper: m.macOSVoiceHelper, captureContext: m.captureMacOSContext, captureFrame: m.captureMacOSFrame };
     }

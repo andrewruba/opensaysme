@@ -35,7 +35,7 @@ it('lists tool schemas without configuration, keys, or a graphical session', asy
   } });
   expect(JSON.parse(stdout).map((tool: { name: string }) => tool.name)).toEqual([
     'list_windows', 'inspect_desktop', 'capture_screen', 'focus_window',
-    ...(process.platform === 'darwin' ? ['inspect_window'] : []),
+    ...(process.platform === 'darwin' ? ['inspect_window', 'capture_window'] : []),
   ]);
   expect(stderr).toBe('');
   expect(await readdir(directory)).toEqual([]);

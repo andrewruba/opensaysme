@@ -44,9 +44,9 @@ The goal is to complement the mouse and keyboard, not replace them or build anot
 
 ## Status
 
-Early development prototype. Tap-to-talk combines speech with desktop history and a local tool loop: the agent can discover windows, inspect current context, capture the current screen, and focus a verified target. On macOS it can also read bounded accessibility text and controls from a discovered background window without changing focus. You do not need to name windows or define routing rules. Full screenshots remain paired with nearby speech phrases and timed cursor trails.
+Early development prototype. Tap-to-talk combines speech with desktop history and a local tool loop: the agent can discover windows, inspect current context, capture the current screen, and focus a verified target. On macOS it can also read bounded accessibility text and controls from a discovered background window, or capture that window's image on macOS 14+, without changing focus. You do not need to name windows or define routing rules. Historical full-screen images remain paired with nearby speech phrases and timed cursor trails.
 
-The voice agent calls desktop tools directly within the local runtime. Background-window images, accessibility inspection on Windows/Linux, pointer control, clicking, scrolling, typing, and enforcement of edit/submit permissions remain core work. Agent-specific integrations can follow where useful. Live accuracy of target resolution still needs validation; some apps expose little accessibility content, and ambiguous native window identities remain a limitation.
+The voice agent calls desktop tools directly within the local runtime. Background-window inspection/capture on Windows/Linux, pointer control, clicking, scrolling, typing, and enforcement of edit/submit permissions remain core work. Agent-specific integrations can follow where useful. Live accuracy of target resolution still needs validation; some apps expose little accessibility content, and ambiguous native window identities remain a limitation.
 
 See the [MVP backlog](BACKLOG.md) for feature status and remaining work.
 

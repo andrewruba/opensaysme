@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { DesktopContext, VoiceHelperSpec } from './voice-types.js';
-import type { ScreenFrameCapture } from './visual-types.js';
+import { frameBoundsSchema, frameImageSchema, type ScreenFrameCapture } from './visual-types.js';
 
 export const capabilityNames = [
   'activeWindow', 'focusWindow', 'selectedText', 'globalHotkey', 'microphone', 'screenCapture',
@@ -66,6 +66,20 @@ export const windowInspectionSchema = z.discriminatedUnion('status', [
 ]);
 export type WindowInspection = z.infer<typeof windowInspectionSchema>;
 
+export const windowFrameCaptureSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('ok'), capturedAt: z.string().datetime(),
+    window: windowInventorySchema.shape.windows.element,
+    bounds: frameBoundsSchema, image: frameImageSchema,
+    warnings: z.array(z.string().max(1024)).max(16),
+  }).strict(),
+  z.object({ status: z.literal('unavailable'), reason: z.enum([
+    'accessibility-permission-required', 'screen-permission-required', 'unsupported',
+    'stale-target', 'ambiguous-target', 'inaccessible', 'timeout', 'capture-failed',
+  ]) }).strict(),
+]);
+export type WindowFrameCapture = z.infer<typeof windowFrameCaptureSchema>;
+
 export const desktopTestResultSchema = z.object({
   capability: z.enum(['globalHotkey', 'microphone']),
   status: z.enum(['passed', 'not-observed', 'unavailable']),
@@ -79,6 +93,7 @@ export interface DesktopAdapter {
   listWindows(signal?: AbortSignal): Promise<WindowInventory>;
   // Omitted when the platform has no implementation; do not advertise a phantom tool.
   inspectWindow?(targetId: string, signal?: AbortSignal): Promise<WindowInspection>;
+  captureWindow?(targetId: string, signal?: AbortSignal): Promise<WindowFrameCapture>;
   inspect(includeSelection: boolean, signal?: AbortSignal): Promise<DesktopSnapshot>;
   focus(targetId: string, signal?: AbortSignal): Promise<void>;
   testHotkey(durationSeconds: number): Promise<DesktopTestResult>;

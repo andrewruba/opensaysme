@@ -395,6 +395,79 @@ struct WindowInspection: Encodable {
     let warnings: [String]
 }
 
+struct WindowFrame: Encodable {
+    let status = "ok"
+    let capturedAt: String
+    let window: Window
+    let bounds: FrameBounds
+    let image: FrameImage
+    let warnings: [String]
+}
+
+func windowCaptureTarget(_ application: NSRunningApplication, _ window: AXUIElement) throws -> WindowCaptureTarget {
+    let position = try attribute(window, kAXPositionAttribute)
+    let size = try attribute(window, kAXSizeAttribute)
+    guard CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else {
+        throw WindowCaptureError.unavailable
+    }
+    let positionValue = unsafeBitCast(position, to: AXValue.self)
+    let sizeValue = unsafeBitCast(size, to: AXValue.self)
+    var point = CGPoint.zero
+    var dimensions = CGSize.zero
+    guard AXValueGetType(positionValue) == .cgPoint, AXValueGetType(sizeValue) == .cgSize,
+          AXValueGetValue(positionValue, .cgPoint, &point), AXValueGetValue(sizeValue, .cgSize, &dimensions),
+          validWindowCaptureBounds(CGRect(origin: point, size: dimensions)) else { throw WindowCaptureError.unavailable }
+    guard let title = try attribute(window, kAXTitleAttribute) as? String else { throw WindowCaptureError.unavailable }
+    return WindowCaptureTarget(processID: application.processIdentifier, title: title,
+                               bounds: CGRect(origin: point, size: dimensions))
+}
+
+func validateWindowCaptureSource(_ application: NSRunningApplication, _ window: AXUIElement,
+                                 target: WindowCaptureTarget, deadline: TimeInterval) throws {
+    guard !application.isHidden, (try attribute(window, kAXMinimizedAttribute) as? Bool) == false else {
+        throw WindowCaptureError.unavailable
+    }
+    let app = applicationElement(application)
+    AXUIElementSetMessagingTimeout(app, 0.05)
+    var count = 0
+    var values: CFArray?
+    guard AXUIElementGetAttributeValueCount(app, kAXWindowsAttribute as CFString, &count) == .success,
+          count > 0, count <= 128,
+          AXUIElementCopyAttributeValues(app, kAXWindowsAttribute as CFString, 0, count, &values) == .success,
+          let windows = values as? [AXUIElement] else { throw WindowCaptureError.unavailable }
+    let candidates = try windows.map { candidate in
+        guard ProcessInfo.processInfo.systemUptime < deadline else { throw WindowCaptureError.timeout }
+        AXUIElementSetMessagingTimeout(candidate, 0.05)
+        return try windowCaptureTarget(application, candidate)
+    }
+    // A unique SC match is insufficient if another AX window could be its source.
+    // Check against the actual captured bounds after capture, including rounding.
+    let index = try uniqueCaptureTarget(target, candidates: candidates)
+    guard CFEqual(windows[index], window) else { throw WindowCaptureError.stale }
+}
+
+func captureWindow(_ id: String) throws -> WindowFrame {
+    guard #available(macOS 14.0, *) else { throw WindowCaptureError.unsupported }
+    guard CGPreflightScreenCaptureAccess() else { throw VisualCaptureError.permissionRequired }
+    let deadline = ProcessInfo.processInfo.systemUptime + 4
+    let (application, window) = try resolveWindow(id, deadline: deadline)
+    let target = try windowCaptureTarget(application, window)
+    try validateWindowCaptureSource(application, window, target: target, deadline: deadline)
+    let frame = try captureWindowFrame(target, deadline: deadline)
+    let (currentApplication, current) = try resolveWindow(id, deadline: deadline)
+    let currentTarget = try windowCaptureTarget(currentApplication, current)
+    try validateWindowCaptureSource(currentApplication, current,
+        target: WindowCaptureTarget(processID: target.processID, title: target.title, bounds: frame.bounds), deadline: deadline)
+    guard ProcessInfo.processInfo.systemUptime < deadline else { throw WindowCaptureError.timeout }
+    guard CFEqual(current, window), currentTarget.title == target.title, currentTarget.bounds == target.bounds else {
+        throw WindowCaptureError.stale
+    }
+    return WindowFrame(capturedAt: frame.capturedAt,
+        window: Window(id: id, application: String((application.localizedName ?? "Application").prefix(1024)),
+                       title: stringAttribute(current, kAXTitleAttribute).map { String($0.prefix(16384)) }),
+        bounds: FrameBounds(frame.bounds), image: frame.image, warnings: frame.warnings)
+}
+
 func inspectWindow(_ id: String) throws -> WindowInspection {
     let deadline = ProcessInfo.processInfo.systemUptime + 3
     let (application, window) = try resolveWindow(id, deadline: deadline)
@@ -571,6 +644,8 @@ struct DesktopMain {
             case ["--voice"]: VoiceSession().run()
             case let args where args.count == 2 && args[0] == "--inspect-window":
                 try output(inspectWindow(args[1]))
+            case let args where args.count == 2 && args[0] == "--capture-window":
+                try output(captureWindow(args[1]))
             case let args where args.count == 2 && args[0] == "--focus":
                 try focus(args[1])
                 try output(["ok": true])
@@ -580,9 +655,11 @@ struct DesktopMain {
                 }
                 try output(args[0] == "--test-hotkey" ? testHotkey(seconds: seconds) : testMicrophone(seconds: seconds))
             default:
-                throw DesktopError("Expected --probe, --inspect, --inspect-selection, --list-windows, --inspect-window <target-id>, --context, --frame, --voice, --focus <target-id>, --test-hotkey <seconds>, or --test-microphone <seconds>.")
+                throw DesktopError("Expected --probe, --inspect, --inspect-selection, --list-windows, --inspect-window <target-id>, --capture-window <target-id>, --context, --frame, --voice, --focus <target-id>, --test-hotkey <seconds>, or --test-microphone <seconds>.")
             }
         } catch let error as VisualCaptureError {
+            try? output(["error": error.rawValue])
+        } catch let error as WindowCaptureError {
             try? output(["error": error.rawValue])
         } catch let error as DesktopError {
             // Expected failures stay in the validated protocol, without native values or

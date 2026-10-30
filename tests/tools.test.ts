@@ -118,6 +118,11 @@ function desktopFixture() {
       status: 'ok', capturedAt: '2026-10-29T12:00:00.000Z', window: { ...state.inventory.find((window) => window.id === id)! },
       nodes: [{ parent: null, role: 'AXWindow', title: 'Project' }, { parent: 0, role: 'AXTextArea', value: 'frontend/src/App.tsx' }], warnings: [],
     })),
+    captureWindow: vi.fn<NonNullable<DesktopAdapter['captureWindow']>>(async (id) => ({
+      status: 'ok', capturedAt: '2026-10-29T12:00:01.000Z', window: { ...state.inventory.find((window) => window.id === id)! },
+      bounds: { x: -1200, y: -100, width: 800, height: 600 },
+      image: { mimeType: 'image/jpeg', width: 1600, height: 1200, data: '/9j/AA==' }, warnings: ['Protected content may be blank.'],
+    })),
     inspect: vi.fn<DesktopAdapter['inspect']>(async () => ({ platform: 'test', window: { ...state.current } })),
     focus: vi.fn<DesktopAdapter['focus']>(async (id) => { state.current = state.inventory.find((window) => window.id === id)!; }),
     captureContext: vi.fn<DesktopAdapter['captureContext']>(async () => ({
@@ -135,7 +140,7 @@ function desktopFixture() {
 describe('desktop tool primitives', () => {
   it('discovers windows without manual names or exposing native IDs', async () => {
     const { host, adapter } = desktopFixture();
-    expect(host.list().map((tool) => tool.name)).toEqual(['list_windows', 'inspect_desktop', 'capture_screen', 'focus_window', 'inspect_window']);
+    expect(host.list().map((tool) => tool.name)).toEqual(['list_windows', 'inspect_desktop', 'capture_screen', 'focus_window', 'inspect_window', 'capture_window']);
     expect(adapter.listWindows).not.toHaveBeenCalled();
     const result = await host.call('list_windows', {}, signal());
     expect(value(result)).toEqual({ windows: [
@@ -184,6 +189,74 @@ describe('desktop tool primitives', () => {
     const { adapter } = desktopFixture();
     const host = createDesktopTools({ ...adapter, inspectWindow: undefined });
     expect(host.list().some((tool) => tool.name === 'inspect_window')).toBe(false);
+  });
+
+  it('returns window pixels with source, time, and scaled/negative desktop coordinates without focusing', async () => {
+    const { host, adapter } = desktopFixture();
+    await host.call('list_windows', {}, signal());
+    const result = await host.call('capture_window', { windowId: 'window-1' }, signal());
+    expect(value(result)).toEqual({ source: 'window-screenshot', capturedAt: '2026-10-29T12:00:01.000Z',
+      window: { windowId: 'window-1', application: 'Code', title: editor.title },
+      bounds: { x: -1200, y: -100, width: 800, height: 600 }, coordinateSpace: 'global-desktop-logical-points',
+      image: { mimeType: 'image/jpeg', width: 1600, height: 1200 }, warnings: ['Protected content may be blank.'] });
+    expect(result.content[1]).toEqual({ type: 'image', mimeType: 'image/jpeg', data: '/9j/AA==' });
+    expect(JSON.stringify(result)).not.toContain('native-');
+    expect(adapter.captureWindow).toHaveBeenCalledWith(editor.id, expect.any(AbortSignal));
+    expect(adapter.focus).not.toHaveBeenCalled();
+    expect(adapter.captureFrame).not.toHaveBeenCalled();
+  });
+
+  it('does not advertise window capture on platforms without an implementation', async () => {
+    const { adapter } = desktopFixture();
+    const host = createDesktopTools({ ...adapter, captureWindow: undefined });
+    expect(host.list().some((tool) => tool.name === 'capture_window')).toBe(false);
+    expect(value(await host.call('capture_window', { windowId: 'window-1' }, signal())).code).toBe('unknown-tool');
+  });
+
+  it('requires a discovered window before requesting pixels', async () => {
+    const { host, adapter } = desktopFixture();
+    for (const windowId of [editor.id, 'window-1']) expect((await host.call('capture_window', { windowId }, signal())).isError).toBe(true);
+    expect(adapter.captureWindow).not.toHaveBeenCalled();
+  });
+
+  it.each(['accessibility-permission-required', 'screen-permission-required', 'unsupported', 'stale-target',
+    'ambiguous-target', 'inaccessible', 'timeout', 'capture-failed'] as const)('reports %s without substituting a foreground screenshot', async (reason) => {
+    const { host, adapter } = desktopFixture();
+    await host.call('list_windows', {}, signal());
+    adapter.captureWindow.mockResolvedValue({ status: 'unavailable', reason });
+    const result = await host.call('capture_window', { windowId: 'window-1' }, signal());
+    expect(result.isError).toBe(true);
+    expect(value(result).code).toBe(reason === 'stale-target' ? 'stale-window' : reason);
+    expect(result.content.every((part) => part.type === 'text')).toBe(true);
+    if (reason === 'stale-target') expect(value(await host.call('focus_window', { windowId: 'window-1' }, signal())).code).toBe('unknown-window');
+    expect(adapter.focus).not.toHaveBeenCalled();
+    expect(adapter.captureFrame).not.toHaveBeenCalled();
+  });
+
+  it('discards pixels and the discovery reference when capture returns another source', async () => {
+    const { host, adapter } = desktopFixture();
+    await host.call('list_windows', {}, signal());
+    const other = await adapter.captureWindow(browser.id);
+    adapter.captureWindow.mockResolvedValue(other);
+    const result = await host.call('capture_window', { windowId: 'window-1' }, signal());
+    expect(value(result).code).toBe('stale-window');
+    expect(result.content.some((part) => part.type === 'image')).toBe(false);
+    expect(value(await host.call('focus_window', { windowId: 'window-1' }, signal())).code).toBe('unknown-window');
+  });
+
+  it('discards a late image after cancellation', async () => {
+    const { host, adapter } = desktopFixture();
+    await host.call('list_windows', {}, signal());
+    const frame = await adapter.captureWindow(editor.id);
+    const gate = deferred<typeof frame>();
+    adapter.captureWindow.mockReturnValueOnce(gate.promise);
+    const controller = new AbortController();
+    const pending = host.call('capture_window', { windowId: 'window-1' }, controller.signal);
+    const cancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await Promise.resolve(); controller.abort(); await cancelled;
+    gate.resolve(frame); await Promise.resolve();
+    expect(adapter.focus).not.toHaveBeenCalled();
+    expect(adapter.captureFrame).not.toHaveBeenCalled();
   });
 
   it('rejects undiscovered inspection targets before native access', async () => {

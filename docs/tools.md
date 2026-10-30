@@ -16,6 +16,7 @@ to the model.
 | `inspect_desktop` | Read active-window, selection, and pointer context. |
 | `capture_screen` | Capture the current pointer display, or X11 virtual desktop. |
 | `inspect_window` | Read bounded accessibility text/control roles from a discovered window without focusing it (macOS only). |
+| `capture_window` | Capture a discovered window's own image without focusing it, including when obscured (macOS 14+). |
 | `focus_window` | Recheck a discovered target, focus it, and verify the result. |
 
 Window references are internal tool handles. Unchanged windows keep their references
@@ -35,11 +36,26 @@ Inspection does not focus the window, read the clipboard, or cache its contents.
 Permission denial and unavailable content are explicit tool errors. The catalog
 omits this tool on Windows/Linux, where no implementation exists yet.
 
-These tools cannot yet capture a specific background window's pixels, click, type,
-or submit to another agent. Accessibility may expose little content; omitted or
+`capture_window` provides visual evidence when text is insufficient or a screenshot
+better fits the request. It returns a full window JPEG, source identity, capture
+time, global desktop bounds in logical points, and actual image dimensions in pixels.
+Coordinates within the image are local to that window; they do not share a display
+history frame's origin or cursor trails. Bounds describe the observation, not a
+guarantee that a future click would hit the same content.
+
+The macOS helper requires a unique match between the discovered window and a
+ScreenCaptureKit window using process, title, and geometry. It revalidates both
+sources after capture and discards images if the window changes. Hidden, minimized,
+unmatched, and ambiguous windows fail explicitly, with no focus/restore operation
+or foreground-screen fallback. Accessibility and Screen Recording grants are
+required separately. Pixels may contain private data and are not redacted; protected
+or non-rendered content may be blank. Normal captures stay in memory; opt-in debug
+bundles save tool images. The catalog omits window capture on Windows/Linux.
+
+These tools cannot yet click, type, or submit to another agent. Accessibility may expose little content; omitted or
 truncated text does not prove that a window cannot match. Identical native window
-identities remain ambiguous even when content might distinguish them. Background
-window images and broader accessibility coverage remain work. Pointer
+identities remain ambiguous even when content might distinguish them. Broader
+platform coverage remains work. Pointer
 movement/pointing, clicking, scrolling, and typing are core planned capabilities;
 they do not depend on choosing a dedicated agent integration. See the
 [product backlog](../BACKLOG.md) for delivery order and acceptance trials.

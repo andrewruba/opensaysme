@@ -12,11 +12,13 @@ import {
   desktopTestResultSchema,
   windowInventorySchema,
   windowInspectionSchema,
+  windowFrameCaptureSchema,
   type DesktopReport,
   type DesktopSnapshot,
   type DesktopTestResult,
   type WindowInventory,
   type WindowInspection,
+  type WindowFrameCapture,
 } from '../types.js';
 
 const helperPath = fileURLToPath(new URL('../../../native/macos/bin/opensaysme-desktop', import.meta.url));
@@ -36,6 +38,12 @@ const nativeErrors: Record<string, string> = {
   'screen-permission-required': 'Enable Screen Recording for the launching terminal/helper in System Settings > Privacy & Security, then restart the terminal.',
   'screen-capture-unavailable': 'Screen capture requires macOS 14 or later and an active display under the pointer.',
   'screen-capture-failed': 'macOS could not capture a screen frame. Check Screen Recording permission and the active desktop session.',
+  'window-capture-unsupported': 'Window screenshots require macOS 14 or later.',
+  'window-capture-unavailable': 'The requested window is hidden, minimized, or unavailable for capture.',
+  'window-capture-ambiguous': 'The requested window could not be uniquely matched to a capture source.',
+  'window-capture-stale': 'The requested window changed during capture. Rediscover the target.',
+  'window-capture-timeout': 'Window capture timed out.',
+  'window-capture-failed': 'macOS could not capture the requested window.',
 };
 
 class MacOSHelperError extends Error {
@@ -126,6 +134,30 @@ export async function inspectMacOSWindow(targetId: string, signal?: AbortSignal)
       if (error.code === 'permission-required') return { status: 'unavailable', reason: 'permission-required' };
       if (['invalid-target', 'stale-or-ambiguous-target'].includes(error.code)) return { status: 'unavailable', reason: 'stale-target' };
       if (error.code === 'accessibility-unavailable') return { status: 'unavailable', reason: 'inaccessible' };
+    }
+    throw error;
+  }
+}
+
+export async function captureMacOSWindow(targetId: string, signal?: AbortSignal): Promise<WindowFrameCapture> {
+  if (!targetIdSchema.safeParse(targetId).success) throw new Error('Use a macOS window ID returned by window discovery.');
+  try {
+    const result = decode(windowFrameCaptureSchema, await invoke(['--capture-window', targetId], 5_000, signal));
+    if (result.status === 'ok' && result.window.id !== targetId) {
+      throw new Error('The macOS desktop helper returned mismatched window pixels.');
+    }
+    return result;
+  } catch (error) {
+    signal?.throwIfAborted();
+    const reasons: Record<string, Extract<WindowFrameCapture, { status: 'unavailable' }>['reason']> = {
+      'permission-required': 'accessibility-permission-required', 'screen-permission-required': 'screen-permission-required',
+      'invalid-target': 'stale-target', 'stale-or-ambiguous-target': 'stale-target', 'window-capture-stale': 'stale-target',
+      'accessibility-unavailable': 'inaccessible', 'window-capture-unavailable': 'inaccessible',
+      'window-capture-unsupported': 'unsupported', 'window-capture-ambiguous': 'ambiguous-target',
+      'window-capture-timeout': 'timeout', 'window-capture-failed': 'capture-failed',
+    };
+    if (error instanceof MacOSHelperError && Object.hasOwn(reasons, error.code)) {
+      return { status: 'unavailable', reason: reasons[error.code]! };
     }
     throw error;
   }

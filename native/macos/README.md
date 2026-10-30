@@ -51,6 +51,30 @@ action handles. The voice runtime retains content only for the activated turn;
 opt-in debug bundles retain tool results. Calling the helper directly prints the
 captured content as JSON on stdout.
 
+`--capture-window <id>` captures a discovered window on macOS 14+ using
+ScreenCaptureKit's desktop-independent window filter. It requires Accessibility
+for targeting and Screen Recording for pixels. A unique normal-layer capture
+source must match the AX window's process, title, and bounds (within one logical
+point for cross-API rounding). The AX inventory must also identify only one window
+that could match those capture bounds, so a missing capture source cannot silently
+select another AX window. Both AX identity/geometry and ScreenCaptureKit
+window ID/geometry are rechecked after capture. A changed, replaced, or ambiguous
+source discards the pixels. Same-process identifier reuse with unchanged evidence
+remains a platform limitation.
+
+Capture does not raise, restore, or focus the target and does not crop the current
+display. Hidden/minimized windows are rejected. The full window is captured without
+cursor or shadow framing, resized to a maximum 1,600-pixel edge, and encoded as at
+most 700 KB of JPEG in memory. Metadata includes capture-request time, source window,
+and global top-left bounds in logical points (including negative origins). Image
+coordinates scale into those bounds; movement after capture invalidates that map.
+Native work has a four-second deadline; the parent terminates it after five seconds
+or cancellation. Permission, unsupported OS, unavailable/ambiguous source, stale
+source, timeout, and capture failure have explicit protocol errors. Protected or
+non-rendered content may be blank; images are not redacted. Direct helper use prints
+image data to stdout; the voice runtime sends it to the reasoning provider and
+retains it only for the turn unless debug output is enabled.
+
 Interactive tests are separate, deliberate commands:
 
 ```sh
@@ -119,6 +143,9 @@ The same command exercises synthetic accessibility trees for correct source text
 protected subtrees, Unicode/text/node/depth limits, cycles, deadlines, and failures.
 It reads no real application content. These checks do not verify live application
 coverage, Accessibility permission grants, or model target inference.
+Synthetic window-capture checks cover unique source matching, ambiguous/replaced
+sources, geometry changes, negative coordinates, and pixel scaling. They do not
+invoke ScreenCaptureKit capture or establish live screenshot accuracy.
 
 These checks convert and timestamp synthetic 44.1/48 kHz mono/stereo buffers,
 including delayed delivery, resampler tail, clock gaps, and turn reset; reject invalid
@@ -134,4 +161,5 @@ Streaming uses [AVAudioConverter](https://developer.apple.com/documentation/avfa
 pointer targets use [Accessibility hit testing](https://developer.apple.com/documentation/applicationservices/1462077-axuielementcopyelementatposition).
 Window inspection uses [Accessibility message timeouts](https://developer.apple.com/documentation/applicationservices/1459345-axuielementsetmessagingtimeout)
 and excludes [secure text fields](https://developer.apple.com/documentation/applicationservices/kaxsecuretextfieldsubrole).
+Window screenshots use [desktop-independent content filters](https://developer.apple.com/documentation/screencapturekit/sccontentfilter).
 Screenshots use [SCScreenshotManager](https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager).
