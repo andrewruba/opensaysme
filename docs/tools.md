@@ -40,7 +40,8 @@ fail explicitly; no foreground screenshot is substituted.
 
 `capture_screen` checks keyboard focus before and after capture. Its
 `keyboardFocus` includes the app, role, labels, bounded value, truncation flag and
-whether typing is supported. When focus changes or cannot be inspected, the
+whether typing is supported. It follows system keyboard focus, including Spotlight
+when another app remains in the foreground. When focus changes or cannot be inspected, the
 screenshot remains available but no keyboard observation is issued. The display
 under the pointer may differ from the display containing keyboard focus; inspect
 both the image and focus evidence before acting.

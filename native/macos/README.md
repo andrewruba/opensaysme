@@ -92,9 +92,10 @@ SIGKILL fallback. Pointer position or text can be locally verified, while other
 input reports only `issued`. Failures after possible dispatch are uncertain.
 
 `--inspect-keyboard` reads the system's focused AX element, including accessory
-interfaces such as Spotlight. If the system-wide lookup is unavailable, it queries
-the current foreground application's AX focus, checking the foreground process
-before and after the read and requiring the returned element to belong to it.
+interfaces such as Spotlight. The CLI initializes AppKit on its physical main
+thread without activating before querying system focus. An unavailable
+system focus rejects keyboard input; a remembered control in the foreground app
+does not establish focus when an accessory interface owns the keyboard.
 `--execute-keyboard` takes strict JSON containing a
 typed action and that focus fingerprint over stdin. It supports named keys with
 Cmd/Ctrl/Alt/Shift and literal single-line Unicode typing. Keys use physical US

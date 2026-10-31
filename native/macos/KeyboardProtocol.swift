@@ -106,20 +106,14 @@ func keyboardEditable(role: String, valueWritable: Bool, selectionWritable: Bool
         || (role == "AXTextArea" && (valueWritable || selectionWritable)))
 }
 
-// Some desktops cannot answer system-wide AX focus queries even though the
-// foreground application's own AX focus is available. Do not substitute a
-// remembered background application or a focus returned by another process.
-func keyboardFocusWithForegroundFallback<Element>(
-    systemFocus: () throws -> Element,
-    foregroundPID: () -> Int32?,
-    applicationFocus: (Int32) throws -> Element,
-    processID: (Element) -> Int32?
+// A bare CLI needs AppKit initialized on its physical main thread before system
+// AX focus works. Accessory UI can own focus while another app stays foreground.
+func keyboardFocusAfterInitialization<Element>(
+    isMainThread: Bool, initialize: () throws -> Void, lookup: () throws -> Element
 ) throws -> Element {
-    if let focused = try? systemFocus() { return focused }
-    guard let pid = foregroundPID(), pid > 0,
-          let focused = try? applicationFocus(pid),
-          processID(focused) == pid, foregroundPID() == pid else { throw InputError.unavailable }
-    return focused
+    guard isMainThread else { throw InputError.unavailable }
+    try initialize()
+    return try lookup()
 }
 
 // Read only the ancestry and direct sibling lists, not descendants or their values.
