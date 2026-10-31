@@ -11,7 +11,7 @@ const terminalDescriptors = [process.stdin, process.stdout].map((stream) => Obje
 beforeEach(() => {
   vi.resetAllMocks(); mocks.isCancel.mockImplementation((value) => typeof value === 'symbol');
   mocks.confirm.mockResolvedValue(true); mocks.read.mockResolvedValue(null); mocks.write.mockResolvedValue(undefined);
-  mocks.text.mockResolvedValueOnce('SPEECH_KEY').mockResolvedValueOnce('REASONING_KEY').mockResolvedValueOnce('model').mockResolvedValueOnce('cmd+shift+space');
+  mocks.text.mockResolvedValueOnce('SPEECH_KEY').mockResolvedValueOnce('REASONING_KEY').mockResolvedValueOnce('model');
   for (const stream of [process.stdin, process.stdout]) Object.defineProperty(stream, 'isTTY', { configurable: true, value: true });
 });
 afterEach(() => {
@@ -25,7 +25,7 @@ afterEach(() => {
 it('saves independent environment references after sharing consent and only explains desktop access', async () => {
   await setup();
   expect(mocks.write).toHaveBeenCalledExactlyOnceWith({
-    version: 1, shareVisualContext: true, activationHotkey: 'Cmd+Shift+Space',
+    version: 1, shareVisualContext: true, activationHotkey: 'Ctrl+Shift+Space',
     speech: { provider: 'openai', model: 'gpt-live-transcribe', apiKeyEnv: 'SPEECH_KEY' },
     reasoning: { provider: 'openai', model: 'model', apiKeyEnv: 'REASONING_KEY' },
   }, '/fixture/config.json', false);
@@ -34,6 +34,7 @@ it('saves independent environment references after sharing consent and only expl
   const displayed = JSON.stringify(mocks.note.mock.calls);
   expect(displayed).toContain('Microphone, Accessibility, and Screen Recording');
   expect(displayed).toContain('opensaysme doctor');
+  expect(displayed).toContain('osm hotkey');
 });
 
 it('retains saved settings without asking for keys or inspecting the desktop', async () => {

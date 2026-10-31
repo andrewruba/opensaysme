@@ -9,6 +9,20 @@ struct ActivationHotkey {
 
     static let standard = ActivationHotkey(keyCode: UInt32(kVK_Space), modifiers: UInt32(controlKey | shiftKey))
 
+    static func shortcut(keyCode: UInt32, flags: CGEventFlags) -> String? {
+        guard let name = keyCodes.first(where: { UInt32($0.value) == keyCode })?.key,
+              !flags.contains(.maskHelp),
+              !flags.contains(.maskSecondaryFn) || name.hasPrefix("F") else { return nil }
+        var parts: [String] = []
+        if flags.contains(.maskControl) { parts.append("Ctrl") }
+        if flags.contains(.maskAlternate) { parts.append("Alt") }
+        if flags.contains(.maskCommand) { parts.append("Cmd") }
+        if flags.contains(.maskShift) { parts.append("Shift") }
+        parts.append(name)
+        let shortcut = parts.joined(separator: "+")
+        return parse(shortcut) == nil ? nil : shortcut
+    }
+
     // Match the bounded shortcut vocabulary accepted by the TypeScript config.
     // Letter/digit keys refer to physical ANSI positions, as Carbon registration does.
     static func parse(_ shortcut: String) -> ActivationHotkey? {

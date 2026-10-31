@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { activationHotkeySchema, defaultActivationHotkey } from '../../hotkey.js';
+import { recordHotkey, type HotkeyCaptureResult } from '../hotkey-process.js';
 
 import { runCommand } from '../process.js';
 import { DesktopError, desktopCommandError, desktopIssue, desktopMessages, desktopIssueSchema } from '../errors.js';
@@ -181,6 +182,12 @@ export async function macOSVoiceHelper(activationHotkey = defaultActivationHotke
   const shortcut = activationHotkeySchema.parse(activationHotkey);
   await requireHelper();
   return { file: helperPath, args: ['--voice', shortcut] };
+}
+
+export async function recordMacOSHotkey(signal?: AbortSignal, onReady = () => {}): Promise<HotkeyCaptureResult> {
+  signal?.throwIfAborted();
+  await requireHelper();
+  return recordHotkey({ file: helperPath, args: ['--record-hotkey'] }, signal, onReady);
 }
 
 export async function macOSFeedbackHelper(): Promise<VoiceHelperSpec> {

@@ -27,7 +27,7 @@ integration is appropriate only if it solves that concrete problem.
 
 ## Completed work
 
-Backfilled from Git history, followed by completed changes in the working tree.
+Backfilled from Git history, with source references for the latest delivered work.
 Entries describe delivered scope. Operational details and current limits live in
 [development notes](docs/development.md) and the [tool contract](docs/tools.md).
 
@@ -49,7 +49,9 @@ Entries describe delivered scope. Operational details and current limits live in
 | 2026-10-30 | **B01 — Done:** Setup and local configuration select `gpt-6-astra`. Image/tool turns and click/Enter checks use low reasoning effort; speech stays independent. Provider behavior checked with mocks; live account access remains unverified. | `8dd0dee` |
 | 2026-10-30 | **B02 — Done:** Saved activation shortcut through setup or `hotkey`; validated before native registration and reflected in terminal/panel hints. Escape and Ctrl+C retain their behavior. Unit and synthetic native checks pass; physical shortcut delivery remains a manual check. | `8dd0dee` |
 | 2026-10-30 | Restored this status-bearing work queue and backfilled delivery history; moved manual scenarios into field notes. | `8dd0dee` |
-| 2026-10-30 | **B06 — Done:** Added a session-only `--hotkey` override and made saved remapping discoverable. CLI help covers source setup, key variables, permissions and voice examples; startup shows active settings and next steps. | Working tree; uncommitted |
+| 2026-10-30 | **B06 — Done:** Added a session-only `--hotkey` override and made saved remapping discoverable. CLI help covers source setup, key variables, permissions and voice examples; startup shows active settings and next steps. | `aea64f9` |
+| 2026-10-30 | **B07 — Done:** Added local `osm` and `opensaysme` commands through a stable launcher and `npm run install:cli`; source builds remain usable from any directory across rebuilds. Help and setup docs use the short command. | [Launcher](bin/opensaysme.mjs), [install script](package.json) |
+| 2026-10-30 | **B08 — Done:** `osm hotkey` captures a physically pressed combination in the focused terminal and asks to save the recognized shortcut. Capture is temporary, requires Accessibility access, and stops on cancellation, timeout or focus loss. Direct arguments and `--show` remain available; initial setup uses the default shortcut. Escape and Ctrl+C behavior stays fixed. | [CLI prompt](src/setup-hotkey.ts), [native recorder](native/macos/HotkeyCapture.swift) |
 
 ## Deferred
 

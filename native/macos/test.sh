@@ -17,7 +17,8 @@ xcrun swiftc -O \
   -module-cache-path "$helper_dir/bin/module-cache" \
   -framework AppKit -framework AVFoundation -framework Carbon \
   -Xlinker -weak_framework -Xlinker ScreenCaptureKit \
-  "$helper_dir/Voice.swift" "$helper_dir/Visual.swift" "$helper_dir/CaptureExecution.swift" "$helper_dir/FeedbackSupport.swift" \
+  "$helper_dir/Voice.swift" "$helper_dir/HotkeyCapture.swift" "$helper_dir/HotkeyCaptureTests.swift" \
+  "$helper_dir/Visual.swift" "$helper_dir/CaptureExecution.swift" "$helper_dir/FeedbackSupport.swift" \
   "$helper_dir/VoiceTests.swift" -o "$helper_dir/bin/voice-tests"
 "$helper_dir/bin/voice-tests"
 xcrun swiftc -O \

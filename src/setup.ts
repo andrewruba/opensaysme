@@ -2,7 +2,7 @@ import { cancel, confirm, intro, isCancel, note, outro, text } from '@clack/prom
 import { configPath, readConfig, writeConfig } from './config.js';
 import { streamingModel } from './speech/openai.js';
 import { defaultReasoningModel } from './reasoning/openai.js';
-import { activationHotkeySchema, defaultActivationHotkey, hotkeyHelp } from './hotkey.js';
+import { defaultActivationHotkey } from './hotkey.js';
 
 function answer<T>(value: T): Exclude<T, symbol> {
   if (isCancel(value)) {
@@ -48,22 +48,19 @@ export async function setup(signal?: AbortSignal, replace = false): Promise<void
   const model = answer(await text({ signal, message: 'Reasoning model with image input and function calling', initialValue: defaultReasoningModel,
     validate: (value) => value?.trim() ? undefined : 'Enter a compatible model identifier.',
   }));
-  const activationHotkey = activationHotkeySchema.parse(answer(await text({ signal,
-    message: 'Shortcut to start and finish talking (Escape still cancels)', initialValue: defaultActivationHotkey,
-    validate: (value) => activationHotkeySchema.safeParse(value).success ? undefined : hotkeyHelp,
-  })));
   if (!answer(await confirm({ signal, message: 'Enable sharing captured screen/context with your reasoning provider after each turn?', initialValue: false }))) {
     throw new Error('Visual sharing was not enabled. No configuration was written.');
   }
   if (signal?.aborted) throw new Error('Setup cancelled. No configuration was written.');
   await writeConfig({
     version: 1,
-    activationHotkey,
+    activationHotkey: defaultActivationHotkey,
     speech: { provider: 'openai', model: streamingModel, apiKeyEnv },
     reasoning: { provider: 'openai', model, apiKeyEnv: reasoningKeyEnv },
     shareVisualContext: true,
   }, configPath(), replace);
   permissions();
+  note(`Activation uses ${defaultActivationHotkey}. After granting Accessibility access, run osm hotkey to record a different shortcut.`, 'Activation shortcut');
   outro(`Saved ${configPath()}. Set ${[...new Set([apiKeyEnv, reasoningKeyEnv])].join(' and ')} in your environment, then run opensaysme.`);
 }
 

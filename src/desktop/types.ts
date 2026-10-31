@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { DesktopContext, VoiceHelperSpec } from './voice-types.js';
 import { frameBoundsSchema, frameImageSchema, type ScreenFrameCapture } from './visual-types.js';
 import type { DesktopInputAdapter } from './input-types.js';
+import type { HotkeyCaptureResult } from './hotkey-process.js';
 
 export const capabilityNames = [
   'activeWindow', 'focusWindow', 'selectedText', 'globalHotkey', 'microphone', 'screenCapture',
@@ -91,6 +92,7 @@ export interface DesktopAdapter {
   inspect(includeSelection: boolean, signal?: AbortSignal): Promise<DesktopSnapshot>;
   focus(targetId: string, signal?: AbortSignal): Promise<void>;
   voiceHelper(activationHotkey?: string): Promise<VoiceHelperSpec>;
+  recordHotkey?(signal?: AbortSignal, onReady?: () => void): Promise<HotkeyCaptureResult>;
   feedbackHelper?(): Promise<VoiceHelperSpec>;
   captureContext(signal?: AbortSignal): Promise<DesktopContext>;
   captureFrame(signal?: AbortSignal): Promise<ScreenFrameCapture>;

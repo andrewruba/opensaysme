@@ -6,7 +6,8 @@
   "type": "module",
   "license": "MIT",
   "bin": {
-    "opensaysme": "dist/cli.js"
+    "opensaysme": "bin/opensaysme.mjs",
+    "osm": "bin/opensaysme.mjs"
   },
   "engines": {
     "node": ">=22.20.0"
@@ -15,6 +16,7 @@
     "dev": "tsx src/cli.ts",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "build:native": "node scripts/build-native.mjs",
+    "install:cli": "npm run build && npm run build:native && npm link --offline --no-audit --no-fund",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",

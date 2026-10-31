@@ -30,11 +30,12 @@ it('shows a runnable quick start and shortcut help without configuration, keys o
   expect(stdout).toContain('hotkey');
   expect(stdout).toContain('--debug [directory]');
   expect(stdout).toContain('--hotkey <shortcut>');
-  expect(stdout).toContain('npm run build:native');
-  expect(stdout).toContain('node dist/cli.js setup');
+  expect(stdout).toContain('npm run install:cli');
+  expect(stdout).toContain('osm and opensaysme');
+  expect(stdout).toContain('osm setup');
   expect(stdout).toContain("export OPENAI_API_KEY='your-key'");
   expect(stdout).toContain('System Settings > Privacy & Security');
-  expect(stdout).toContain('node dist/cli.js hotkey "Cmd+Shift+Space"');
+  expect(stdout).toContain('osm hotkey "Cmd+Shift+Space"');
   expect(stdout).toContain('Escape cancels');
   expect(stderr).toBe('');
   const help = await execute(process.execPath, [...args, 'hotkey', '--help'], { env });
@@ -58,11 +59,11 @@ it('overrides the saved shortcut for one launch without writing configuration', 
     expect(stderr).toContain('saved shortcut is unchanged');
     expect(stderr).toContain(file);
     expect(stderr).toContain('Models: reasoning gpt-5.4-mini; speech gpt-live-transcribe');
-    expect(stderr).toContain('node dist/cli.js hotkey "Cmd+Shift+Space"');
+    expect(stderr).toContain('osm hotkey (interactive)');
     expect(stderr).toContain('Wait for ready');
   }
   expect(await readFile(file, 'utf8')).toBe(before);
-  expect((await execute(process.execPath, [...args, 'hotkey'], { env })).stdout).toContain('Cmd+Shift+Space');
+  expect((await execute(process.execPath, [...args, 'hotkey', '--show'], { env })).stdout).toContain('Cmd+Shift+Space');
 });
 
 it('rejects a reserved activation override before configuration or native startup', async () => {
@@ -78,11 +79,11 @@ it('saves and displays an activation shortcut without changing providers or requ
   const env = await configured();
   const file = join(env.OPENSAYSME_CONFIG_DIR, 'config.json');
   const before = JSON.parse(await readFile(file, 'utf8'));
-  expect((await execute(process.execPath, [...args, 'hotkey'], { env })).stdout).toContain('Ctrl+Shift+Space');
+  expect((await execute(process.execPath, [...args, 'hotkey', '--show'], { env })).stdout).toContain('Ctrl+Shift+Space');
   const { stdout } = await execute(process.execPath, [...args, 'hotkey', 'cmd+shift+space'], { env });
   expect(stdout).toContain('Restart voice mode');
   expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({ ...before, activationHotkey: 'Cmd+Shift+Space' });
-  expect((await execute(process.execPath, [...args, 'hotkey'], { env })).stdout).toContain('Cmd+Shift+Space');
+  expect((await execute(process.execPath, [...args, 'hotkey', '--show'], { env })).stdout).toContain('Cmd+Shift+Space');
   const saved = await readFile(file, 'utf8');
   await expect(execute(process.execPath, [...args, 'hotkey', 'Ctrl+C'], { env })).rejects.toMatchObject({ code: 1,
     stderr: expect.stringContaining('reserved') });
@@ -90,6 +91,17 @@ it('saves and displays an activation shortcut without changing providers or requ
   await expect(execute(process.execPath, args, { env })).rejects.toMatchObject({
     stderr: expect.stringContaining('Cmd+Shift+Space starts/stops; Escape cancels; Ctrl+C quits'),
   });
+});
+
+it('never hangs or changes settings when the interactive hotkey command has no terminal', async () => {
+  const env = await configured();
+  const file = join(env.OPENSAYSME_CONFIG_DIR, 'config.json');
+  const before = await readFile(file, 'utf8');
+  await expect(execute(process.execPath, [...args, 'hotkey'], { env })).rejects.toMatchObject({ code: 1,
+    stderr: expect.stringContaining('interactive terminal') });
+  await expect(execute(process.execPath, [...args, 'hotkey', '--show', 'Cmd+Space'], { env })).rejects.toMatchObject({ code: 1,
+    stderr: expect.stringContaining('Use --show by itself') });
+  expect(await readFile(file, 'utf8')).toBe(before);
 });
 
 it('lists tool schemas without configuration, keys, or a graphical session', async () => {
@@ -172,7 +184,7 @@ it('requires setup for voice mode', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'opensaysme-cli-'));
   directories.push(directory);
   await expect(execute(process.execPath, args, { env: { ...process.env, OPENSAYSME_CONFIG_DIR: directory } })).rejects.toMatchObject({
-    stderr: expect.stringMatching(/Quick start[\s\S]*node dist\/cli.js setup first/),
+    stderr: expect.stringMatching(/Quick start[\s\S]*osm setup first/),
   });
   expect(await readdir(directory)).toEqual([]);
 });

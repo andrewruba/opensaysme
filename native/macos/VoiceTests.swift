@@ -6,6 +6,7 @@ import Foundation
 @main
 struct VoiceTests {
     static func main() throws {
+        testHotkeyCapture()
         let standardHotkey = ActivationHotkey.parse("Ctrl+Shift+Space")!
         precondition(standardHotkey.keyCode == ActivationHotkey.standard.keyCode)
         precondition(standardHotkey.modifiers == ActivationHotkey.standard.modifiers)

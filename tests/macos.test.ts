@@ -4,6 +4,7 @@ import { access } from 'node:fs/promises';
 import { CommandError, runCommand } from '../src/desktop/process.js';
 import { DesktopError } from '../src/desktop/errors.js';
 import { desktopAdapter } from '../src/desktop/index.js';
+import { recordHotkey } from '../src/desktop/hotkey-process.js';
 
 import {
   focusMacOS,
@@ -12,6 +13,7 @@ import {
   captureMacOSWindow,
   macOSInput,
   macOSVoiceHelper,
+  recordMacOSHotkey,
   macOSFeedbackHelper,
   parseMacOSSnapshot,
   inspectMacOS,
@@ -21,6 +23,7 @@ import {
 } from '../src/desktop/platforms/macos.js';
 
 vi.mock('node:fs/promises', () => ({ access: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../src/desktop/hotkey-process.js', () => ({ recordHotkey: vi.fn() }));
 vi.mock('../src/desktop/process.js', async (importOriginal) => ({
   ...await importOriginal<typeof import('../src/desktop/process.js')>(), runCommand: vi.fn(),
 }));
@@ -97,6 +100,21 @@ test('feedback resolves the optional native UI without desktop access', async ()
   assert.match(helper.file, /native\/macos\/bin\/opensaysme-desktop$/);
   assert.deepEqual(helper.args, ['--feedback']);
   assert.equal(vi.mocked(runCommand).mock.calls.length, calls);
+});
+
+test('physical shortcut capture uses the dedicated recorder and preserves readiness and cancellation', async () => {
+  const controller = new AbortController(), ready = vi.fn();
+  vi.mocked(recordHotkey).mockImplementationOnce(async (_spec, _signal, onReady) => {
+    onReady(); return { status: 'captured', shortcut: 'Cmd+Shift+Space' };
+  });
+  assert.deepEqual(await recordMacOSHotkey(controller.signal, ready), { status: 'captured', shortcut: 'Cmd+Shift+Space' });
+  assert.deepEqual(vi.mocked(recordHotkey).mock.lastCall?.[0].args, ['--record-hotkey']);
+  assert.equal(vi.mocked(recordHotkey).mock.lastCall?.[1], controller.signal);
+  assert.equal(ready.mock.calls.length, 1);
+  const calls = vi.mocked(recordHotkey).mock.calls.length;
+  controller.abort();
+  await assert.rejects(recordMacOSHotkey(controller.signal, ready));
+  assert.equal(vi.mocked(recordHotkey).mock.calls.length, calls);
 });
 
 test('known transport failures keep their cause and never reuse arbitrary error text', async () => {

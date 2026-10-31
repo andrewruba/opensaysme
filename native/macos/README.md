@@ -99,6 +99,27 @@ arbitrary application side effects cannot be proved from issued events.
 
 ## Voice and feedback
 
+`--record-hotkey` temporarily records a physical activation shortcut for the CLI
+prompt. It needs existing Accessibility permission and the foreground application
+must be an ancestor of the helper (the terminal or editor that launched it). It
+does not request permission or focus another app. After installing a session event
+tap it emits `{"status":"ready"}`. Keep stdin open until the result arrives.
+Key presses are suppressed while recording, so a Command shortcut is
+not also sent to the terminal. Modifier changes pass through. It returns
+`{"status":"captured","shortcut":"Cmd+Shift+Space"}` only after the key and
+modifiers are released; Escape or Ctrl+C returns `{"status":"cancelled"}`.
+Unsupported keys are ignored. No character strings are read or retained.
+
+Focus leaving the original launching app/window, missing permission, unavailable capture, or the
+30-second deadline returns `{"status":"unavailable","reason":"..."}` with
+`focus-changed`, `accessibility-permission-required`, `capture-unavailable`, or
+`timeout`. EOF, any stdin command, parent exit, SIGINT and SIGTERM cancel and remove
+the event tap. A disabled tap fails instead of silently waiting without capturing.
+The original AX focused-window identity is checked without reading titles or
+window text; inability to establish it reports capture unavailable.
+Detached terminal servers whose ancestry no longer includes the foreground app
+must use the explicit CLI shortcut argument. The CLI owns confirmation and saving.
+
 `--voice [activation-hotkey]` is the persistent JSONL process. It registers the
 configured shortcut without opening the microphone; the default is Ctrl+Shift+Space.
 The shortcut is a `+`-separated list of Ctrl, Alt, Shift and Cmd modifiers followed

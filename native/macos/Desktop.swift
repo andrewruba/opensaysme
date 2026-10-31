@@ -529,6 +529,7 @@ struct DesktopMain {
             case ["--context"]: try output(captureContext())
             case ["--frame"]: try output(captureFrame())
             case ["--voice"]: VoiceSession().run()
+            case ["--record-hotkey"]: HotkeyCaptureSession().run()
             case let args where args.count == 2 && args[0] == "--voice":
                 guard let hotkey = ActivationHotkey.parse(args[1]) else {
                     try output(["type": "error", "code": "invalid-command"])
@@ -546,7 +547,7 @@ struct DesktopMain {
                 try focus(args[1])
                 try output(["ok": true])
             default:
-                throw DesktopError("Expected --probe, --inspect, --inspect-selection, --list-windows, --inspect-window <target-id>, --capture-window <target-id>, --context, --frame, --voice [activation-hotkey], or --focus <target-id>.")
+                throw DesktopError("Expected --probe, --inspect, --inspect-selection, --list-windows, --inspect-window <target-id>, --capture-window <target-id>, --context, --frame, --voice [activation-hotkey], --record-hotkey, or --focus <target-id>.")
             }
         } catch let error as VisualCaptureError {
             try? output(["error": error.rawValue])

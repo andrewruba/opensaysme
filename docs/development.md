@@ -7,17 +7,29 @@ brief observations in [field notes](field-notes.md).
 
 ## Setup
 
-Use Node.js 22.20+ and Xcode Command Line Tools:
+Use Node.js 22.20+ and Xcode Command Line Tools. From the repository:
 
 ```sh
 npm ci
-npm run build:native
-npm run build
-node dist/cli.js setup
+npm run install:cli
+osm setup
 export OPENAI_API_KEY='your-key'
-node dist/cli.js doctor
-node dist/cli.js
+osm doctor
+osm
 ```
+
+`install:cli` builds TypeScript and the native helper, then runs `npm link` against
+this checkout. Both `osm` and `opensaysme` invoke the same launcher and work from
+any directory; nothing is published to npm. Keep the checkout in place. After code
+changes, run `npm run build` and, for Swift changes, `npm run build:native`. Rebuilds
+keep the linked commands usable. If you move the checkout or switch Node versions,
+rerun `npm run install:cli`.
+
+If the shell cannot find either command, run `npm prefix --global` and ensure its
+`bin` directory is on PATH, then reopen the terminal. Use a user-managed Node
+installation if the global directory is not writable; no `sudo` is needed. To
+remove both commands, run `npm uninstall --global opensaysme`. Your saved
+configuration stays in place.
 
 `npm run dev -- <arguments>` runs TypeScript directly; `npm run dev` starts voice
 mode. Rebuild the native helper after Swift changes. Setup stores environment
@@ -25,13 +37,13 @@ variable names and independent speech/reasoning settings. It makes no provider
 request and never asks for a key value. Replace `your-key` above with your API key;
 if you chose different environment-variable names, export those instead. Use the
 same terminal to launch voice mode; variables may need exporting again after a
-terminal restart. `node dist/cli.js --help` includes the setup sequence, permission
+terminal restart. `osm --help` includes the setup sequence, permission
 guidance, shortcut commands and spoken-request examples. Startup displays the
 configuration path, active models and shortcut.
 
-A valid saved configuration is retained by `setup`. Use `setup --replace` to
+A valid saved configuration is retained by `osm setup`. Use `osm setup --replace` to
 change it. There is no Keychain storage or automatic configuration migration.
-If you tried the removed Keychain experiment, rerun `setup --replace`; any
+If you tried the removed Keychain experiment, rerun `osm setup --replace`; any
 previously saved `dev.opensaysme.provider` items can be removed manually in Keychain
 Access. The application no longer reads or modifies them.
 
@@ -67,18 +79,33 @@ issue test requests.
 Change only the activation shortcut without repeating setup:
 
 ```sh
-node dist/cli.js hotkey "Cmd+Shift+Space"   # save for future runs
-node dist/cli.js hotkey   # show the saved shortcut
-node dist/cli.js --hotkey "Ctrl+Alt+Space"  # start with a shortcut for this run only
-node dist/cli.js hotkey --help
+osm hotkey                   # press a key combination at the capture prompt
+osm hotkey "Cmd+Shift+Space"  # save directly, without a prompt
+osm hotkey --show             # print the saved shortcut
+osm --hotkey "Ctrl+Alt+Space"  # start with a shortcut for this run only
+osm hotkey --help
 ```
+
+Run `osm hotkey` in the focused terminal. Wait until it is ready, then physically
+press and release the desired combination, including its modifier keys. The CLI
+shows the recognized shortcut and asks whether to save it; press Enter to confirm.
+Escape or Ctrl+C cancels. Capture also stops without saving if focus changes or
+30 seconds pass. Both command names work, so `opensaysme hotkey` opens the same
+prompt. Use the direct argument or `--show` in scripts.
+
+Shortcut recording uses a temporary native keyboard capture with Accessibility
+access so Command combinations can be recognized without activating terminal
+commands. It runs only during the prompt while that terminal stays focused, ends
+before confirmation, captures no audio or screenshots, and makes no provider requests.
+Initial `osm setup` uses Ctrl+Shift+Space; change it with `osm hotkey` after granting
+Accessibility access. Directly supplying a shortcut does not need capture access.
 
 Restart voice mode after changing the saved setting. A `--hotkey` override applies
 only to that voice session and leaves the configuration file unchanged. The order
 is CLI override, saved `activationHotkey`, then Ctrl+Shift+Space. Supported modifiers
 are Ctrl, Alt, Cmd and Shift with Space, A–Z, 0–9 or F1–F12; include at least Ctrl,
-Alt or Cmd. Case and
-surrounding spaces are normalized. Letter/digit keys use US physical key positions.
+Alt or Cmd. Case and surrounding spaces are normalized. Letter/digit keys use US
+physical key positions.
 Escape and any Ctrl+C combination are reserved. Other controls keep their existing
 bindings. If another app or macOS owns the shortcut, startup reports it unavailable;
 choose another combination. Omitting `activationHotkey` uses Ctrl+Shift+Space.
