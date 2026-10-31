@@ -10,9 +10,7 @@ final class FeedbackSession {
     private var running = true
     private var input = Data()
     private var panel: FeedbackPanel?
-    private var titleLabel: NSTextField?
-    private var messageLabel: NSTextField?
-    private var detailLabel: NSTextField?
+    private var content: FeedbackView?
     private var visibleScreen: NSScreen?
     private var hideAt: TimeInterval?
 
@@ -71,7 +69,7 @@ final class FeedbackSession {
                 default: running = false; return
                 }
             }
-            if input.count > 32_768 { running = false; return }
+            if input.count > 262_144 { running = false; return }
         }
     }
 
@@ -91,75 +89,37 @@ final class FeedbackSession {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        let background = NSVisualEffectView()
-        background.material = .hudWindow
-        background.blendingMode = .behindWindow
-        background.state = .active
-        background.wantsLayer = true
-        background.layer?.cornerRadius = 14
-        background.layer?.masksToBounds = true
-        background.setAccessibilityHidden(true)
-        panel.contentView = background
-        let title = NSTextField(labelWithString: "")
-        title.font = .systemFont(ofSize: 13, weight: .semibold)
-        let message = NSTextField(wrappingLabelWithString: "")
-        message.font = .systemFont(ofSize: 14)
-        message.maximumNumberOfLines = 12
-        message.lineBreakMode = .byTruncatingTail
-        let detail = NSTextField(wrappingLabelWithString: "")
-        detail.font = .systemFont(ofSize: 11)
-        detail.textColor = .secondaryLabelColor
-        detail.maximumNumberOfLines = 3
-        detail.lineBreakMode = .byTruncatingTail
-        let stack = NSStackView(views: [title, message, detail])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        background.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -16),
-            stack.topAnchor.constraint(equalTo: background.topAnchor, constant: 14),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: background.bottomAnchor, constant: -14),
-            title.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            message.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            detail.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
+        let content = FeedbackView(frame: .zero)
+        content.setAccessibilityHidden(true)
+        content.onDismiss = { [weak self] in self?.hide() }
+        panel.contentView = content
         self.panel = panel
-        titleLabel = title; messageLabel = message; detailLabel = detail
+        self.content = content
     }
 
     private func show(_ command: FeedbackCommand) {
         if panel == nil { makePanel() }
-        guard let panel else { return }
+        guard let panel, let content else { return }
         if !panel.isVisible || visibleScreen.map({ !NSScreen.screens.contains($0) }) != false {
             visibleScreen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main
         }
-        guard let screen = visibleScreen else { hide(); return }
-        titleLabel?.stringValue = command.title
-        messageLabel?.stringValue = command.message
-        messageLabel?.isHidden = command.message.isEmpty
-        detailLabel?.stringValue = command.detail
-        detailLabel?.isHidden = command.detail.isEmpty
-        let textWidth = min(440, screen.visibleFrame.width - 32) - 32
-        let messageHeight = command.message.isEmpty ? 0 : min(216, (command.message as NSString).boundingRect(
-            with: NSSize(width: max(1, textWidth), height: 1000), options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: [.font: NSFont.systemFont(ofSize: 14)]).height + 8)
-        let detailHeight: CGFloat = command.detail.isEmpty ? 0 : 48
-        guard let frame = feedbackPanelFrame(screen: screen.visibleFrame, height: 48 + messageHeight + detailHeight) else { hide(); return }
+        guard let screen = visibleScreen,
+              let available = feedbackPanelFrame(screen: screen.visibleFrame, height: screen.visibleFrame.height) else { hide(); return }
+        let height = content.configure(command, width: available.width, maximumHeight: available.height)
+        guard let frame = feedbackPanelFrame(screen: screen.visibleFrame, height: height) else { hide(); return }
+        // Only settled answers receive scrolling/dismissal clicks. In-flight
+        // feedback remains click-through so it cannot intercept an agent action.
+        panel.ignoresMouseEvents = !command.persistent
         panel.setFrame(frame, display: true)
         panel.orderFrontRegardless()
-        // This also bounds retention if the parent stops sending updates without
-        // exiting. The parent normally dismisses final responses sooner.
-        hideAt = ProcessInfo.processInfo.systemUptime + 120
+        // Keep answers available for reading; EOF/shutdown and dismissal still
+        // clear them. Transient progress retains a deadline if the parent stalls.
+        hideAt = command.persistent ? nil : ProcessInfo.processInfo.systemUptime + 120
     }
 
     private func hide() {
         panel?.orderOut(nil)
-        titleLabel?.stringValue = ""
-        messageLabel?.stringValue = ""
-        detailLabel?.stringValue = ""
+        content?.clear()
         visibleScreen = nil
         hideAt = nil
     }

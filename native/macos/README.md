@@ -173,9 +173,14 @@ and the capture deadline release microphone and hotkeys. Pointer samples accompa
 recording and stop with it. No provider key or network access enters this process.
 
 `--feedback` accepts bounded JSONL `show`, `hide` and `shutdown` messages for a
-nonactivating, click-through panel. It clears text when hidden and closes on EOF,
-shutdown or signals; a native deadline hides stale content. It stays on the
-pointer's display and emits only `ready`. Full responses remain in the terminal.
+nonactivating panel. `show` includes `title`, `message`, `detail` and a required
+boolean `persistent`. Messages allow 32,768 UTF-16 units inside a 256 KiB JSONL
+command. TextKit wraps the complete message in a scrollable reading area; the
+panel grows to a bounded portion of the pointer's display. Completed responses
+are persistent and accept scrolling and close-button clicks without taking focus.
+Transient progress remains click-through, with a native deadline for stale content.
+The panel clears text when hidden and closes on EOF, shutdown or signals. It emits
+only `ready`. Full responses also remain in the terminal.
 Discovery, targeting and display capture exclude windows belonging to the helper's
 exact executable identity, rather than filtering by panel title.
 
@@ -184,8 +189,8 @@ exact executable identity, rather than filtering by panel title.
 The synthetic native suites cover process identity, AX traversal/protected fields,
 source matching and geometry, target fingerprints, literal text constraints,
 capture initialization/main-thread behavior, activation shortcut validation,
-audio timing/encoding and panel protocol/layout. They do not record, capture screens,
-show the panel or issue input.
+audio timing/encoding and panel protocol/layout, including offscreen text wrapping,
+scrolling and clearing. They do not record, capture screens, show the panel or issue input.
 Use actual work to investigate app compatibility, hotkeys, display coordinates and
 cancellation races; record a short observation rather than adding a new live runner.
 

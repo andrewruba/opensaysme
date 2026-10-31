@@ -31,10 +31,10 @@ export function createFeedback(sink: FeedbackSink, activationHotkey = defaultAct
   let recovery: DesktopIssue | undefined;
   const clearExpiry = () => { clearTimeout(expiry); expiry = undefined; };
   const hide = () => { clearExpiry(); sink.send({ type: 'hide' }); };
-  function show(title: string, message = '', detail = '', expires = false) {
+  function show(title: string, message = '', detail = '', options: { expires?: boolean; persistent?: boolean } = {}) {
     clearExpiry();
-    sink.send({ type: 'show', title: clip(title, 160), message: clip(message, 4096), detail: clip(detail, 512) });
-    if (expires) expiry = setTimeout(hide, 60_000);
+    sink.send({ type: 'show', title: clip(title, 160), message: clip(message, 32_768), detail: clip(detail, 512), persistent: options.persistent ?? false });
+    if (options.expires) expiry = setTimeout(hide, 60_000);
   }
   return {
     handle(event: VoiceOutput) {
@@ -55,13 +55,13 @@ export function createFeedback(sink: FeedbackSink, activationHotkey = defaultAct
       } else if (event.type === 'result') {
         if (settled) return;
         settled = true;
-        show(recovery ? 'OpenSaysMe · Earlier desktop warning' : 'OpenSaysMe', event.response,
-          recovery ? `Earlier warning: ${desktopMessages[recovery]}` : `${activationHotkey} to reply · Full response in terminal`, true);
+        show(recovery ? 'Response · Earlier desktop warning' : 'Response', event.response,
+          `${activationHotkey} to reply${recovery ? ` · Earlier warning: ${desktopMessages[recovery]}` : ''}`, { persistent: true });
       } else if (event.type === 'error' || event.type === 'warning') {
         if (settled && event.type === 'warning') return;
         if (event.type === 'warning' && event.desktopIssue) recovery = event.desktopIssue;
         show(event.type === 'error' ? 'Couldn’t complete the request' : 'OpenSaysMe warning', event.message,
-          'Details in terminal', true);
+          'Details in terminal', { expires: true });
         if (event.type === 'error' || !turnId) settled = true;
       } else if (event.type === 'activity' && !settled) {
         const target = event.target ? [event.target.application, event.target.title].filter(Boolean).join(' — ') : 'Resolving target…';

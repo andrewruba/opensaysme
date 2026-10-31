@@ -19,6 +19,6 @@ xcrun swiftc -O \
   "$helper_dir/InputProtocol.swift" "$helper_dir/DesktopInput.swift" \
   "$helper_dir/KeyboardProtocol.swift" "$helper_dir/KeyboardInput.swift" \
   "$helper_dir/Voice.swift" "$helper_dir/HotkeyCapture.swift" "$helper_dir/Visual.swift" \
-  "$helper_dir/FeedbackSupport.swift" "$helper_dir/Feedback.swift" -o "$helper_dir/bin/opensaysme-desktop"
+  "$helper_dir/FeedbackSupport.swift" "$helper_dir/FeedbackView.swift" "$helper_dir/Feedback.swift" -o "$helper_dir/bin/opensaysme-desktop"
 
 echo "Built $helper_dir/bin/opensaysme-desktop"

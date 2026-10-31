@@ -16,8 +16,9 @@ Tap a hotkey to talk; the model receives speech, screen history, selection and
 pointer context, and can inspect windows, navigate, point, click, scroll, type and
 use keyboard shortcuts. It can use Spotlight to open an app and a browser's address
 bar to navigate, including when the app has no open window yet. Short follow-ups
-carry context across activations. A small panel shows status
-and answers without taking focus; full responses stay in the terminal.
+carry context across activations. A small panel shows status and readable,
+scrollable answers without taking focus. Responses stay open until you close them
+or start another request; they also remain in the terminal.
 
 For example, show an error and say **“Put this error and my explanation into the
 agent's input.”** Then say **“Now send it.”** Preparation should leave the input

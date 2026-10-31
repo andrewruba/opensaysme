@@ -4,7 +4,7 @@ import type { VoiceHelperSpec } from './voice-types.js';
 
 const bounded = (limit: number) => z.string().max(limit).refine((value) => value.length <= limit);
 export const feedbackCommandSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('show'), title: bounded(160).min(1), message: bounded(4096), detail: bounded(512) }).strict(),
+  z.object({ type: z.literal('show'), title: bounded(160).min(1), message: bounded(32_768), detail: bounded(512), persistent: z.boolean() }).strict(),
   z.object({ type: z.literal('hide') }).strict(),
   z.object({ type: z.literal('shutdown') }).strict(),
 ]);

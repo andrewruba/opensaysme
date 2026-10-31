@@ -7,19 +7,22 @@ struct FeedbackCommand {
     let title: String
     let message: String
     let detail: String
+    let persistent: Bool
 
     static func parse(_ data: Data) -> FeedbackCommand? {
-        guard data.count <= 32_768,
+        guard data.count <= 262_144,
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = object["type"] as? String else { return nil }
         if ["hide", "shutdown"].contains(type), Set(object.keys) == ["type"] {
-            return FeedbackCommand(type: type, title: "", message: "", detail: "")
+            return FeedbackCommand(type: type, title: "", message: "", detail: "", persistent: false)
         }
-        guard type == "show", Set(object.keys) == ["type", "title", "message", "detail"],
+        guard type == "show", Set(object.keys) == ["type", "title", "message", "detail", "persistent"],
               let title = object["title"] as? String, !title.isEmpty, title.utf16.count <= 160,
-              let message = object["message"] as? String, message.utf16.count <= 4096,
-              let detail = object["detail"] as? String, detail.utf16.count <= 512 else { return nil }
-        return FeedbackCommand(type: type, title: title, message: message, detail: detail)
+              let message = object["message"] as? String, message.utf16.count <= 32_768,
+              let detail = object["detail"] as? String, detail.utf16.count <= 512,
+              let persistent = object["persistent"] as? NSNumber,
+              CFGetTypeID(persistent) == CFBooleanGetTypeID() else { return nil }
+        return FeedbackCommand(type: type, title: title, message: message, detail: detail, persistent: persistent.boolValue)
     }
 }
 
@@ -46,8 +49,8 @@ func feedbackPanelFrame(screen: CGRect, height: CGFloat) -> CGRect? {
     guard [screen.minX, screen.minY, screen.width, screen.height, height].allSatisfy({ $0.isFinite }),
           screen.width > 0, screen.height > 0, height > 0 else { return nil }
     let margin = min(16, min(screen.width, screen.height) / 8)
-    let width = min(440, screen.width - margin * 2)
-    let boundedHeight = min(height, screen.height - margin * 2)
+    let width = min(500, screen.width - margin * 2)
+    let boundedHeight = min(height, min(640, max(240, screen.height * 0.72)), screen.height - margin * 2)
     return CGRect(x: screen.maxX - width - margin, y: screen.maxY - boundedHeight - margin,
                   width: width, height: boundedHeight)
 }
