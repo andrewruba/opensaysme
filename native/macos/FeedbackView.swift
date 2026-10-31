@@ -152,7 +152,7 @@ final class FeedbackView: NSView {
         let height = min(maximumHeight, bodyTop + documentHeight + footerHeight + hintHeight)
         let viewportHeight = max(0, height - bodyTop - footerHeight - hintHeight)
         setFrameSize(NSSize(width: width, height: height))
-        brand.frame = NSRect(x: inset + 25, y: 23, width: max(1, textWidth - 60), height: 18)
+        brand.frame = NSRect(x: inset, y: 23, width: max(1, textWidth - 35), height: 18)
         closeButton.frame = NSRect(x: width - inset - 23, y: 17, width: 28, height: 28)
         closeButton.isHidden = !command.persistent
         heading.frame = NSRect(x: inset - 2, y: 52, width: textWidth + 4, height: titleHeight)
@@ -194,21 +194,5 @@ final class FeedbackView: NSView {
             rule.lineWidth = 0.5
             rule.stroke()
         }
-        // A small conservatory arch and stem; ornament stays out of the reading area.
-        ConservatoryPalette.brass.withAlphaComponent(0.9).setStroke()
-        let arch = NSBezierPath()
-        arch.lineWidth = 0.8
-        arch.move(to: NSPoint(x: 27, y: 39))
-        arch.line(to: NSPoint(x: 27, y: 28))
-        arch.curve(to: NSPoint(x: 41, y: 28), controlPoint1: NSPoint(x: 27, y: 17), controlPoint2: NSPoint(x: 41, y: 17))
-        arch.line(to: NSPoint(x: 41, y: 39))
-        arch.close()
-        arch.move(to: NSPoint(x: 34, y: 38))
-        arch.line(to: NSPoint(x: 34, y: 27))
-        arch.move(to: NSPoint(x: 34, y: 34))
-        arch.curve(to: NSPoint(x: 30, y: 29), controlPoint1: NSPoint(x: 30, y: 34), controlPoint2: NSPoint(x: 30, y: 31))
-        arch.move(to: NSPoint(x: 34, y: 31))
-        arch.curve(to: NSPoint(x: 38, y: 27), controlPoint1: NSPoint(x: 38, y: 31), controlPoint2: NSPoint(x: 38, y: 29))
-        arch.stroke()
     }
 }
