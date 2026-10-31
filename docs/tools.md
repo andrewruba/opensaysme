@@ -44,6 +44,8 @@ whether typing is supported. When focus changes or cannot be inspected, the
 screenshot remains available but no keyboard observation is issued. The display
 under the pointer may differ from the display containing keyboard focus; inspect
 both the image and focus evidence before acting.
+Keyboard inspection failures include a recovery code and appear as desktop
+warnings even when the screenshot succeeds.
 
 ## Requests and effects
 
@@ -153,6 +155,12 @@ focus. It is not an agent tool. Helper-owned windows are excluded from desktop
 context by executable identity. Known failures preserve finite recovery codes;
 raw native errors and crash reports are not forwarded to the model. An earlier
 warning may remain visible after recovery.
+
+Normal CLI output names each completed tool and its outcome, and the final JSON
+includes the same `toolResults`. A partial result means some evidence was returned
+with a known desktop problem, such as a screenshot without keyboard focus. These
+summaries contain no tool arguments or captured text; `osm --debug` remains the
+opt-in path for full requests, responses and screenshots.
 
 ## Changing tools
 

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { keyboardActionSchema, keyboardEvidenceSchema, type KeyboardAdapter, type KeyboardEvidence } from '../desktop/keyboard-types.js';
 import { inputResultSchema } from '../desktop/input-types.js';
 import { screenFrameCaptureSchema, type ScreenFrameCapture } from '../desktop/visual-types.js';
-import { desktopIssue, desktopMessages } from '../desktop/errors.js';
+import { desktopIssue, desktopMessages, type DesktopIssue } from '../desktop/errors.js';
 import { conversationSchema, type ConversationEvidence } from '../conversation.js';
 import { desktopToolError, toolError } from './registry.js';
 import { permissionDecisionSchema, permitsKeyboard, type KeyboardReview, type PermissionDecision } from './permissions.js';
@@ -21,11 +21,12 @@ export function createKeyboardTools(adapter: KeyboardAdapter, captureFrame: (sig
   const invalidate = () => { observation = undefined; session.revision++; };
   const capture = async (signal: AbortSignal): Promise<ToolResult> => {
     invalidate();
-    let before: KeyboardEvidence | undefined, keyboardUnavailable: string | undefined;
+    let before: KeyboardEvidence | undefined, keyboardUnavailable: string | undefined, keyboardIssue: DesktopIssue | undefined;
     try { before = keyboardEvidenceSchema.parse(await adapter.inspect(signal)); }
     catch (error) {
       signal.throwIfAborted();
-      keyboardUnavailable = desktopMessages[desktopIssue(error) ?? 'input-unavailable'];
+      keyboardIssue = desktopIssue(error) ?? 'input-unavailable';
+      keyboardUnavailable = desktopMessages[keyboardIssue];
     }
     const frame = screenFrameCaptureSchema.parse(await captureFrame(signal));
     signal.throwIfAborted();
@@ -35,20 +36,24 @@ export function createKeyboardTools(adapter: KeyboardAdapter, captureFrame: (sig
         signal.throwIfAborted();
         if (before.fingerprint === after.fingerprint) {
           observation = { id: `keyboard-${++next}`, frame: structuredClone(frame), target: before, at: performance.now(), revision: session.revision };
-        } else keyboardUnavailable = 'Keyboard focus or user input changed during capture. Capture again before sending keys.';
+        } else {
+          keyboardIssue = 'focus-changed';
+          keyboardUnavailable = 'Keyboard focus or user input changed during capture. Capture again before sending keys.';
+        }
       } catch (error) {
         signal.throwIfAborted();
-        keyboardUnavailable = desktopMessages[desktopIssue(error) ?? 'input-unavailable'];
+        keyboardIssue = desktopIssue(error) ?? 'input-unavailable';
+        keyboardUnavailable = desktopMessages[keyboardIssue];
       }
     }
     const { image, ...metadata } = frame;
     const focus = observation?.target;
-    return { content: [
+    return { ...(keyboardIssue ? { desktopIssue: keyboardIssue } : {}), content: [
       { type: 'text', text: JSON.stringify({ ...metadata, image: { width: image.width, height: image.height, mimeType: image.mimeType },
         ...(focus ? { keyboardObservationId: observation!.id, keyboardFocus: {
           application: focus.application, role: focus.role, title: focus.title, description: focus.description, value: focus.value,
           valueTruncated: focus.valueTruncated, editable: focus.editable,
-        } } : { keyboardUnavailable }) }) },
+        } } : { keyboardUnavailable, keyboardIssue }) }) },
       { type: 'image', mimeType: image.mimeType, data: image.data },
     ] };
   };

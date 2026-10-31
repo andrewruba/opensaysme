@@ -81,6 +81,22 @@ func keyboardEditable(role: String, valueWritable: Bool, selectionWritable: Bool
         || (role == "AXTextArea" && (valueWritable || selectionWritable)))
 }
 
+// Some desktops cannot answer system-wide AX focus queries even though the
+// foreground application's own AX focus is available. Do not substitute a
+// remembered background application or a focus returned by another process.
+func keyboardFocusWithForegroundFallback<Element>(
+    systemFocus: () throws -> Element,
+    foregroundPID: () -> Int32?,
+    applicationFocus: (Int32) throws -> Element,
+    processID: (Element) -> Int32?
+) throws -> Element {
+    if let focused = try? systemFocus() { return focused }
+    guard let pid = foregroundPID(), pid > 0,
+          let focused = try? applicationFocus(pid),
+          processID(focused) == pid, foregroundPID() == pid else { throw InputError.unavailable }
+    return focused
+}
+
 func keyboardFingerprint(_ target: KeyboardFingerprintState) throws -> String {
     var state = target
     // Terminal output changes as the runtime reports status. That is evidence,

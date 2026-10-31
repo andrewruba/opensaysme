@@ -70,6 +70,35 @@ struct KeyboardProtocolTests {
         precondition(!keyboardEditable(role: "AXTextArea", valueWritable: false, selectionWritable: false, enabled: true))
         precondition(keyboardEditable(role: "AXTextArea", valueWritable: false, selectionWritable: true, enabled: true))
         precondition(!keyboardEditable(role: "AXTextField", valueWritable: true, selectionWritable: true, enabled: false))
+        struct Focus { let pid: Int32; let role: String }
+        let accessory = Focus(pid: 77, role: "AXTextField")
+        var fallbackCalls = 0
+        let systemFocus = try keyboardFocusWithForegroundFallback(systemFocus: { accessory },
+            foregroundPID: { fallbackCalls += 1; return 42 },
+            applicationFocus: { _ in fallbackCalls += 1; throw InputError.unavailable }, processID: { $0.pid })
+        precondition(systemFocus.pid == accessory.pid && fallbackCalls == 0, "System focus must remain preferred for accessory interfaces")
+        var foreground: Int32? = 42
+        let fallback = try keyboardFocusWithForegroundFallback(systemFocus: { throw InputError.unavailable },
+            foregroundPID: { foreground }, applicationFocus: { Focus(pid: $0, role: "AXTextArea") }, processID: { $0.pid })
+        precondition(fallback.pid == 42 && fallback.role == "AXTextArea", "Foreground AX focus must recover unavailable system focus")
+        func rejectFocus(_ applicationFocus: (Int32) throws -> Focus, processID: (Focus) -> Int32? = { $0.pid }) {
+            do {
+                _ = try keyboardFocusWithForegroundFallback(systemFocus: { throw InputError.unavailable },
+                    foregroundPID: { foreground }, applicationFocus: applicationFocus, processID: processID)
+                preconditionFailure("Unavailable or changed focus accepted")
+            } catch { }
+        }
+        rejectFocus({ pid in foreground = 43; return Focus(pid: pid, role: "AXTextArea") })
+        foreground = 42
+        rejectFocus({ _ in Focus(pid: 43, role: "AXTextArea") })
+        rejectFocus({ _ in throw InputError.unavailable })
+        rejectFocus({ Focus(pid: $0, role: "AXTextArea") }, processID: { _ in nil })
+        for missing: Int32? in [nil, 0, -1] {
+            foreground = missing
+            var queried = false
+            rejectFocus({ _ in queried = true; throw InputError.unavailable })
+            precondition(!queried, "Missing foreground must not query a background app")
+        }
         state.editable = false; state.role = "AXTextArea"
         let terminalBefore = try keyboardFingerprint(state)
         state.value = "interpreting\nacting\n"; state.selection = [300, 0]

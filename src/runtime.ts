@@ -11,6 +11,7 @@ import { prepareVisualContext, discardVisualContext, visualContextSummary, type 
 import type { VoiceInput } from './desktop/voice-process.js';
 import type { TranscriptionFactory, TranscriptionSession } from './speech/types.js';
 import { desktopMessages, type DesktopIssue } from './desktop/errors.js';
+import { summarizeTool, type ToolSummary } from './tool-summary.js';
 
 export type VoiceState = 'ready' | 'starting' | 'listening' | 'processing' | 'interpreting' | 'inspecting' | 'acting' | 'cancelling';
 export interface LatencyMeasurements {
@@ -35,6 +36,7 @@ export interface LatencyMeasurements {
 export type VoiceOutput =
   | { type: 'state'; state: VoiceState; turnId?: string }
   | { type: 'activity'; turnId: string; name: string; target?: ToolFeedbackTarget }
+  | { type: 'tool-summary'; turnId: string; summary: ToolSummary }
   | { type: 'dismiss-feedback' }
   | { type: 'partial'; turnId: string; text: string }
   | { type: 'transcript'; turnId: string; text: string }
@@ -43,7 +45,7 @@ export type VoiceOutput =
   | { type: 'warning'; turnId?: string; message: string; desktopIssue?: DesktopIssue }
   | { type: 'error'; turnId?: string; message: string }
   | { type: 'result'; turnId: string; transcript: string; attention: ReturnType<typeof attentionSummary>;
-    visualContext: ReturnType<typeof visualContextSummary>; response: string; debugDirectory?: string; latency: LatencyMeasurements };
+    visualContext: ReturnType<typeof visualContextSummary>; response: string; toolResults?: ToolSummary[]; debugDirectory?: string; latency: LatencyMeasurements };
 interface Turn {
   id: string; activated: number; stopped?: number; abort: AbortController;
   attention?: AttentionCollector; session?: TranscriptionSession;
@@ -53,6 +55,7 @@ interface Turn {
   transcript?: string; debugInputRecorded?: boolean; debugResultRecorded?: boolean;
   metrics: LatencyMeasurements; partial: string; timers: Set<NodeJS.Timeout>;
   desktopIssues: Set<DesktopIssue>;
+  toolResults: ToolSummary[];
   startupTimer?: NodeJS.Timeout; stopTimer?: NodeJS.Timeout; captureTimer?: NodeJS.Timeout;
 }
 export interface VoiceRuntimeOptions {
@@ -210,7 +213,7 @@ export class VoiceRuntime {
   }
 
   private start() {
-    const turn: Turn = { id: randomUUID(), activated: this.now(), abort: new AbortController(), metrics: {}, partial: '', timers: new Set(), desktopIssues: new Set() };
+    const turn: Turn = { id: randomUUID(), activated: this.now(), abort: new AbortController(), metrics: {}, partial: '', timers: new Set(), desktopIssues: new Set(), toolResults: [] };
     this.turn = turn;
     this.diagnostic('runtime', 'turn-started', turn);
     this.publishState('starting');
@@ -282,6 +285,7 @@ export class VoiceRuntime {
     this.diagnostic('runtime', 'visuals-prepared', turn, { frames: history.frames.length, trailCopies: visual.frames.filter((frame) => frame.image).length, durationMs: turn.metrics.visualPreparationMs });
     turn.conversation = this.conversation.recent();
     turn.tools = this.options.createTools?.(transcript, structuredClone(history.contexts), structuredClone(turn.conversation));
+    const toolCatalog = turn.tools?.list() ?? [];
     const reasoningStarted = this.now();
     const response = await this.options.reason({ transcript, history, visual, signal: turn.abort.signal,
       tools: turn.tools, conversation: turn.conversation,
@@ -290,6 +294,11 @@ export class VoiceRuntime {
         if (event.phase === 'completed') {
           turn.metrics.toolCalls = (turn.metrics.toolCalls ?? 0) + 1;
           turn.metrics.toolMs = (turn.metrics.toolMs ?? 0) + (event.durationMs ?? 0);
+          const summary = summarizeTool(event, toolCatalog);
+          if (summary && turn.toolResults.length < 24) {
+            turn.toolResults.push(summary);
+            this.options.emit({ type: 'tool-summary', turnId: turn.id, summary: { ...summary } });
+          }
         }
         try { this.options.debug?.tool?.(turn.id, event); } catch { /* Diagnostics cannot stop a turn. */ }
         this.publishState(event.phase === 'completed' ? 'interpreting' : event.effect === 'read' ? 'inspecting' : 'acting');
@@ -320,6 +329,7 @@ export class VoiceRuntime {
     this.debugResult(turn, { status: 'completed', response });
     this.options.emit({ type: 'result', turnId: turn.id, transcript, attention: attentionSummary(history),
       visualContext: visualContextSummary(visual), response,
+      ...(turn.toolResults.length ? { toolResults: turn.toolResults.map((summary) => ({ ...summary })) } : {}),
       ...(this.options.debug ? { debugDirectory: this.options.debug.turnDirectory(turn.id) } : {}), latency: { ...turn.metrics } });
     this.reset(turn);
   }

@@ -200,6 +200,24 @@ describe('conversational follow-up lifecycle', () => {
 });
 
 describe('live voice turn lifecycle', () => {
+  it('publishes bounded tool summaries by default and includes them in the final result without tool contents', async () => {
+    const host: ToolHost = { list: () => [{ name: 'capture_screen', description: 'Capture', effect: 'read', inputSchema: {} }], call: vi.fn(), close: vi.fn() };
+    const f = fixture(undefined, async (input) => {
+      for (let index = 0; index < 30; index++) input.onTool!({ callId: `private-${index}`, name: 'capture_screen',
+        arguments: { private: 'private arguments' }, effect: 'read', phase: 'completed',
+        result: { desktopIssue: 'accessibility-unavailable', content: [{ type: 'text', text: '{"value":"private captured value"}' }] } });
+      return 'Keyboard inspection was unavailable.';
+    }, undefined, undefined, () => host);
+    const turnId = await complete(f, 'Open the requested site');
+    const summaries = f.outputs.filter((event) => event.type === 'tool-summary');
+    expect(summaries).toHaveLength(24);
+    expect(summaries[0]).toEqual({ type: 'tool-summary', turnId, summary: { name: 'capture_screen', effect: 'read', outcome: 'partial', desktopIssue: 'accessibility-unavailable' } });
+    const result = f.outputs.find((event) => event.type === 'result');
+    expect(result?.toolResults).toEqual(summaries.map((event) => event.summary));
+    expect(JSON.stringify(result)).not.toContain('private');
+    expect(JSON.stringify(summaries)).not.toContain('private');
+  });
+
   it('publishes source-backed activity only when a focus or input tool starts', async () => {
     const target = { application: 'Editor', title: 'Aster agent' };
     const feedbackTarget = vi.fn<NonNullable<ToolHost['feedbackTarget']>>((name) => name === 'focus_window' ? target : undefined);
@@ -270,7 +288,7 @@ describe('live voice turn lifecycle', () => {
 
   it('closes the tool session on cancellation and ignores late tool feedback and answers', async () => {
     const d = mockDebugSession(); const result = deferred<string>();
-    const host: ToolHost = { list: () => [], call: vi.fn(), close: vi.fn() };
+    const host: ToolHost = { list: () => [{ name: 'focus_window', description: 'Focus', effect: 'focus', inputSchema: {} }], call: vi.fn(), close: vi.fn() };
     let request: Parameters<ReasoningFactory>[0] | undefined;
     const f = fixture(undefined, async (input) => { request = input; return result.promise; }, undefined, d.debug, () => host);
     f.runtime.toggle(); const id = f.id(); await flush();
@@ -286,6 +304,7 @@ describe('live voice turn lifecycle', () => {
     expect(d.debug.tool).not.toHaveBeenCalled();
     expect(f.outputs.some((event) => event.type === 'result')).toBe(false);
     expect(f.outputs.some((event) => event.type === 'activity')).toBe(false);
+    expect(f.outputs.some((event) => event.type === 'tool-summary')).toBe(false);
     expect(f.outputs.at(-1)).toMatchObject({ type: 'state', state: 'ready' });
   });
 

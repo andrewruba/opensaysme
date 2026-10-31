@@ -241,6 +241,7 @@ describe('request-scoped keyboard input', () => {
     const capture = await f.capture();
     expect(capture).not.toHaveProperty('keyboardObservationId');
     expect(capture.keyboardUnavailable).toContain('changed during capture');
+    expect(capture.keyboardIssue).toBe('focus-changed');
     expect(value(await f.call('keyboard-1', { kind: 'press_key', key: 'L', modifiers: ['Cmd'] })).code).toBe('stale-observation');
     expect(f.adapter.execute).not.toHaveBeenCalled();
   });
@@ -266,11 +267,27 @@ describe('request-scoped keyboard input', () => {
 
   it('keeps screen evidence available when keyboard inspection is unavailable', async () => {
     const f = fixture(); f.adapter.inspect.mockRejectedValue(new DesktopError('permission-required'));
-    const capture = await f.capture();
+    const result = await f.host.call('capture_screen', {}, signal());
+    expect(result.desktopIssue).toBe('permission-required');
+    expect(result.isError).not.toBe(true);
+    const capture = value(result);
     expect(capture).not.toHaveProperty('keyboardObservationId');
     expect(capture.keyboardUnavailable).toContain('Accessibility');
+    expect(capture.keyboardIssue).toBe('permission-required');
     expect(capture.image).toMatchObject({ width: frame.image.width, height: frame.image.height });
     expect(f.captureFrame).toHaveBeenCalledOnce();
+    expect(f.adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a failure after capture without discarding usable pixels or leaking native error text', async () => {
+    const f = fixture();
+    f.adapter.inspect.mockResolvedValueOnce(structuredClone(target))
+      .mockRejectedValueOnce(new DesktopError('accessibility-unavailable'));
+    const result = await f.host.call('capture_screen', {}, signal());
+    expect(result.desktopIssue).toBe('accessibility-unavailable');
+    expect(result.content.some((part) => part.type === 'image')).toBe(true);
+    expect(value(result)).not.toHaveProperty('keyboardObservationId');
+    expect(value(result).keyboardIssue).toBe('accessibility-unavailable');
     expect(f.adapter.execute).not.toHaveBeenCalled();
   });
 

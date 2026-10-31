@@ -12,6 +12,7 @@ import { setupHotkey } from './setup-hotkey.js';
 import { uninstall } from './uninstall.js';
 import { runVoice } from './voice.js';
 import { createDesktopTools } from './tools/desktop.js';
+import { formatToolSummary } from './tool-summary.js';
 
 const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
 const stop = new AbortController();
@@ -87,7 +88,7 @@ Using voice:
     process.stderr.write('Change your shortcut: osm hotkey (interactive). Setup/access help: osm --help\n');
     process.stderr.write('Wait for ready, switch to your work, tap to talk, then tap again to finish. Try: "Explain this error."\n');
     process.stderr.write('Activated audio streams to OpenAI. Screen/context and cursor history are captured while recording.\n');
-    process.stderr.write('After stopping, your agent can inspect desktop evidence and switch windows to fulfill your request.\n');
+    process.stderr.write('After stopping, your agent can inspect windows, point, click, scroll, type and use keyboard shortcuts within your request.\n');
     process.stderr.write('Selected frames, context, and requested tool results go to your reasoning provider.\n');
     const debugDirectory = options.debug === true ? resolve('.opensaysme-debug') : options.debug;
     if (debugDirectory) process.stderr.write(`Debug enabled: ${safeText(debugDirectory)}. Context, transcripts, screenshots, prompts, responses, and session diagnostics remain until you delete them.\n`);
@@ -99,6 +100,8 @@ Using voice:
         process.stderr.write(`Transcript: ${JSON.stringify(event.text)}\n`);
       } else if (event.type === 'transcript') {
         process.stderr.write(`Final transcript: ${JSON.stringify(event.text)}\n`);
+      } else if (event.type === 'tool-summary') {
+        process.stderr.write(`${formatToolSummary(event.summary)}\n`);
       } else if (event.type === 'result') {
         process.stderr.write(`Response: ${safeText(event.response)}\n`);
         json(event);

@@ -88,6 +88,7 @@ it.each([
     expect(stderr).toContain('Models: reasoning gpt-5.4-mini; speech gpt-live-transcribe');
     expect(stderr).toContain('osm hotkey (interactive)');
     expect(stderr).toContain('Wait for ready');
+    expect(stderr).toContain('point, click, scroll, type and use keyboard shortcuts within your request');
   }
   expect((await execute(process.execPath, [...args, 'hotkey', '--show'], { env })).stdout).toContain(expected);
   expect(await readFile(file, 'utf8')).toBe(before);

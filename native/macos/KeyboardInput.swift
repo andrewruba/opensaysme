@@ -20,9 +20,18 @@ private func keyboardString(_ element: AXUIElement, _ name: String, limit: Int) 
 }
 
 private func keyboardFocus() throws -> AXUIElement {
-    let system = AXUIElementCreateSystemWide()
-    AXUIElementSetMessagingTimeout(system, 0.1)
-    let element = try elementAttribute(system, kAXFocusedUIElementAttribute)
+    let element = try keyboardFocusWithForegroundFallback(systemFocus: {
+        let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, 0.1)
+        return try elementAttribute(system, kAXFocusedUIElementAttribute)
+    }, foregroundPID: { NSWorkspace.shared.frontmostApplication?.processIdentifier }, applicationFocus: { pid in
+        let application = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(application, 0.1)
+        return try elementAttribute(application, kAXFocusedUIElementAttribute)
+    }, processID: { focused in
+        var pid: pid_t = 0
+        return AXUIElementGetPid(focused, &pid) == .success ? pid : nil
+    })
     AXUIElementSetMessagingTimeout(element, 0.1)
     return element
 }
