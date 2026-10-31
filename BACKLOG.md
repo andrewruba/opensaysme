@@ -45,10 +45,11 @@ Entries describe delivered scope. Operational details and current limits live in
 | 2026-10-30 | Literal multiline context transfer into supported accessible agent inputs; preparation and sending remain separate outcomes. | `82435f7` |
 | 2026-10-30 | macOS v1 scope, followed by status/target/answer feedback without taking focus. | `0133e9a`, `264b31f` |
 | 2026-10-30 | Guided macOS access setup and recovery messages. The separate permission-check menu was subsequently removed below. | `c92d642` |
-| 2026-10-30 | Simplified the active implementation: macOS only, environment keys, setup guidance plus read-only doctor, target-level freshness checks, and additional model authorization only for clicks/Enter. Removed other-platform ports/CI and separate permission probes; parked distribution and formal live evaluation work. | Working tree; uncommitted |
-| 2026-10-30 | **B01 — Done:** Setup and local configuration select `gpt-6-astra`. Image/tool turns and click/Enter checks use low reasoning effort; speech stays independent. Provider behavior checked with mocks; live account access remains unverified. | Working tree; uncommitted |
-| 2026-10-30 | **B02 — Done:** Saved activation shortcut through setup or `hotkey`; validated before native registration and reflected in terminal/panel hints. Escape and Ctrl+C retain their behavior. Unit and synthetic native checks pass; physical shortcut delivery remains a manual check. | Working tree; uncommitted |
-| 2026-10-30 | Restored this status-bearing work queue and backfilled delivery history; moved manual scenarios into field notes. | Working tree; uncommitted |
+| 2026-10-30 | Simplified the active implementation: macOS only, environment keys, setup guidance plus read-only doctor, target-level freshness checks, and additional model authorization only for clicks/Enter. Removed other-platform ports/CI and separate permission probes; parked distribution and formal live evaluation work. | `8dd0dee` |
+| 2026-10-30 | **B01 — Done:** Setup and local configuration select `gpt-6-astra`. Image/tool turns and click/Enter checks use low reasoning effort; speech stays independent. Provider behavior checked with mocks; live account access remains unverified. | `8dd0dee` |
+| 2026-10-30 | **B02 — Done:** Saved activation shortcut through setup or `hotkey`; validated before native registration and reflected in terminal/panel hints. Escape and Ctrl+C retain their behavior. Unit and synthetic native checks pass; physical shortcut delivery remains a manual check. | `8dd0dee` |
+| 2026-10-30 | Restored this status-bearing work queue and backfilled delivery history; moved manual scenarios into field notes. | `8dd0dee` |
+| 2026-10-30 | **B06 — Done:** Added a session-only `--hotkey` override and made saved remapping discoverable. CLI help covers source setup, key variables, permissions and voice examples; startup shows active settings and next steps. | Working tree; uncommitted |
 
 ## Deferred
 

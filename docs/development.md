@@ -14,6 +14,7 @@ npm ci
 npm run build:native
 npm run build
 node dist/cli.js setup
+export OPENAI_API_KEY='your-key'
 node dist/cli.js doctor
 node dist/cli.js
 ```
@@ -21,8 +22,12 @@ node dist/cli.js
 `npm run dev -- <arguments>` runs TypeScript directly; `npm run dev` starts voice
 mode. Rebuild the native helper after Swift changes. Setup stores environment
 variable names and independent speech/reasoning settings. It makes no provider
-request and never asks for a key value. Set the named variables in your launching
-shell; they may need exporting again after a terminal restart.
+request and never asks for a key value. Replace `your-key` above with your API key;
+if you chose different environment-variable names, export those instead. Use the
+same terminal to launch voice mode; variables may need exporting again after a
+terminal restart. `node dist/cli.js --help` includes the setup sequence, permission
+guidance, shortcut commands and spoken-request examples. Startup displays the
+configuration path, active models and shortcut.
 
 A valid saved configuration is retained by `setup`. Use `setup --replace` to
 change it. There is no Keychain storage or automatic configuration migration.
@@ -62,12 +67,17 @@ issue test requests.
 Change only the activation shortcut without repeating setup:
 
 ```sh
-node dist/cli.js hotkey "Cmd+Shift+Space"
+node dist/cli.js hotkey "Cmd+Shift+Space"   # save for future runs
 node dist/cli.js hotkey   # show the saved shortcut
+node dist/cli.js --hotkey "Ctrl+Alt+Space"  # start with a shortcut for this run only
+node dist/cli.js hotkey --help
 ```
 
-Restart voice mode after changing it. Supported modifiers are Ctrl, Alt, Cmd and
-Shift with Space, A–Z, 0–9 or F1–F12; include at least Ctrl, Alt or Cmd. Case and
+Restart voice mode after changing the saved setting. A `--hotkey` override applies
+only to that voice session and leaves the configuration file unchanged. The order
+is CLI override, saved `activationHotkey`, then Ctrl+Shift+Space. Supported modifiers
+are Ctrl, Alt, Cmd and Shift with Space, A–Z, 0–9 or F1–F12; include at least Ctrl,
+Alt or Cmd. Case and
 surrounding spaces are normalized. Letter/digit keys use US physical key positions.
 Escape and any Ctrl+C combination are reserved. Other controls keep their existing
 bindings. If another app or macOS owns the shortcut, startup reports it unavailable;

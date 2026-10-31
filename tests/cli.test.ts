@@ -18,14 +18,60 @@ async function configured(model = 'gpt-live-transcribe') {
   return { ...process.env, OPENSAYSME_CONFIG_DIR: directory, OPENSAYSME_TEST_MISSING_KEY: '' };
 }
 
-it('shows CLI commands without reading desktop context', async () => {
-  const { stdout } = await execute(process.execPath, [...args, '--help']);
+it('shows a runnable quick start and shortcut help without configuration, keys or desktop access', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'opensaysme-cli-help-'));
+  directories.push(directory);
+  const env = { ...process.env, OPENSAYSME_CONFIG_DIR: directory, OPENAI_API_KEY: '' };
+  const { stdout, stderr } = await execute(process.execPath, [...args, '--help'], { env });
   expect(stdout).toContain('setup');
   expect(stdout).toContain('doctor');
   expect(stdout).toContain('desktop');
   expect(stdout).toContain('tools');
   expect(stdout).toContain('hotkey');
   expect(stdout).toContain('--debug [directory]');
+  expect(stdout).toContain('--hotkey <shortcut>');
+  expect(stdout).toContain('npm run build:native');
+  expect(stdout).toContain('node dist/cli.js setup');
+  expect(stdout).toContain("export OPENAI_API_KEY='your-key'");
+  expect(stdout).toContain('System Settings > Privacy & Security');
+  expect(stdout).toContain('node dist/cli.js hotkey "Cmd+Shift+Space"');
+  expect(stdout).toContain('Escape cancels');
+  expect(stderr).toBe('');
+  const help = await execute(process.execPath, [...args, 'hotkey', '--help'], { env });
+  expect(help.stdout).toContain('Escape and Ctrl+C are reserved');
+  expect(help.stdout).toContain('For one run without saving');
+  expect(await readdir(directory)).toEqual([]);
+});
+
+it('overrides the saved shortcut for one launch without writing configuration', async () => {
+  const env = await configured();
+  await execute(process.execPath, [...args, 'hotkey', 'Cmd+Shift+Space'], { env });
+  const file = join(env.OPENSAYSME_CONFIG_DIR, 'config.json');
+  const before = await readFile(file, 'utf8');
+  try {
+    await execute(process.execPath, [...args, '--hotkey', 'ctrl+alt+space'], { env });
+    throw new Error('Expected the missing-key failure before native startup.');
+  } catch (error) {
+    expect(error).toMatchObject({ code: 1, stderr: expect.stringContaining('Set OPENSAYSME_TEST_MISSING_KEY') });
+    const stderr = (error as { stderr: string }).stderr;
+    expect(stderr).toContain('Ctrl+Alt+Space starts/stops; Escape cancels; Ctrl+C quits');
+    expect(stderr).toContain('saved shortcut is unchanged');
+    expect(stderr).toContain(file);
+    expect(stderr).toContain('Models: reasoning gpt-5.4-mini; speech gpt-live-transcribe');
+    expect(stderr).toContain('node dist/cli.js hotkey "Cmd+Shift+Space"');
+    expect(stderr).toContain('Wait for ready');
+  }
+  expect(await readFile(file, 'utf8')).toBe(before);
+  expect((await execute(process.execPath, [...args, 'hotkey'], { env })).stdout).toContain('Cmd+Shift+Space');
+});
+
+it('rejects a reserved activation override before configuration or native startup', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'opensaysme-cli-invalid-hotkey-'));
+  directories.push(directory);
+  await expect(execute(process.execPath, [...args, '--hotkey', 'Escape'], {
+    env: { ...process.env, OPENSAYSME_CONFIG_DIR: directory },
+  })).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('Escape and Ctrl+C are reserved') });
+  expect(await readdir(directory)).toEqual([]);
 });
 
 it('saves and displays an activation shortcut without changing providers or requiring desktop access', async () => {
@@ -125,7 +171,10 @@ it('does not hang in non-interactive setup', async () => {
 it('requires setup for voice mode', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'opensaysme-cli-'));
   directories.push(directory);
-  await expect(execute(process.execPath, args, { env: { ...process.env, OPENSAYSME_CONFIG_DIR: directory } })).rejects.toMatchObject({ stderr: expect.stringContaining('setup first') });
+  await expect(execute(process.execPath, args, { env: { ...process.env, OPENSAYSME_CONFIG_DIR: directory } })).rejects.toMatchObject({
+    stderr: expect.stringMatching(/Quick start[\s\S]*node dist\/cli.js setup first/),
+  });
+  expect(await readdir(directory)).toEqual([]);
 });
 
 it('requires the speech key before opening desktop hooks or a connection', async () => {

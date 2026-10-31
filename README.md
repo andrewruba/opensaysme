@@ -31,24 +31,30 @@ npm ci
 npm run build:native
 npm run build
 node dist/cli.js setup
+export OPENAI_API_KEY='your-key'
 node dist/cli.js doctor
 node dist/cli.js
 ```
 
-Setup stores environment-variable names, never keys. Set the variables it names in
+Setup stores environment-variable names, never keys. Replace `your-key` above with
+your API key; if you chose different variable names during setup, export those in
 your launching shell. Grant Microphone, Accessibility and Screen Recording in
 System Settings → Privacy & Security as needed; restart your terminal after changing
 grants if access still fails. `doctor` reports access status without capturing or
 requesting permissions. Use `setup --replace` to change provider settings.
+`node dist/cli.js --help` includes this first-run guidance and usage examples.
+Startup prints the active models, configuration path and shortcut.
 
 - **Ctrl+Shift+Space** (default): start talking; tap again to finish.
 - **Escape:** stop pending work and clear follow-up context. While idle, press it
   in the CLI terminal. It cannot undo actions already issued.
 - **Ctrl+C:** quit and release native resources.
 
-Remap activation with `node dist/cli.js hotkey "Cmd+Shift+Space"`, then restart
-voice mode. Run `node dist/cli.js hotkey` to show the saved shortcut. Escape and
-Ctrl+C stay fixed. Setup also asks for the activation shortcut.
+Save an activation shortcut with `node dist/cli.js hotkey "Cmd+Shift+Space"`, then
+restart voice mode. For one run, use `node dist/cli.js --hotkey "Ctrl+Alt+Space"`;
+this overrides the saved shortcut without changing it. Run `node dist/cli.js hotkey`
+to show the saved shortcut, or `node dist/cli.js hotkey --help` for supported keys.
+Escape and Ctrl+C stay fixed. Setup also asks for the activation shortcut.
 
 ## Permission and privacy
 

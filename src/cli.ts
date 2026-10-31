@@ -19,6 +19,26 @@ process.once('SIGTERM', stopAll);
 
 const json = (value: unknown) => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 const safeText = (value: string) => JSON.stringify(value).slice(1, -1);
+const quickStart = `Quick start from the repository (macOS 14+, Node.js 22.20+, Xcode Command Line Tools):
+  npm ci
+  npm run build:native
+  npm run build
+  node dist/cli.js setup
+  export OPENAI_API_KEY='your-key'
+  node dist/cli.js doctor
+  node dist/cli.js
+
+Setup saves key environment-variable names, never keys. Export the names you chose
+in the same terminal used to launch voice mode; OPENAI_API_KEY is the default.
+Allow Microphone, Accessibility and Screen Recording for your terminal/helper in
+System Settings > Privacy & Security. Restart your terminal if grants do not apply.
+Doctor checks access and key presence without recording or making a provider call.
+`;
+function shortcut(value: string): string {
+  const parsed = activationHotkeySchema.safeParse(value);
+  if (!parsed.success) throw new InvalidArgumentError(hotkeyHelp);
+  return parsed.data;
+}
 function seconds(value: string): number {
   if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 30) {
     throw new InvalidArgumentError('Duration must be a whole number from 1 to 30 seconds.');
@@ -38,15 +58,39 @@ const program = new Command()
   .name('opensaysme')
   .description('Tap-to-talk with desktop context')
   .version(version)
+  .option('--hotkey <shortcut>', 'Override activation for this run only (saved shortcut stays unchanged)', shortcut)
   .option('--debug [directory]', 'Save local context, model inputs, responses, and diagnostics (default: .opensaysme-debug)', (value: string) => {
     if (!value.trim()) throw new InvalidArgumentError('Enter a nonempty debug directory.');
     return resolve(value);
   })
+  .addHelpText('after', `\n${quickStart}
+Activation shortcuts:
+  node dist/cli.js hotkey "Cmd+Shift+Space"    Save a shortcut for future runs
+  node dist/cli.js hotkey                      Show the saved shortcut
+  node dist/cli.js --hotkey "Ctrl+Alt+Space"   Use a shortcut for this run only
+  node dist/cli.js hotkey --help                Supported keys and modifiers
+
+Using voice:
+  Wait for ready, switch to your work, then tap ${defaultActivationHotkey} (default).
+  Speak while showing the relevant content; tap again to finish. No need to hold it.
+  Try: "Explain this error" or "Put this error into the agent's input; leave it unsent."
+  Escape cancels pending work (in the CLI terminal when idle); Ctrl+C quits.
+  Activated audio and screen/context go to your configured providers; charges apply.
+`)
   .showHelpAfterError()
-  .action(async (options: { debug?: true | string }) => {
-    const config = await readConfig();
-    if (!config) throw new Error('Run opensaysme setup first. Desktop probes work without provider configuration.');
+  .action(async (options: { debug?: true | string; hotkey?: string }) => {
+    const savedConfig = await readConfig();
+    if (!savedConfig) {
+      process.stderr.write(`${quickStart}\n`);
+      throw new Error('Run node dist/cli.js setup first. See node dist/cli.js --help for shortcuts and examples.');
+    }
+    const config = options.hotkey ? { ...savedConfig, activationHotkey: options.hotkey } : savedConfig;
     process.stderr.write(`OpenSaysMe voice mode. ${config.activationHotkey ?? defaultActivationHotkey} starts/stops; Escape cancels; Ctrl+C quits.\n`);
+    process.stderr.write(`Configuration: ${safeText(configPath())}\n`);
+    process.stderr.write(`Models: reasoning ${safeText(config.reasoning.model)}; speech ${safeText(config.speech.model)}.\n`);
+    if (options.hotkey) process.stderr.write('Using --hotkey for this run only; the saved shortcut is unchanged.\n');
+    process.stderr.write('Save a shortcut: node dist/cli.js hotkey "Cmd+Shift+Space". Setup/access help: node dist/cli.js --help\n');
+    process.stderr.write('Wait for ready, switch to your work, tap to talk, then tap again to finish. Try: "Explain this error."\n');
     process.stderr.write('Activated audio streams to OpenAI. Screen/context and cursor history are captured while recording.\n');
     process.stderr.write('After stopping, your agent can inspect desktop evidence and switch windows to fulfill your request.\n');
     process.stderr.write('Selected frames, context, and requested tool results go to your reasoning provider.\n');
@@ -76,15 +120,18 @@ program.command('setup').description('Configure environment-key references and e
   .option('--replace', 'Replace existing configuration after interactive setup')
   .action((options: { replace?: boolean }) => setup(stop.signal, Boolean(options.replace)));
 program.command('hotkey [shortcut]').description('Show or save the activation shortcut; Escape and Ctrl+C stay fixed')
-  .addHelpText('after', `\n${hotkeyHelp}\nExample: opensaysme hotkey "Cmd+Shift+Space"`)
-  .action(async (shortcut?: string) => {
-    const parsed = shortcut === undefined ? undefined : activationHotkeySchema.safeParse(shortcut);
-    if (parsed && !parsed.success) throw new InvalidArgumentError(hotkeyHelp);
+  .addHelpText('after', `\n${hotkeyHelp}\nDefault: ${defaultActivationHotkey}. Letter/digit keys use US physical key positions.
+Save: node dist/cli.js hotkey "Cmd+Shift+Space"
+Show: node dist/cli.js hotkey
+Restart voice mode after saving. If the shortcut is already in use, choose another.
+For one run without saving: node dist/cli.js --hotkey "Ctrl+Alt+Space"`)
+  .action(async (value?: string) => {
+    const parsed = value === undefined ? undefined : shortcut(value);
     const config = await readConfig();
     if (!parsed) { console.log(`Activation shortcut: ${config?.activationHotkey ?? defaultActivationHotkey}`); return; }
-    if (!config) throw new Error('Run opensaysme setup before saving a shortcut.');
-    await writeConfig({ ...config, activationHotkey: parsed.data }, configPath(), true);
-    console.log(`Saved activation shortcut: ${parsed.data}. Restart voice mode to apply it. Escape and Ctrl+C are unchanged.`);
+    if (!config) throw new Error('Run node dist/cli.js setup before saving a shortcut.');
+    await writeConfig({ ...config, activationHotkey: parsed }, configPath(), true);
+    console.log(`Saved activation shortcut: ${parsed}. Restart voice mode to apply it. Escape and Ctrl+C are unchanged.`);
   });
 program.command('tools').description('List available agent tools and their schemas without reading the desktop')
   .action(async () => {
