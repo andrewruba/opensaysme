@@ -1,7 +1,7 @@
 # OpenSaysMe 🧙 — Less friction with your AI agents
 
 [![CI](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml/badge.svg?branch=main&event=push)](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml)
-[![Version 0.1.0](https://img.shields.io/badge/version-0.1.0-blue?style=flat-square)](package.json)
+[![Version 0.2.0](https://img.shields.io/badge/version-0.2.0-blue?style=flat-square)](package.json)
 [![Node.js 22.20.0 or newer](https://img.shields.io/badge/node-%3E%3D22.20.0-339933?style=flat-square)](package.json)
 [![macOS 14 or newer](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square)](#run-it)
 [![MIT license](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
