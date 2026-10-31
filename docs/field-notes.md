@@ -34,6 +34,5 @@ a failure. A follow-up applies to the intended current target, not a different f
 or an unresolved prior submission. An issued event is not a verified application
 result. Escape prevents further work but cannot undo actions already issued.
 
-Use a short note to select the next concrete fix in the [backlog](../BACKLOG.md).
 Add an automated regression when the cause is stable and mockable; routine tests
 do not need provider keys, actual screen captures or a metrics dashboard.

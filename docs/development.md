@@ -2,8 +2,8 @@
 
 OpenSaysMe is a macOS 14+ source-built prototype. The immediate goal is to use
 speech and desktop context to get useful work into an existing agent, then improve
-whatever makes that interaction awkward. See the [backlog](../BACKLOG.md) and keep
-brief observations in [field notes](field-notes.md).
+whatever makes that interaction awkward. Keep brief observations in
+[field notes](field-notes.md).
 
 ## Setup
 

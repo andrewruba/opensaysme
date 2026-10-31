@@ -80,6 +80,5 @@ recent conversation go to your reasoning provider; provider charges apply. Captu
 stays in memory unless you explicitly enable `--debug`, which saves sensitive
 context locally until you delete it. Keys and raw audio are excluded from diagnostics.
 
-See [development and limitations](docs/development.md), [the tool contract](docs/tools.md),
-and the [core-loop backlog](BACKLOG.md). Windows/Linux ports and release packaging
-are outside the current work.
+See [development and limitations](docs/development.md) and [the tool contract](docs/tools.md).
+Windows/Linux ports and release packaging are outside the current work.

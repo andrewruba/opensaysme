@@ -1,7 +1,7 @@
 # Working on OpenSaysMe
 
-Read `README.md` for the product intent and `BACKLOG.md` for MVP scope and status.
-Keep both accurate and update backlog statuses as work lands. This repository
+Read `README.md` for the product intent and current scope.
+Keep the README and affected documentation accurate as work lands. This repository
 contains a tap-to-talk runtime, visual attention history, an agent tool loop,
 an in-process tool host, and desktop probes. See
 `docs/development.md` for setup, validation commands, and platform limitations.
@@ -39,7 +39,7 @@ an in-process tool host, and desktop probes. See
   Do not reconfirm explicit, still-applicable authorization. Resolve material
   ambiguity before acting; request additional authority when an action exceeds that scope.
   Enforce the boundary for mouse, keyboard, and API actions alike.
-- Prioritize the interactions in `BACKLOG.md`. Add abstractions when a concrete
+- Follow the user's priorities. Add abstractions when a concrete
   capability or integration needs them; avoid speculative frameworks and unrelated
   features.
 - Use the tool for real work and record brief observations before choosing the next
