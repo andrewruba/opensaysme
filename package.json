@@ -20,7 +20,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "check": "npm run typecheck && npm run lint && npm test && npm run build"
+    "check:version": "node scripts/check-version.mjs",
+    "check": "npm run check:version && npm run typecheck && npm run lint && npm test && npm run build"
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",

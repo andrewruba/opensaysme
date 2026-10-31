@@ -73,6 +73,12 @@ and configuration.
 
 ## Validation
 
+- Run `npm run check` for version consistency, typecheck, lint, unit tests, and the
+  TypeScript build. For Swift changes, also run `sh native/macos/test.sh` and
+  `npm run build:native`.
+- Keep `package.json` and `package-lock.json` versions aligned. Prepare a version
+  bump with `npm version patch --no-git-tag-version` (or `minor`/`major`) in a PR.
+  Tag the merged release commit as `v<version>`; CI checks that the tag matches.
 - Run the existing checks relevant to the change. Once tooling exists, document
   its canonical install, development, typecheck, lint, and test commands.
 - Add meaningful tests for behavior and regressions, especially action routing,

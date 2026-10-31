@@ -1,20 +1,68 @@
 name: Check
-on: [push, pull_request]
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  check:
-    runs-on: macos-latest
+  verify:
+    name: macOS (${{ matrix.arch }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+            node: '22.20.0'
+          - runner: macos-15-intel
+            arch: x64
+            node: '26'
+    env:
+      OPENSAYSME_CONFIG_DIR: ${{ runner.temp }}/opensaysme-ci-config
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          architecture: ${{ matrix.arch }}
           cache: npm
-      - run: npm ci
+          cache-dependency-path: package-lock.json
+      - run: npm ci --no-audit --no-fund
       - run: npm run check
       - run: npm run build:native
       - name: Test native helpers without desktop capture or input
         run: sh native/macos/test.sh
+      - name: Check CLI version and help
+        run: |
+          test "$(node bin/opensaysme.mjs --version)" = "$(node -p 'require("./package.json").version')"
+          node bin/opensaysme.mjs --help
       - name: Read-only doctor smoke test
-        run: node dist/cli.js doctor --json
+        run: node bin/opensaysme.mjs doctor --json
+
+  # Require this stable check in branch protection, independent of matrix labels.
+  check:
+    name: check
+    needs: verify
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every macOS configuration to pass
+        env:
+          RESULT: ${{ needs.verify.result }}
+        run: test "$RESULT" = success
