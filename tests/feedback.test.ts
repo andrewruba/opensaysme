@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { createFeedback } from '../src/feedback.js';
 import type { VoiceOutput } from '../src/runtime.js';
+import { desktopMessages } from '../src/desktop/errors.js';
 
 afterEach(() => vi.useRealTimers());
 function fixture() {
@@ -57,6 +58,26 @@ it('keeps a failure visible across cancellation cleanup, and idle Escape dismiss
   expect(f.last()).toMatchObject({ message: 'The microphone is unavailable.' });
   f.feedback.handle({ type: 'dismiss-feedback' });
   expect(f.last()).toEqual({ type: 'hide' });
+  await f.feedback.close();
+});
+
+it('keeps local recovery evidence visible after actor output and clears it for a fresh turn', async () => {
+  const f = fixture(); f.state('starting');
+  f.feedback.handle({ type: 'warning', turnId: 'one', desktopIssue: 'helper-crashed', message: desktopMessages['helper-crashed'] });
+  f.state('interpreting');
+  expect(f.last().detail).toBe(`Earlier warning: ${desktopMessages['helper-crashed']}`);
+  f.response('I could not inspect that window.');
+  expect(f.last()).toMatchObject({ title: 'OpenSaysMe · Earlier desktop warning', detail: `Earlier warning: ${desktopMessages['helper-crashed']}` });
+  f.state('starting', 'two'); f.response('Ready.', 'two');
+  expect(f.last().detail).not.toContain('crashed'); await f.feedback.close();
+});
+
+it('does not present an earlier transient failure as proof of current access failure', async () => {
+  const f = fixture(); f.state('starting');
+  f.feedback.handle({ type: 'warning', turnId: 'one', desktopIssue: 'focus-changed', message: desktopMessages['focus-changed'] });
+  f.state('acting'); f.state('interpreting'); f.response('The requested window is now focused.');
+  expect(f.last()).toMatchObject({ title: 'OpenSaysMe · Earlier desktop warning',
+    message: 'The requested window is now focused.', detail: expect.stringContaining('Earlier warning:') });
   await f.feedback.close();
 });
 

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { desktopIssueSchema } from './errors.js';
 
 const windowSchema = z.object({
   id: z.string().min(1).max(512),
@@ -13,6 +14,7 @@ export const desktopContextSchema = z.object({
   selectedText: z.string().max(65_536).optional(),
   pointer: z.object({ x: z.number().finite(), y: z.number().finite(), window: windowSchema.nullable() }).strict().optional(),
   warnings: z.array(z.string().max(1024)).max(16),
+  issues: z.array(desktopIssueSchema).max(16).optional(),
 }).strict();
 export type DesktopContext = z.infer<typeof desktopContextSchema>;
 
@@ -29,7 +31,7 @@ export const nativeVoiceEventSchema = z.discriminatedUnion('type', [
     data: z.string().min(4).max(131_072).regex(/^[A-Za-z0-9+/]+={0,2}$/) }).strict(),
   z.object({ type: z.literal('audio-stopped'), turnId }).strict(),
   z.object({ type: z.literal('error'), turnId: turnId.optional(), code: z.enum([
-    'hotkey-unavailable', 'microphone-unavailable', 'capture-failed', 'invalid-command', 'internal-error',
+    'hotkey-unavailable', 'microphone-permission-required', 'microphone-unavailable', 'capture-failed', 'invalid-command', 'internal-error',
   ]) }).strict(),
 ]);
 export type NativeVoiceEvent = z.infer<typeof nativeVoiceEventSchema>;

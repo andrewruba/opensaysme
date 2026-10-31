@@ -6,6 +6,19 @@ enum VisualCaptureError: String, Error {
     case permissionRequired = "screen-permission-required"
     case unavailable = "screen-capture-unavailable"
     case failed = "screen-capture-failed"
+    case timeout = "screen-capture-timeout"
+}
+
+func visualCaptureFailure(_ error: Error) -> VisualCaptureError {
+    if let error = error as? VisualCaptureError { return error }
+    if let error = error as? CaptureExecutionError {
+        switch error {
+        case .timeout: return .timeout
+        case .displayUnavailable: return .unavailable
+        case .wrongThread: return .failed
+        }
+    }
+    return .failed
 }
 
 func captureTimestamp(_ date: Date = Date()) -> String {
@@ -149,7 +162,5 @@ func captureFrame() throws -> ScreenFrame {
     do {
         return try runMainActorCapture(deadline: deadline) { try await captureScreenFrame() }
     }
-    catch CaptureExecutionError.displayUnavailable { throw VisualCaptureError.unavailable }
-    catch let error as VisualCaptureError { throw error }
-    catch { throw VisualCaptureError.failed }
+    catch { throw visualCaptureFailure(error) }
 }

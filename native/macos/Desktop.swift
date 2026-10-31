@@ -286,7 +286,8 @@ struct DesktopContext: Encodable {
     let selectedText: String?
     let pointer: PointerContext?
     let warnings: [String]
-    private enum CodingKeys: String, CodingKey { case platform, capturedAt, activeWindow, selectedText, pointer, warnings }
+    let issues: [String]
+    private enum CodingKeys: String, CodingKey { case platform, capturedAt, activeWindow, selectedText, pointer, warnings, issues }
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(platform, forKey: .platform)
@@ -295,6 +296,7 @@ struct DesktopContext: Encodable {
         try container.encodeIfPresent(selectedText, forKey: .selectedText)
         try container.encodeIfPresent(pointer, forKey: .pointer)
         try container.encode(warnings, forKey: .warnings)
+        if !issues.isEmpty { try container.encode(issues, forKey: .issues) }
     }
 }
 
@@ -304,6 +306,7 @@ func captureContext() -> DesktopContext {
     let capturedAt = captureTimestamp()
     let position = CGEvent(source: nil)?.location
     var warnings: [String] = []
+    var issues: [String] = []
     var active: Window?
     var selection: String?
     var pointedWindow: Window?
@@ -334,10 +337,10 @@ func captureContext() -> DesktopContext {
             }
             if pointedWindow == nil { warnings.append("No accessible window was resolved under the pointer.") }
         }
-    } else { warnings.append(permissionHelp) }
+    } else { warnings.append(permissionHelp); issues.append("permission-required") }
     if position == nil { warnings.append("Pointer location unavailable in this desktop session.") }
     return DesktopContext(capturedAt: capturedAt, activeWindow: active, selectedText: selection,
-        pointer: position.map { PointerContext(x: $0.x, y: $0.y, window: pointedWindow) }, warnings: warnings)
+        pointer: position.map { PointerContext(x: $0.x, y: $0.y, window: pointedWindow) }, warnings: warnings, issues: issues)
 }
 
 func resolveWindow(_ id: String, deadline: TimeInterval) throws -> (NSRunningApplication, AXUIElement) {
@@ -640,6 +643,7 @@ struct DesktopMain {
             let arguments = Array(CommandLine.arguments.dropFirst())
             switch arguments {
             case ["--probe"]: try output(probe())
+            case ["--permissions"]: try output(permissionReport())
             case ["--inspect"]: try output(inspect(includeSelection: false))
             case ["--inspect-selection"]: try output(inspect(includeSelection: true))
             case ["--list-windows"]: try output(listWindows())
@@ -649,6 +653,11 @@ struct DesktopMain {
             case ["--feedback"]: FeedbackSession().run()
             case ["--inspect-input"]: try desktopInput(execute: false)
             case ["--execute-input"]: try desktopInput(execute: true)
+            case let args where args.count == 2 && args[0] == "--verify-permission":
+                guard let permission = DesktopPermission(rawValue: args[1]) else {
+                    throw DesktopError("Unknown permission.", code: "invalid-permission")
+                }
+                try output(verifyPermission(permission))
             case let args where args.count == 2 && args[0] == "--inspect-window":
                 try output(inspectWindow(args[1]))
             case let args where args.count == 2 && args[0] == "--capture-window":
@@ -667,6 +676,8 @@ struct DesktopMain {
         } catch let error as VisualCaptureError {
             try? output(["error": error.rawValue])
         } catch let error as WindowCaptureError {
+            try? output(["error": error.rawValue])
+        } catch let error as InputError {
             try? output(["error": error.rawValue])
         } catch let error as DesktopError {
             // Expected failures stay in the validated protocol, without native values or

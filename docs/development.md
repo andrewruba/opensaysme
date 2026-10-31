@@ -40,6 +40,12 @@ and reasoning can use the same key or separate keys. `npm run dev -- <arguments>
 runs TypeScript directly; `npm run dev` starts the runtime. Desktop probes need no
 keys. The package remains private while release packaging is unfinished.
 
+Rerun `node dist/cli.js setup` for guided macOS desktop permissions. A valid saved
+configuration is retained, so local access checks need no provider key or connection.
+Use `setup --replace` when you want to change provider settings. New settings are
+saved before the optional permission flow; skipping or cancelling its checks does
+not remove that configuration.
+
 Existing speech-only configurations need `npm run dev -- setup --replace`. This
 asks for reasoning preferences and visual-sharing consent before replacing the
 file. Configuration is not silently migrated or opted into screen sharing.
@@ -395,23 +401,46 @@ declares LGPL-3.0-or-later and includes other dependency licenses. Audit these
 binaries and notices before redistribution, including commercial packaging.
 External Linux utilities are not bundled; review their licenses before redistribution.
 
-### macOS Screen Recording setup
+### Guided macOS permissions and recovery
 
-Microphone and Accessibility grants do not grant screen capture. If `doctor`
-reports `screenCapture: permission-required`, open System Settings > Privacy &
-Security > Screen & System Audio Recording. For a run launched from Terminal,
-enable Terminal in the upper screen-recording list. If absent, use **+**, then
-**Cmd+Shift+G** and `/System/Applications/Utilities/Terminal.app` to add it.
-Other launchers may have a different permission identity.
+Run `node dist/cli.js setup` from the same launcher you use for voice mode. The
+permission menu reports microphone, Accessibility and Screen Recording grants
+separately. It also shows the helper path/bundle identifier and, when available,
+the nearest observed launching app and its path. These observations help locate
+the Privacy & Security entry; they do not determine which identity macOS uses.
 
-Fully quit and reopen the launching terminal, then rerun `npm run dev -- doctor`.
-Shell-only API-key exports may need to be set again; setup stores variable names,
-not their values. `unverified` with a permission-granted explanation is expected:
-doctor does not capture a test image. An activated voice turn verifies real capture;
-look for nonempty `attention.frames` in the result. Images remain in memory.
+Each **Request/verify** choice is deliberate and may display an OS permission
+prompt. The local checks are bounded and require no provider key or request:
 
-Guided permission setup and local verification are tracked in
-[the setup backlog](../BACKLOG.md#setup-permissions-and-providers).
+| Check | Local operation |
+| --- | --- |
+| Microphone | Receives up to three seconds of audio frames, retaining only a frame count. Audio is discarded. |
+| Accessibility | Reads the focused window's role without reading titles or selection, changing focus, or issuing input. |
+| Screen Recording | Captures one image and discards it inside the helper; no image bytes leave the helper and no system audio is captured. |
+
+Only the permission name and outcome are returned. No check saves capture data.
+**Recheck access status** and `doctor` never prompt or capture. A granted status
+is distinct from a successful local operation; skipped checks remain unverified.
+The current setup session clears verification labels when grants or observed
+launcher/helper identity change. Finishing the menu does not claim unchecked
+permissions work.
+
+Use System Settings > Privacy & Security for the matching Microphone,
+Accessibility, or Screen & System Audio Recording entry (called Screen Recording
+on some macOS versions). If an enabled grant still fails, fully quit and reopen
+the launching app and rerun setup. Moving or rebuilding an unsigned helper can
+require renewed grants. Shell-only API-key exports may need to be set again;
+setup retains names, not key values. See Apple's
+[screen and system audio recording guidance](https://support.apple.com/guide/mac-help/control-access-screen-system-audio-recording-mchld6aa7d23/mac).
+
+Known native failures retain specific recovery guidance through capture history,
+tool results and the feedback panel: denied access, missing or crashed helper,
+timeout, unsupported control, and stale target are separate outcomes. Unknown
+failures do not establish denied permission. A capture warning can leave the
+turn running with limited context. The panel retains the latest issue as an earlier
+warning, without claiming it still applies after a successful recovery.
+Actual prompt, revocation/restart and device behavior remain manual acceptance
+work under [P03](../BACKLOG.md#desktop-reliability).
 
 ## Desktop experiments and checks
 
@@ -461,6 +490,9 @@ Current validation coverage and limits:
   Feedback tests cover protocol bounds, executable identity and screen placement;
   runtime tests cover target labels, stale events, dismissal and helper cleanup. They
   issue no desktop input and do not capture the screen.
+- Permission setup tests use mocked grants, verification results and cancellation.
+  Native checks cover grant-state decisions, bounded launcher ancestry and finite
+  content-free responses; routine checks request no grants or device capture.
 - The isolated Linux/X11 suite exercises window discovery, screenshots, cursor
   sampling, recording lifecycle and cleanup. Its synthetic audio and virtual desktop
   do not establish physical-device behavior. Windows adapter/protocol/image checks

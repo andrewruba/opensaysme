@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test, vi } from 'vitest';
 import { access } from 'node:fs/promises';
 import { CommandError, runCommand } from '../src/desktop/process.js';
+import { DesktopError } from '../src/desktop/errors.js';
 
 import {
   focusMacOS,
@@ -11,6 +12,7 @@ import {
   macOSInput,
   macOSVoiceHelper,
   macOSFeedbackHelper,
+  macOSPermissions,
   parseMacOSSnapshot,
   inspectMacOS,
   listMacOSWindows,
@@ -97,6 +99,36 @@ test('feedback resolves the optional native UI without desktop access', async ()
   assert.equal(vi.mocked(runCommand).mock.calls.length, calls);
 });
 
+test('permission inspection is separate from explicit local verification and validates the requested capability', async () => {
+  const report = { helperPath: '/fixture/helper', bundleIdentifier: 'dev.opensaysme.desktop', launcher: null,
+    desktopAvailable: true, permissions: { microphone: 'not-determined', accessibility: 'not-granted', screenCapture: 'granted' } };
+  const signal = new AbortController().signal;
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(report));
+  assert.deepEqual(await macOSPermissions.inspect(signal), report);
+  assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.slice(1), [['--permissions'], { timeoutMs: 4000, signal }]);
+  vi.mocked(runCommand).mockResolvedValueOnce('{"permission":"microphone","outcome":"verified"}');
+  assert.deepEqual(await macOSPermissions.verify('microphone', signal), { permission: 'microphone', outcome: 'verified' });
+  assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.slice(1), [['--verify-permission', 'microphone'], { timeoutMs: 25000, signal }]);
+  vi.mocked(runCommand).mockResolvedValueOnce('{"permission":"microphone","outcome":"verified"}');
+  await assert.rejects(macOSPermissions.verify('screenCapture'), { code: 'helper-invalid-response' });
+  const previous = vi.mocked(runCommand).mock.calls.length;
+  await assert.rejects(macOSPermissions.inspect(AbortSignal.abort()));
+  assert.equal(vi.mocked(runCommand).mock.calls.length, previous);
+});
+
+test('known transport failures keep their cause and never reuse arbitrary error text', async () => {
+  for (const [reason, code] of [['timeout', 'timeout'], ['signal', 'helper-crashed'], ['spawn-failed', 'helper-unavailable']] as const) {
+    vi.mocked(runCommand).mockRejectedValueOnce(new CommandError(reason));
+    await assert.rejects(captureMacOSFrame(), (error: unknown) => error instanceof DesktopError && error.code === code);
+  }
+  vi.mocked(access).mockRejectedValueOnce(new Error('private path'));
+  await assert.rejects(macOSPermissions.inspect(), { code: 'helper-missing' });
+  vi.mocked(runCommand).mockRejectedValueOnce(new CommandError('timeout'));
+  const report = await probeMacOS();
+  assert.match(report.capabilities.screenCapture.detail, /timed out/);
+  assert.ok(!report.capabilities.screenCapture.detail.includes('Enable Screen Recording'));
+});
+
 test('context accepts partial desktop access and passes cancellation to the helper', async () => {
   const signal = new AbortController().signal;
   const context = {
@@ -139,6 +171,12 @@ test('screen frame errors explain permission and platform limits without exposin
   await assert.rejects(captureMacOSFrame(), /macOS 14 or later/);
   vi.mocked(runCommand).mockResolvedValueOnce('{"image":"private-pixels"}');
   await assert.rejects(captureMacOSFrame(), { message: 'The macOS desktop helper returned an invalid response.' });
+});
+
+test('screen capture preserves the native deadline as a typed timeout instead of capture failure', async () => {
+  vi.mocked(runCommand).mockResolvedValueOnce('{"error":"screen-capture-timeout"}');
+  await assert.rejects(captureMacOSFrame(), (error: unknown) => error instanceof DesktopError
+    && error.code === 'screen-capture-timeout' && error.message.includes('timed out'));
 });
 
 test('macOS inventory preserves distinct windows and forwards cancellation without focusing', async () => {

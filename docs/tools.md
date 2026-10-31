@@ -164,11 +164,20 @@ desktop input trial has established completion accuracy or latency yet. Routine
 tests use scripted provider responses to check tool behavior and permission
 enforcement; they do not establish model permission accuracy or successful native input.
 
-Window capture distinguishes a helper terminated by a signal (`helper-crashed`)
-from an explicit permission denial or timeout. No image or input observation is
-returned after a crash. Unexpected tool failures report an unknown cause rather
-than attributing them to permissions; native output and crash-report contents are
-not forwarded to the model.
+Known macOS failures preserve finite codes through adapters, capture history,
+tools and runtime feedback. Permission denial, a missing or crashed helper,
+timeouts, unsupported text controls and stale targets have separate recovery
+messages. No image or input observation is returned after a capture failure.
+Unexpected failures retain an unknown cause; arbitrary native output and crash
+reports are not forwarded to the model. The panel retains the latest desktop issue
+as an earlier warning while the agent uses whatever context remains available;
+it does not assert that a recovered failure still limits access.
+
+`opensaysme setup` provides guided local permission verification outside the agent
+tool loop. Each check is chosen explicitly and discards captured data within the
+helper; it grants no desktop-action authority and makes no provider call. Status
+rechecks and `doctor` remain read-only. A local verification proves that operation
+worked at that moment, not that future targets or model decisions are correct.
 
 ## Inspect the catalog
 

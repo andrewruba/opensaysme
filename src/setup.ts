@@ -2,6 +2,8 @@ import { cancel, confirm, intro, isCancel, note, outro, text } from '@clack/prom
 import { configPath, readConfig, writeConfig } from './config.js';
 import { streamingModel } from './speech/openai.js';
 import { defaultReasoningModel } from './reasoning/openai.js';
+import { desktopAdapter } from './desktop/index.js';
+import { setupPermissions } from './setup-permissions.js';
 
 function answer<T>(value: T): Exclude<T, symbol> {
   if (isCancel(value)) {
@@ -15,8 +17,15 @@ export async function setup(signal?: AbortSignal, replace = false): Promise<void
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error('Setup needs an interactive terminal. See docs/development.md for the configuration format.');
   }
-  if (!replace && await readConfig()) throw new Error(`Configuration already exists at ${configPath()}; use setup --replace to reconfigure.`);
+  signal?.throwIfAborted();
+  const existing = replace ? null : await readConfig();
   intro('OpenSaysMe setup');
+  if (existing && !replace) {
+    note(`Using saved provider settings at ${configPath()}. Use setup --replace to change them.\nNo provider key or connection is needed for local permission checks.`, 'Existing configuration');
+    await permissions(signal);
+    outro('Provider settings retained. Run opensaysme when desktop access is ready.');
+    return;
+  }
   note(`Voice uses OpenAI ${streamingModel}. When you activate recording,\n`
     + 'microphone audio streams directly to OpenAI using your key. Provider charges apply.\n'
     + 'While recording, screen frames, window/selection context, and cursor paths are captured.\n'
@@ -50,5 +59,14 @@ export async function setup(signal?: AbortSignal, replace = false): Promise<void
     reasoning: { provider: 'openai', model, apiKeyEnv: reasoningKeyEnv },
     shareVisualContext: true,
   }, configPath(), replace);
+  note(`Saved ${configPath()}. Provider settings remain saved if you skip or cancel local checks.`, 'Configuration saved');
+  await permissions(signal);
   outro(`Saved ${configPath()}. Set ${[...new Set([apiKeyEnv, reasoningKeyEnv])].join(' and ')} in your environment, then run opensaysme.`);
+}
+
+async function permissions(signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  const adapter = await desktopAdapter();
+  if (adapter.permissions) await setupPermissions(adapter.permissions, signal);
+  else note('Guided desktop permissions currently support macOS only.', 'Desktop permissions');
 }

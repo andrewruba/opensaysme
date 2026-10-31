@@ -16,6 +16,28 @@ prebuilt Intel/Apple Silicon distribution are still release work.
 Local binaries and compiler caches are excluded from npm packages; build the
 helper on the target Mac for this source prototype.
 
+`--permissions` is the read-only setup report. It returns microphone, Accessibility
+and Screen Recording grant states separately, the helper path/bundle identifier,
+and a bounded search for the nearest observed launcher application in the parent
+process chain. The observed launcher is guidance, not proof of which identity macOS
+uses for a particular grant. The report requests no access and reads no window
+titles, selected text, microphone frames or screenshots.
+
+After explicit setup consent, `--verify-permission microphone|accessibility|screenCapture`
+may request that permission and verify it locally. Microphone verification receives
+up to three seconds of frames and retains only a count; Accessibility reads the
+focused window's role without changing focus; screen verification captures one
+frame and discards its image inside the helper. Only a permission name and finite
+outcome code leave the helper. No capture data is printed, saved or sent to a
+provider. The operation has a twenty-second deadline and the parent enforces a
+twenty-five-second process timeout. Cancellation releases microphone resources.
+Permission prompts may need a Settings change or launcher restart before a new
+check can pass. A reported grant alone is not successful verification.
+
+The setup checks have synthetic protocol, grant-state and launcher-ancestry tests;
+actual grant prompts, revocation/restarts and device behavior require manual macOS
+validation. `--probe` and the public `doctor` command remain read-only.
+
 Explicit commands `--inspect` and `--inspect-selection` return JSON. Only the
 second reads the current selection; secure fields are rejected. `--focus <id>`
 uses an ID from inspection, raises the matched window, and verifies its focus.

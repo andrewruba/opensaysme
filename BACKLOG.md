@@ -181,9 +181,9 @@ Status: **Partial** — these access/setup permissions are separate from action 
 | --- | --- | --- |
 | S01 | Done | Terminal setup, independent speech/reasoning settings, environment-key references, sharing consent, and read-only doctor. |
 | S02 | Todo | Add OS credential storage while retaining environment keys; keep secrets out of configuration, arguments, and logs. |
-| S03 | Todo | Guide microphone, Accessibility, and screen-capture grants separately, including launcher/helper identity and restart/recheck instructions. |
-| S04 | Todo | Offer deliberate local permission verification that discards capture data and makes no provider request. |
-| S05 | Todo | Distinguish permission denial, missing dependencies, unsupported operations, and timeouts; expose missing context clearly. |
+| S03 | Done | macOS setup guides microphone, Accessibility and Screen Recording separately, shows the observed launcher/helper identity, and explains restart/rebuild/recheck recovery. Existing valid provider settings are retained unless explicitly replaced; real grant and launcher behavior remains under P03. |
+| S04 | Done | Explicit setup menu choices request/verify each grant locally: up to three seconds of microphone frames, the focused window's role, or one discarded screenshot. Only finite outcomes leave the helper; no provider request, saved capture or desktop input occurs. Status rechecks and doctor remain passive. |
+| S05 | Done | Known macOS permission, missing-helper, crash, timeout, unsupported-control and stale-target failures preserve bounded codes through adapters, tools, capture history and runtime feedback. The panel retains recovery guidance for limited context; unknown failures do not infer permission denial. Mocked/synthetic checks cover propagation; real failure/recovery trials remain under P03. |
 | S06 | Todo | Offer explicit provider authentication/capability checks and explain which data each configured provider receives. |
 | S07 | Deferred | Add a second reasoning provider with validated image/tool support and fixture tests when needed; provider count does not gate the core MVP. |
 | S08 | Todo | Review context sharing and retention as tools and follow-up context expand, including opt-in diagnostics. |

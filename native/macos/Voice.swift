@@ -381,15 +381,17 @@ final class VoiceSession {
     }
 
     private func startCapture() {
-        guard let id = turnID, AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
-            fail("microphone-unavailable"); return
+        guard let id = turnID else { return }
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+            fail("microphone-permission-required"); return
         }
+        guard AVCaptureDevice.default(for: .audio) != nil else { fail("microphone-unavailable"); return }
         let capture = VoiceCapture()
         self.capture = capture
         do {
             try capture.start()
             output.send(["type": "audio-started", "turnId": id])
-        } catch { fail("capture-failed") }
+        } catch { fail("microphone-unavailable") }
     }
 
     private func drainAudio() {

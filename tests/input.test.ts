@@ -7,6 +7,7 @@ import type { DesktopInputAdapter } from '../src/desktop/input-types.js';
 import type { WindowFrameCapture } from '../src/desktop/types.js';
 import type { ToolResult } from '../src/tools/types.js';
 import type { ConversationTurn } from '../src/conversation.js';
+import { DesktopError } from '../src/desktop/errors.js';
 
 const signal = () => new AbortController().signal;
 const frame: Extract<WindowFrameCapture, { status: 'ok' }> = {
@@ -35,6 +36,19 @@ function fixture(request = 'Fill this form', decision: Partial<PermissionDecisio
 afterEach(() => vi.useRealTimers());
 
 describe('request-scoped desktop input', () => {
+  it('distinguishes missing access before dispatch and still blocks retries after an uncertain typed failure', async () => {
+    const before = fixture(); before.adapter.inspect.mockRejectedValue(new DesktopError('permission-required'));
+    expect(await before.call()).toMatchObject({ isError: true, desktopIssue: 'permission-required' });
+    expect(before.authorize).not.toHaveBeenCalled(); expect(before.adapter.execute).not.toHaveBeenCalled();
+    before.inputs.close(); before.host.close();
+    const after = fixture(); after.adapter.execute.mockRejectedValue(new DesktopError('helper-crashed'));
+    const failed = await after.call();
+    expect(failed).toMatchObject({ isError: true, desktopIssue: 'helper-crashed' });
+    expect(value(failed).code).toBe('input-uncertain');
+    after.args.observationId = after.inputs.observe(frame);
+    expect(value(await after.call()).code).toBe('input-stopped');
+    expect(after.adapter.execute).toHaveBeenCalledOnce(); after.inputs.close(); after.host.close();
+  });
   it.each([
     'TypeError: missing value\n\tat render (app.ts:12)\n\nPlease explain this error.',
     'first\r\n\tsecond\rthird\n日本語 👋 e\u0301',

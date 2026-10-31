@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition, ToolDescriptor, ToolHost, ToolResult } from './types.js';
+import { desktopIssue, desktopIssueSchema, desktopMessages, type DesktopIssue } from '../desktop/errors.js';
 
 const toolName = /^[a-z][a-z0-9_]{0,63}$/;
 const resultSchema = z.object({
@@ -9,10 +10,15 @@ const resultSchema = z.object({
       data: z.string().min(4).max(1_400_000).regex(/^[A-Za-z0-9+/]+={0,2}$/) }).strict(),
   ])).min(1).max(8),
   isError: z.boolean().optional(),
+  desktopIssue: desktopIssueSchema.optional(),
 }).strict();
 
 export function toolError(code: string, message: string): ToolResult {
   return { isError: true, content: [{ type: 'text', text: JSON.stringify({ code, message }) }] };
+}
+
+export function desktopToolError(issue: DesktopIssue, code: string = issue, message: string = desktopMessages[issue]): ToolResult {
+  return { ...toolError(code, message), desktopIssue: issue };
 }
 
 export function validateToolResult(raw: unknown): ToolResult {
@@ -100,9 +106,10 @@ export class ToolRegistry implements ToolHost {
       const raw = await Promise.race([work, aborted]);
       operation.signal.throwIfAborted();
       return validateToolResult(raw);
-    } catch {
+    } catch (error) {
       if (signal.aborted || this.closed) throw cancelled();
-      return timedOut ? toolError('timeout', 'The tool timed out. Check desktop access before retrying.')
+      const issue = desktopIssue(error);
+      return timedOut ? desktopToolError('timeout') : issue ? desktopToolError(issue)
         : toolError('tool-failed', 'The tool failed before returning a valid result. Inspect local diagnostics for the cause.');
     } finally {
       clearTimeout(timer);

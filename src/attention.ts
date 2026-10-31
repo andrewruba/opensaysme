@@ -3,6 +3,7 @@ import { desktopContextSchema } from './desktop/voice-types.js';
 import { screenFrameCaptureSchema, type ScreenFrameCapture } from './desktop/visual-types.js';
 import { AudioTimeline, type AudioSummary, type AudioTiming } from './audio-timeline.js';
 import type { TranscriptionPhrase } from './speech/types.js';
+import { DesktopError, desktopIssue, desktopMessages, type DesktopIssue } from './desktop/errors.js';
 
 export interface AttentionFrame extends ScreenFrameCapture { id: string; atMs: number; receivedAtMs: number }
 export interface ContextSample { id: string; atMs: number; receivedAtMs: number; context: DesktopContext }
@@ -28,6 +29,7 @@ interface AttentionOptions {
   frameIntervalMs?: number;
   contextIntervalMs?: number;
   captureTimeoutMs?: number;
+  onDesktopIssue?: (issue: DesktopIssue) => void;
 }
 
 // Retain the first and latest observations and thin crowded interior samples.
@@ -55,6 +57,7 @@ export class AttentionCollector {
   private lastCursorAt = -Infinity;
   private transcriptBytes = 0;
   private frameFailures = 0;
+  private readonly reportedIssues = new Set<DesktopIssue>();
   private readonly abort = () => this.discard();
 
   constructor(private readonly options: AttentionOptions) {
@@ -71,6 +74,12 @@ export class AttentionCollector {
 
   private warn(message: string) {
     if (!this.history.warnings.includes(message) && this.history.warnings.length < 16) this.history.warnings.push(message);
+  }
+  private desktopWarning(issue: DesktopIssue) {
+    this.warn(desktopMessages[issue]);
+    if (this.reportedIssues.has(issue)) return;
+    this.reportedIssues.add(issue);
+    try { this.options.onDesktopIssue?.(issue); } catch { /* Optional feedback cannot stop collection. */ }
   }
   private time(capturedAt: string, receivedAtMs: number, requestedAtMs = 0): number {
     // Native clocks are wall timestamps. Map them to the turn's monotonic epoch,
@@ -93,7 +102,7 @@ export class AttentionCollector {
     let deadline: NodeJS.Timeout | undefined;
     let abort!: () => void;
     const cancelled = new Promise<never>((_, reject) => {
-      abort = () => reject(new Error('Capture stopped.'));
+      abort = () => reject(local.signal.aborted ? new DesktopError('timeout') : new Error('Capture stopped.'));
       signal.addEventListener('abort', abort, { once: true });
       if (signal.aborted) abort();
       deadline = setTimeout(() => local.abort(), this.options.captureTimeoutMs ?? 3000);
@@ -120,9 +129,11 @@ export class AttentionCollector {
       }
       frame.warnings.forEach((warning) => this.warn(warning));
       this.frameFailures = 0;
-    } catch {
+    } catch (error) {
       if (!this.stopped) {
-        this.warn('Screen capture unavailable, denied, or timed out. Run doctor and check screen-capture permissions/prerequisites.');
+        const issue = desktopIssue(error);
+        if (issue) this.desktopWarning(issue);
+        else this.warn('Screen capture failed without a known cause. Run opensaysme setup to verify local access.');
         this.frameFailures++;
       }
     } finally {
@@ -149,8 +160,13 @@ export class AttentionCollector {
         thin(this.history.contexts, 24);
       }
       context.warnings.forEach((warning) => this.warn(warning));
-    } catch {
-      if (!this.stopped) this.warn('Some window or selection context was unavailable or timed out.');
+      context.issues?.forEach((issue) => this.desktopWarning(issue));
+    } catch (error) {
+      if (!this.stopped) {
+        const issue = desktopIssue(error);
+        if (issue) this.desktopWarning(issue);
+        else this.warn('Some window or selection context was unavailable without a known cause.');
+      }
     } finally { this.later(() => { void this.collectContext(); }, this.options.contextIntervalMs ?? 1000); }
   }
 

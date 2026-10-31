@@ -7,6 +7,6 @@
   <key>CFBundleName</key>
   <string>OpenSaysMe Desktop Probe</string>
   <key>NSMicrophoneUsageDescription</key>
-  <string>OpenSaysMe tests microphone access only when you run desktop test-microphone. Audio is discarded without saving or transmitting it.</string>
+  <string>OpenSaysMe records speech when you activate voice mode and sends it to your configured speech provider. Optional setup and desktop microphone checks capture briefly and discard audio locally without sending or saving it.</string>
 </dict>
 </plist>

@@ -5,6 +5,7 @@ import { createDesktopTools } from '../src/tools/desktop.js';
 import type { ToolDefinition, ToolResult } from '../src/tools/types.js';
 import type { DesktopAdapter, WindowInventory } from '../src/desktop/types.js';
 import type { ConversationTurn } from '../src/conversation.js';
+import { DesktopError, desktopMessages } from '../src/desktop/errors.js';
 
 const signal = () => new AbortController().signal;
 const text = (value: unknown): ToolResult => ({ content: [{ type: 'text', text: JSON.stringify(value) }] });
@@ -24,6 +25,17 @@ function definition(run: ToolDefinition['run'] = async () => text({ ok: true }))
 afterEach(() => vi.useRealTimers());
 
 describe('local tool registry', () => {
+  it('preserves trusted local failure metadata and rejects forged recovery codes', async () => {
+    const host = new ToolRegistry([definition(async () => { throw new DesktopError('screen-permission-required'); })]);
+    const result = await host.call('inspect_fixture', {}, signal());
+    expect(result).toMatchObject({ isError: true, desktopIssue: 'screen-permission-required' });
+    expect(value(result)).toEqual({ code: 'screen-permission-required', message: desktopMessages['screen-permission-required'] });
+    host.close();
+    const malformed = new ToolRegistry([definition(async () => ({ ...text({ ok: true }), desktopIssue: 'private arbitrary text' } as unknown as ToolResult))]);
+    const rejected = await malformed.call('inspect_fixture', {}, signal());
+    expect(rejected.desktopIssue).toBeUndefined(); expect(value(rejected).code).toBe('tool-failed');
+    expect(JSON.stringify(rejected)).not.toContain('private arbitrary text'); malformed.close();
+  });
   it('creates an isolated strict catalog without invoking tools', () => {
     const run = vi.fn();
     const host = new ToolRegistry([definition(run)]);

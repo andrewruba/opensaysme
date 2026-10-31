@@ -1,5 +1,6 @@
 import type { z } from 'zod';
 import type { ConversationEvidence } from '../conversation.js';
+import type { DesktopIssue } from '../desktop/errors.js';
 
 export interface ToolDescriptor {
   name: string;
@@ -9,7 +10,7 @@ export interface ToolDescriptor {
 }
 export type ToolContent = { type: 'text'; text: string }
   | { type: 'image'; mimeType: 'image/jpeg'; data: string };
-export interface ToolResult { content: ToolContent[]; isError?: boolean }
+export interface ToolResult { content: ToolContent[]; isError?: boolean; desktopIssue?: DesktopIssue }
 export interface ToolFeedbackTarget { application: string; title?: string }
 export interface ToolHost {
   list(): ToolDescriptor[];

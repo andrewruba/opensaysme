@@ -78,7 +78,8 @@ private func inputWindowContentFingerprint(_ window: AXUIElement, deadline: Time
                   let children = values as? [AXUIElement], children.count == requested else { throw InputError.unavailable }
             return children
         })
-    return try windowContentFingerprint(content)
+    do { return try windowContentFingerprint(content) }
+    catch WindowContentFingerprintError.incomplete { throw InputError.unavailable }
 }
 
 private func resolveInput(_ command: InputCommand) throws -> ResolvedInput {
@@ -119,7 +120,9 @@ private func resolveInput(_ command: InputCommand) throws -> ResolvedInput {
         && AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success && settable.boolValue
     let focused = (try? focusedElement(applicationElement(application))).map { CFEqual($0, element) } ?? false
     if command.action.kind == "type_text" {
-        guard let text = command.action.text, supportsInputText(text, role: role, editable: editable) else { throw InputError.unavailable }
+        guard let text = command.action.text, supportsInputText(text, role: role, editable: editable) else {
+            throw DesktopError("The input does not support literal text replacement.", code: "unsupported-text-target")
+        }
     }
     if command.action.kind == "press_key" { guard editable && focused else { throw InputError.unavailable } }
     // Other fields can change programmatically without a HID event or changing

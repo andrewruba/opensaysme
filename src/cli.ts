@@ -71,7 +71,7 @@ const program = new Command()
     console.log('Stopped.');
   });
 
-program.command('setup').description('Configure speech, visual sharing, and reasoning without storing keys')
+program.command('setup').description('Configure providers and guide macOS permissions; retain saved settings unless --replace')
   .option('--replace', 'Replace existing configuration after interactive setup')
   .action((options: { replace?: boolean }) => setup(stop.signal, Boolean(options.replace)));
 program.command('tools').description('List available agent tools and their schemas without reading the desktop')

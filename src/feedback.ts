@@ -1,5 +1,6 @@
 import type { VoiceOutput } from './runtime.js';
 import type { FeedbackSink } from './desktop/feedback-process.js';
+import { desktopMessages, type DesktopIssue } from './desktop/errors.js';
 
 // Cut on code-point boundaries while enforcing the native UTF-16 bound.
 function clip(value: string, limit: number): string {
@@ -26,6 +27,7 @@ export function createFeedback(sink: FeedbackSink) {
   let settled = false, closed = false;
   let closing: Promise<void> | undefined;
   let expiry: NodeJS.Timeout | undefined;
+  let recovery: DesktopIssue | undefined;
   const clearExpiry = () => { clearTimeout(expiry); expiry = undefined; };
   const hide = () => { clearExpiry(); sink.send({ type: 'hide' }); };
   function show(title: string, message = '', detail = '', expires = false) {
@@ -36,31 +38,33 @@ export function createFeedback(sink: FeedbackSink) {
   return {
     handle(event: VoiceOutput) {
       if (closed) return;
-      if (event.type === 'dismiss-feedback') { settled = true; hide(); return; }
+      if (event.type === 'dismiss-feedback') { settled = true; recovery = undefined; hide(); return; }
       if (event.type === 'debug') return;
       if (event.type === 'state' && event.state === 'starting' && event.turnId) {
         hide(); // Clear the prior answer and let native placement follow the pointer display.
-        turnId = event.turnId; settled = false;
+        turnId = event.turnId; settled = false; recovery = undefined;
       } else if ('turnId' in event && event.turnId && event.turnId !== turnId) return;
       if (event.type === 'state') {
         if (event.state === 'ready') { if (!settled) hide(); return; }
         if (event.state === 'cancelling') { settled = true; hide(); return; }
-        if (!settled) show(stateTitles[event.state], '', event.state === 'listening'
+        if (!settled) show(stateTitles[event.state], '', recovery ? `Earlier warning: ${desktopMessages[recovery]}` : event.state === 'listening'
           ? 'Ctrl+Shift+Space to finish · Escape to cancel' : 'Escape to cancel');
       } else if (event.type === 'cancelled') {
         settled = true; hide();
       } else if (event.type === 'result') {
         if (settled) return;
         settled = true;
-        show('OpenSaysMe', event.response, 'Ctrl+Shift+Space to reply · Full response in terminal', true);
+        show(recovery ? 'OpenSaysMe · Earlier desktop warning' : 'OpenSaysMe', event.response,
+          recovery ? `Earlier warning: ${desktopMessages[recovery]}` : 'Ctrl+Shift+Space to reply · Full response in terminal', true);
       } else if (event.type === 'error' || event.type === 'warning') {
         if (settled && event.type === 'warning') return;
+        if (event.type === 'warning' && event.desktopIssue) recovery = event.desktopIssue;
         show(event.type === 'error' ? 'Couldn’t complete the request' : 'OpenSaysMe warning', event.message,
           'Details in terminal', true);
         if (event.type === 'error' || !turnId) settled = true;
       } else if (event.type === 'activity' && !settled) {
         const target = event.target ? [event.target.application, event.target.title].filter(Boolean).join(' — ') : 'Resolving target…';
-        show(actionTitles[event.name] ?? 'Checking action…', target, 'Escape to cancel');
+        show(actionTitles[event.name] ?? 'Checking action…', target, recovery ? `Earlier warning: ${desktopMessages[recovery]}` : 'Escape to cancel');
       }
     },
     close(): Promise<void> {

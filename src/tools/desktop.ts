@@ -2,7 +2,8 @@ import { z } from 'zod';
 import { desktopSnapshotSchema, windowInventorySchema, windowInspectionSchema, windowFrameCaptureSchema, type DesktopAdapter, type WindowInventory } from '../desktop/types.js';
 import { desktopContextSchema } from '../desktop/voice-types.js';
 import { screenFrameCaptureSchema } from '../desktop/visual-types.js';
-import { ToolRegistry, toolError } from './registry.js';
+import { ToolRegistry, desktopToolError, toolError } from './registry.js';
+import type { DesktopIssue } from '../desktop/errors.js';
 import type { ToolDefinition, ToolHost, ToolResult } from './types.js';
 import { createInputTools, type RequestScope } from './input.js';
 import { conversationSchema, type ConversationEvidence } from '../conversation.js';
@@ -122,11 +123,11 @@ export function createDesktopTools(adapter: Adapter, scope?: RequestScope): Tool
       if (result.status === 'unavailable') {
         if (result.reason === 'stale-target') {
           windows.delete(windowId);
-          return toolError('stale-window', 'That window changed, closed, or became ambiguous. Refresh list_windows and resolve the request again.');
+          return desktopToolError('stale-or-ambiguous-target', 'stale-window');
         }
         return result.reason === 'permission-required'
-          ? toolError('permission-required', 'Window content requires macOS Accessibility permission for the launching terminal/helper. Existing screen evidence may still be useful.')
-          : toolError('content-unavailable', 'The application does not expose this window through Accessibility. Do not infer its contents; use other available evidence or clarify the target.');
+          ? desktopToolError('permission-required')
+          : desktopToolError('accessibility-unavailable', 'content-unavailable');
       }
       if (!sameEvidence(result.window, target)) {
         windows.delete(windowId);
@@ -150,7 +151,7 @@ export function createDesktopTools(adapter: Adapter, scope?: RequestScope): Tool
       if (result.status === 'unavailable') {
         if (result.reason === 'stale-target') {
           windows.delete(windowId);
-          return toolError('stale-window', 'The window changed or closed during capture. Refresh list_windows and resolve the target again.');
+          return desktopToolError('window-capture-stale', 'stale-window');
         }
         const messages = {
           'accessibility-permission-required': 'Window targeting requires macOS Accessibility permission for the launching terminal/helper.',
@@ -162,7 +163,13 @@ export function createDesktopTools(adapter: Adapter, scope?: RequestScope): Tool
           'capture-failed': 'The requested window could not be captured. No verified image was returned.',
           'helper-crashed': 'The native window capture helper crashed before returning an image. Check the local helper build and macOS crash report; no pixels were returned.',
         };
-        return toolError(result.reason, messages[result.reason]);
+        const issues: Record<typeof result.reason, DesktopIssue> = {
+          'accessibility-permission-required': 'permission-required', 'screen-permission-required': 'screen-permission-required',
+          unsupported: 'window-capture-unsupported',
+          'ambiguous-target': 'window-capture-ambiguous', inaccessible: 'window-capture-unavailable',
+          timeout: 'window-capture-timeout', 'capture-failed': 'window-capture-failed', 'helper-crashed': 'helper-crashed',
+        };
+        return desktopToolError(issues[result.reason], result.reason, messages[result.reason]);
       }
       if (!sameEvidence(result.window, target)) {
         windows.delete(windowId);

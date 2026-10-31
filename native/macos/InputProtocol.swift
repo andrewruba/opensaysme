@@ -1,7 +1,7 @@
 import Foundation
 import CoreGraphics
 
-enum InputError: Error { case invalid, unavailable }
+enum InputError: String, Error { case invalid = "invalid-input", unavailable = "input-unavailable" }
 struct InputPoint: Codable { let x: Double; let y: Double; var cg: CGPoint { CGPoint(x: x, y: y) } }
 struct InputBounds: Codable {
     let x: Double; let y: Double; let width: Double; let height: Double

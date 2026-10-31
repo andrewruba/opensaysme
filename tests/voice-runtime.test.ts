@@ -9,6 +9,7 @@ import type { TranscriptionOptions, TranscriptionSession } from '../src/speech/t
 import type { ToolHost } from '../src/tools/types.js';
 import { conversationLifetimeMs, RecentConversation, type ConversationEvidence, type ConversationTurn } from '../src/conversation.js';
 import type { VoiceRuntimeOptions } from '../src/runtime.js';
+import { DesktopError, desktopMessages } from '../src/desktop/errors.js';
 
 const context: DesktopContext = { platform: 'test', capturedAt: '2026-10-28T00:00:00.000Z',
   activeWindow: { id: 'one', application: 'Editor' }, selectedText: 'original selection',
@@ -76,6 +77,28 @@ async function complete(f: ReturnType<typeof fixture>, transcript: string) {
   f.sessions[index]!.final.resolve(transcript); await flush();
   return id;
 }
+
+it('surfaces deduplicated desktop recovery warnings without stopping the request', async () => {
+  const host: ToolHost = { list: () => [], call: vi.fn(), close: vi.fn() };
+  const f = fixture(async () => ({ ...structuredClone(context), capturedAt: new Date().toISOString(), issues: ['permission-required'] }),
+    async (input) => {
+      for (let i = 0; i < 2; i++) input.onTool?.({ callId: String(i), name: 'capture_screen', arguments: {}, phase: 'completed', effect: 'read',
+        result: { isError: true, desktopIssue: 'screen-permission-required', content: [{ type: 'text', text: '{}' }] } });
+      return 'Desktop context was incomplete.';
+    }, async () => { throw new DesktopError('screen-permission-required'); }, undefined, () => host);
+  const id = await complete(f, 'Explain this');
+  expect(f.outputs.filter((event) => event.type === 'warning' && event.desktopIssue === 'screen-permission-required'))
+    .toEqual([{ type: 'warning', turnId: id, desktopIssue: 'screen-permission-required', message: desktopMessages['screen-permission-required'] }]);
+  expect(f.outputs).toContainEqual({ type: 'warning', turnId: id, desktopIssue: 'permission-required', message: desktopMessages['permission-required'] });
+  expect(f.outputs).toContainEqual(expect.objectContaining({ type: 'result', turnId: id, response: 'Desktop context was incomplete.' }));
+});
+
+it('reports explicit microphone denial separately from an unavailable device', async () => {
+  const f = fixture(); f.runtime.toggle(); const id = f.id();
+  f.runtime.handle({ type: 'error', turnId: id, code: 'microphone-permission-required' });
+  expect(f.outputs).toContainEqual({ type: 'error', turnId: id, message: desktopMessages['microphone-permission-required'] });
+  expect(f.commands.at(-1)).toEqual({ type: 'cancel', turnId: id });
+});
 
 describe('conversational follow-up lifecycle', () => {
   it('carries clarification context to the actor and a fresh tool scope without sharing mutable history', async () => {

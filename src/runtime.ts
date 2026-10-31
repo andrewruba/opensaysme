@@ -10,6 +10,7 @@ import type { ToolFeedbackTarget, ToolHost } from './tools/types.js';
 import { prepareVisualContext, discardVisualContext, visualContextSummary, type PreparedVisualContext } from './visual-input.js';
 import type { VoiceInput } from './desktop/voice-process.js';
 import type { TranscriptionFactory, TranscriptionSession } from './speech/types.js';
+import { desktopMessages, type DesktopIssue } from './desktop/errors.js';
 
 export type VoiceState = 'ready' | 'starting' | 'listening' | 'processing' | 'interpreting' | 'inspecting' | 'acting' | 'cancelling';
 export interface LatencyMeasurements {
@@ -39,7 +40,7 @@ export type VoiceOutput =
   | { type: 'transcript'; turnId: string; text: string }
   | { type: 'cancelled'; turnId: string }
   | { type: 'debug'; turnId?: string; directory: string }
-  | { type: 'warning'; turnId?: string; message: string }
+  | { type: 'warning'; turnId?: string; message: string; desktopIssue?: DesktopIssue }
   | { type: 'error'; turnId?: string; message: string }
   | { type: 'result'; turnId: string; transcript: string; attention: ReturnType<typeof attentionSummary>;
     visualContext: ReturnType<typeof visualContextSummary>; response: string; debugDirectory?: string; latency: LatencyMeasurements };
@@ -51,6 +52,7 @@ interface Turn {
   conversation?: ConversationTurn[];
   transcript?: string; debugInputRecorded?: boolean; debugResultRecorded?: boolean;
   metrics: LatencyMeasurements; partial: string; timers: Set<NodeJS.Timeout>;
+  desktopIssues: Set<DesktopIssue>;
   startupTimer?: NodeJS.Timeout; stopTimer?: NodeJS.Timeout; captureTimer?: NodeJS.Timeout;
 }
 export interface VoiceRuntimeOptions {
@@ -69,7 +71,8 @@ export interface VoiceRuntimeOptions {
 }
 const nativeErrors = {
   'hotkey-unavailable': 'The global shortcut is unavailable. Check for conflicting bindings and run opensaysme doctor.',
-  'microphone-unavailable': 'The microphone is unavailable. Check the device and microphone permission.',
+  'microphone-permission-required': desktopMessages['microphone-permission-required'],
+  'microphone-unavailable': desktopMessages['microphone-unavailable'],
   'capture-failed': 'Microphone capture failed. Check the recording device and try again.',
   'invalid-command': 'The native voice helper rejected a command. Rebuild the helper.',
   'internal-error': 'The native voice helper failed. Run opensaysme doctor.',
@@ -93,6 +96,11 @@ export class VoiceRuntime {
     this.state = state;
     this.diagnostic('runtime', 'state', this.turn, { state });
     this.options.emit({ type: 'state', state, ...(this.turn ? { turnId: this.turn.id } : {}) });
+  }
+  private reportDesktopIssue(turn: Turn, issue: DesktopIssue) {
+    if (this.turn !== turn || turn.abort.signal.aborted || this.closed || turn.desktopIssues.has(issue)) return;
+    turn.desktopIssues.add(issue);
+    this.options.emit({ type: 'warning', turnId: turn.id, desktopIssue: issue, message: desktopMessages[issue] });
   }
   private timer(turn: Turn, duration: number, action: () => void): NodeJS.Timeout {
     const timer = setTimeout(() => {
@@ -202,7 +210,7 @@ export class VoiceRuntime {
   }
 
   private start() {
-    const turn: Turn = { id: randomUUID(), activated: this.now(), abort: new AbortController(), metrics: {}, partial: '', timers: new Set() };
+    const turn: Turn = { id: randomUUID(), activated: this.now(), abort: new AbortController(), metrics: {}, partial: '', timers: new Set(), desktopIssues: new Set() };
     this.turn = turn;
     this.diagnostic('runtime', 'turn-started', turn);
     this.publishState('starting');
@@ -218,6 +226,7 @@ export class VoiceRuntime {
         captureFrame: (signal) => this.capture(turn, 'frame', signal, this.options.captureFrame),
         now: () => this.elapsed(turn.activated), epochStart: Date.now() - this.elapsed(turn.activated),
         signal: turn.abort.signal, captureTimeoutMs: this.options.deadlines?.context,
+        onDesktopIssue: (issue) => this.reportDesktopIssue(turn, issue),
       });
       turn.session = this.options.transcribe({
         apiKey: this.options.apiKey, model: this.options.model, signal: turn.abort.signal,
@@ -284,6 +293,7 @@ export class VoiceRuntime {
         }
         try { this.options.debug?.tool?.(turn.id, event); } catch { /* Diagnostics cannot stop a turn. */ }
         this.publishState(event.phase === 'completed' ? 'interpreting' : event.effect === 'read' ? 'inspecting' : 'acting');
+        if (event.phase === 'completed' && event.result?.desktopIssue) this.reportDesktopIssue(turn, event.result.desktopIssue);
         if (event.phase === 'started' && event.effect !== 'read') {
           let target: ToolFeedbackTarget | undefined;
           try { target = turn.tools?.feedbackTarget?.(event.name, event.arguments); } catch { /* Feedback cannot stop tool execution. */ }

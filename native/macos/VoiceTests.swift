@@ -5,6 +5,10 @@ import Foundation
 @main
 struct VoiceTests {
     static func main() throws {
+        precondition(visualCaptureFailure(CaptureExecutionError.timeout) == .timeout)
+        precondition(visualCaptureFailure(CaptureExecutionError.displayUnavailable) == .unavailable)
+        precondition(visualCaptureFailure(VisualCaptureError.permissionRequired) == .permissionRequired)
+        precondition(visualCaptureFailure(NSError(domain: "Private native error", code: 1)) == .failed)
         // This suite creates synthetic buffers only; no microphone or hotkey.
         for sampleRate in [44_100.0, 48_000.0] {
             for channels: AVAudioChannelCount in [1, 2] {

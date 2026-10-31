@@ -54,6 +54,8 @@ Recent conversation now carries across activations for follow-ups such as “now
 
 On macOS, a small panel shows listening and processing status, the known target while acting, and responses or errors. It passes clicks through and does not take keyboard focus. Responses, including clarification questions, remain for up to a minute or until the next activation; use the hotkey to reply. Long text is shortened in the panel, with the full response retained in the terminal. If the panel is unavailable, voice continues with terminal feedback. Native focus and display behavior still need manual validation.
 
+Setup now guides microphone, Accessibility and Screen Recording permissions separately. It shows the observed launcher and helper identity, and offers optional local checks that discard capture data without calling a provider. Known desktop failures retain specific recovery guidance in the terminal and feedback panel. Permission prompts, revocation and launcher restarts still need manual macOS validation.
+
 See the [MVP backlog](BACKLOG.md) for feature status and remaining work.
 
 <!-- demo video goes here -->
@@ -68,6 +70,8 @@ node dist/cli.js doctor
 node dist/cli.js setup
 node dist/cli.js       # Requires the API-key environment variable chosen in setup
 ```
+
+Rerun `node dist/cli.js setup` to check or repair desktop access while retaining valid saved provider settings. Use `setup --replace` to change those settings. Each local verification is an explicit menu choice; `doctor` and setup's status recheck remain read-only.
 
 Tap Ctrl+Shift+Space to start and stop; Escape cancels pending work, hides the feedback panel, and clears recent conversation, but cannot undo input already issued. While idle, press Escape in the CLI terminal to hide the panel and clear conversation; the global Escape shortcut is active only during a turn. Activated audio streams to OpenAI using your key. After stopping, the agent can gather additional evidence and use available desktop actions within your request. Context, recent conversation, tool results, and input authorization checks go to your independently configured reasoning provider. macOS screen capture requires Screen Recording permission, and input also requires Accessibility access.
 

@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { AttentionCollector, attentionSummary } from '../src/attention.js';
 import type { ScreenFrameCapture } from '../src/desktop/visual-types.js';
 import type { DesktopContext } from '../src/desktop/voice-types.js';
+import { DesktopError, desktopMessages } from '../src/desktop/errors.js';
 
 const epoch = Date.parse('2026-10-28T12:00:00.000Z');
 const collectors: AttentionCollector[] = [];
@@ -132,7 +133,7 @@ it('orders delayed phrases by captured audio, accepts a drained tail, and ignore
   expect(summary.transcript).toHaveLength(2);
 });
 
-it('continues context capture when screen permission is denied and bounds retries', async () => {
+it('continues context capture after unknown screen failures without claiming permission denial', async () => {
   const f = fixture();
   f.captureFrame.mockRejectedValue(new Error('private native exception'));
   await vi.advanceTimersByTimeAsync(10_000);
@@ -140,5 +141,39 @@ it('continues context capture when screen permission is denied and bounds retrie
   expect(f.captureFrame).toHaveBeenCalledTimes(2);
   expect(history.contexts).toHaveLength(1);
   expect(JSON.stringify(history)).not.toContain('private native exception');
-  expect(history.warnings.some((warning) => warning.includes('Screen capture unavailable'))).toBe(true);
+  expect(history.warnings.some((warning) => warning.includes('Screen capture failed without a known cause'))).toBe(true);
+});
+
+it('preserves permission and timeout reasons while deduplicating local recovery feedback', async () => {
+  vi.useFakeTimers({ now: epoch });
+  const onDesktopIssue = vi.fn();
+  const captureFrame = vi.fn(async () => { throw new DesktopError('screen-permission-required'); });
+  const captureContext = vi.fn(async () => ({ platform: 'darwin', capturedAt: new Date().toISOString(),
+    activeWindow: null, warnings: [], issues: ['permission-required' as const] }));
+  const collector = new AttentionCollector({ captureFrame, captureContext, epochStart: epoch,
+    now: () => Date.now() - epoch, signal: new AbortController().signal, onDesktopIssue });
+  collectors.push(collector); await vi.advanceTimersByTimeAsync(6000);
+  expect(onDesktopIssue.mock.calls).toEqual([['screen-permission-required'], ['permission-required']]);
+  expect(collector.freeze().warnings).toContain(desktopMessages['screen-permission-required']);
+  expect(captureFrame).toHaveBeenCalledTimes(2);
+
+  const timeout = vi.fn();
+  const pending = new AttentionCollector({ captureFrame: async () => new Promise(() => {}), captureContext,
+    epochStart: epoch, now: () => Date.now() - epoch, signal: new AbortController().signal,
+    captureTimeoutMs: 10, onDesktopIssue: timeout });
+  collectors.push(pending); await vi.advanceTimersByTimeAsync(11);
+  expect(timeout).toHaveBeenCalledWith('timeout');
+});
+
+it('forwards native screen capture timeouts unchanged to recovery feedback', async () => {
+  vi.useFakeTimers({ now: epoch });
+  const onDesktopIssue = vi.fn();
+  const collector = new AttentionCollector({
+    captureFrame: async () => { throw new DesktopError('screen-capture-timeout'); },
+    captureContext: async () => ({ platform: 'darwin', capturedAt: new Date().toISOString(), activeWindow: null, warnings: [] }),
+    epochStart: epoch, now: () => Date.now() - epoch, signal: new AbortController().signal, onDesktopIssue,
+  });
+  collectors.push(collector); await flush();
+  expect(onDesktopIssue).toHaveBeenCalledExactlyOnceWith('screen-capture-timeout');
+  expect(collector.freeze().warnings).toContain(desktopMessages['screen-capture-timeout']);
 });

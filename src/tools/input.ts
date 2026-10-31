@@ -2,7 +2,8 @@ import { z } from 'zod';
 import { desktopInputSchema, inputEvidenceSchema, inputResultSchema, textRequiresTextArea, type DesktopInput, type DesktopInputAdapter } from '../desktop/input-types.js';
 import type { WindowFrameCapture } from '../desktop/types.js';
 import { permissionDecisionSchema, permits, type ActionAuthorizer, type ActionReview } from './permissions.js';
-import { toolError } from './registry.js';
+import { desktopToolError, toolError } from './registry.js';
+import { desktopIssue, desktopMessages } from '../desktop/errors.js';
 import type { ToolDefinition, ToolResult } from './types.js';
 import { conversationSchema, type ConversationTurn, type ConversationEvidence } from '../conversation.js';
 
@@ -56,8 +57,10 @@ export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestSc
         const target = { windowId: seen.frame.window.id, bounds, point };
         let evidence;
         try { evidence = inputEvidenceSchema.parse(await adapter.inspect(target, action, signal)); }
-        catch {
+        catch (error) {
           signal.throwIfAborted(); invalidate();
+          const issue = desktopIssue(error);
+          if (issue) return desktopToolError(issue);
           return toolError('input-target-unavailable', 'Input target could not be verified or does not support this action. Check focus, occlusion, Accessibility access and fresh window content. '
             + (action.kind === 'type_text' && textRequiresTextArea(action.text) ? 'Tabs and multiline text require a writable AXTextArea; do not substitute keystrokes or paste. ' : '')
             + 'No input was issued.');
@@ -67,7 +70,7 @@ export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestSc
           || !['AXTextField', 'AXTextArea'].includes(evidence.role)
           || (textRequiresTextArea(action.text) && evidence.role !== 'AXTextArea'))) {
           invalidate();
-          return toolError('unsupported-text-target', 'This target does not support the requested literal text replacement. Tabs and line breaks require a writable AXTextArea. No input was issued; do not use a keyboard or paste fallback.');
+          return desktopToolError('unsupported-text-target');
         }
         const decision = permissionDecisionSchema.parse(await authorize(structuredClone({ request, referenceContext, conversation, action, target: evidence,
           frame: seen.frame, point, completed }), signal));
@@ -88,7 +91,12 @@ export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestSc
         if (actions.length > 12) actions.shift();
         let result;
         try { result = inputResultSchema.parse(await adapter.execute(target, action, fingerprint, signal)); }
-        catch { signal.throwIfAborted(); return toolError('input-uncertain', 'The native action may have taken effect. Input is stopped for this turn; inspect and report the outcome without retrying.'); }
+        catch (error) {
+          signal.throwIfAborted();
+          const message = 'The native action may have taken effect. Input is stopped for this turn; inspect and report the outcome without retrying.';
+          const issue = desktopIssue(error);
+          return issue ? desktopToolError(issue, 'input-uncertain', `${message} ${desktopMessages[issue]}`) : toolError('input-uncertain', message);
+        }
         signal.throwIfAborted();
         recorded.status = result.status;
         completed.push({ action: action.kind, effect: decision.effect, status: result.status });
