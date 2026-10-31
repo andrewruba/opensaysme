@@ -45,7 +45,8 @@ it('shows a runnable quick start without configuration, keys or desktop access',
   expect(await readdir(directory)).toEqual([]);
 });
 
-it('shows and clears saved window names without configuration, credentials or desktop access', async () => {
+// Three real CLI launches need startup headroom on shared Intel macOS runners.
+it('shows and clears saved window names without configuration, credentials or desktop access', { timeout: 15_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'opensaysme-cli-context-'));
   directories.push(directory);
   const env = { ...process.env, OPENSAYSME_CONFIG_DIR: directory, OPENAI_API_KEY: '' };
