@@ -1,4 +1,4 @@
-# OpenSaysMe 🧙 — Less friction with your AI agents
+# OpenSaysMe 🧙 — Human interface for AI agents
 
 [![CI](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml/badge.svg?branch=main&event=push)](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml)
 [![Version 0.3.0](https://img.shields.io/badge/version-0.3.0-blue?style=flat-square)](package.json)
