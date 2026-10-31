@@ -68,12 +68,16 @@ it('fails closed before dispatch for history containing reusable handles or over
   }
 });
 
-it.each(['gpt-6-astra', 'configured-model'])('isolates evidence and keeps a strict permission response with %s', async (model) => {
+it.each([
+  ['gpt-6.1-terra', { effort: 'low' }, 4096],
+  ['gpt-6-astra', { effort: 'low' }, 4096],
+  ['configured-model', undefined, 1200],
+] as const)('isolates evidence and keeps a strict permission response with %s', async (model, reasoning, maxOutputTokens) => {
   const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
     const body = JSON.parse(String(init?.body));
     expect(body).toMatchObject({ model, store: false, text: { format: { type: 'json_schema', strict: true } } });
-    expect(body.reasoning).toEqual(model === 'gpt-6-astra' ? { effort: 'low' } : undefined);
-    expect(body.max_output_tokens).toBe(model === 'gpt-6-astra' ? 4096 : 1200);
+    expect(body.reasoning).toEqual(reasoning);
+    expect(body.max_output_tokens).toBe(maxOutputTokens);
     expect(body.temperature).toBeUndefined();
     expect(body.tools).toBeUndefined();
     const content = body.input[0].content;

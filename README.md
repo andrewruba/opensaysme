@@ -31,7 +31,7 @@ not authority.
 ## Run it
 
 Requires macOS 14+, Node.js 22.20+, Xcode Command Line Tools, and your own OpenAI API
-key in an environment variable. Reasoning defaults to GPT-6 Astra (`gpt-6-astra`)
+key in an environment variable. Reasoning defaults to GPT-6.1 Terra (`gpt-6.1-terra`)
 with low reasoning effort; speech uses `gpt-live-transcribe` independently.
 
 ```sh
@@ -106,7 +106,7 @@ Set `OPENSAYSME_CONFIG_DIR` to use a different directory, or edit the file direc
   },
   "reasoning": {
     "provider": "openai",
-    "model": "gpt-6-astra",
+    "model": "gpt-6.1-terra",
     "apiKeyEnv": "OPENAI_API_KEY"
   }
 }

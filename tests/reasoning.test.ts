@@ -59,15 +59,19 @@ function priorTurn(): ConversationTurn {
 }
 
 describe('natural desktop response', () => {
-  it.each(['gpt-6-astra', 'configured-model'])('uses compatible request settings for %s without changing the image contract', async (model) => {
+  it.each([
+    ['gpt-6.1-terra', { effort: 'low' }, 4096],
+    ['gpt-6-astra', { effort: 'low' }, 4096],
+    ['configured-model', undefined, 2500],
+  ] as const)('uses compatible request settings for %s without changing the image contract', async (model, reasoning, maxOutputTokens) => {
     const f = fixture(undefined, model);
     const requests: PreparedReasoningRequest[] = [];
     f.input.onRequest = (request) => requests.push(request);
     await expect(f.reason(f.input)).resolves.toContain('42');
     const wire = JSON.parse(String(f.fetcher.mock.calls[0]![1]!.body));
     expect(wire.model).toBe(model);
-    expect(wire.reasoning).toEqual(model === 'gpt-6-astra' ? { effort: 'low' } : undefined);
-    expect(wire.max_output_tokens).toBe(model === 'gpt-6-astra' ? 4096 : 2500);
+    expect(wire.reasoning).toEqual(reasoning);
+    expect(wire.max_output_tokens).toBe(maxOutputTokens);
     expect(requests[0]?.reasoning).toEqual(wire.reasoning);
     expect(wire.input[0].content.filter((part: { type: string }) => part.type === 'input_image')).toHaveLength(2);
     expect(wire.temperature).toBeUndefined();
@@ -518,7 +522,7 @@ describe('desktop tool reasoning loop', () => {
     expect(wire[2].input.at(-1)).toMatchObject({ call_id: 'call-2', output: expect.any(Array) });
     for (const request of wire) {
       expect(request.previous_response_id).toBeUndefined();
-      expect(request).toMatchObject({ model: 'gpt-6-astra', reasoning: { effort: 'low' }, max_output_tokens: 4096 });
+      expect(request).toMatchObject({ model: 'gpt-6.1-terra', reasoning: { effort: 'low' }, max_output_tokens: 4096 });
     }
     expect(wire[0].instructions).toContain('never require the user to register names');
     expect(wire[0].instructions).toContain('before asking the user');

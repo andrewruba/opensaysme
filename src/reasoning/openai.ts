@@ -6,11 +6,11 @@ import type { ToolDescriptor, ToolEvent, ToolResult } from '../tools/types.js';
 import { validateToolResult } from '../tools/registry.js';
 import { conversationSchema } from '../conversation.js';
 
-export const defaultReasoningModel = 'gpt-6-astra';
+export const defaultReasoningModel = 'gpt-6.1-terra';
 
-/** Astra requires reasoning; keep effort low for voice and leave room for its result. */
+/** Keep Terra and Astra at low effort for voice, with room for their result. */
 export function modelRequestOptions(model: string, maxOutputTokens: number) {
-  return model === 'gpt-6-astra'
+  return model === 'gpt-6.1-terra' || model === 'gpt-6-astra'
     ? { reasoning: { effort: 'low' as const }, max_output_tokens: Math.max(maxOutputTokens, 4096) }
     : { max_output_tokens: maxOutputTokens };
 }
