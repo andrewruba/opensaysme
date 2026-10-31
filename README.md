@@ -1,7 +1,7 @@
 # OpenSaysMe — Human interface for AI agents
 
 [![CI](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml/badge.svg?branch=main&event=push)](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml)
-[![Version 0.3.0](https://img.shields.io/badge/version-0.3.0-blue?style=flat-square)](package.json)
+[![Version 0.4.0](https://img.shields.io/badge/version-0.4.0-blue?style=flat-square)](package.json)
 [![Node.js 26.13.0 or newer](https://img.shields.io/badge/node-%3E%3D26.13.0-339933?style=flat-square)](package.json)
 [![macOS 14 or newer](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square)](#run-it)
 [![MIT license](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
