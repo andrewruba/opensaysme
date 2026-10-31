@@ -206,7 +206,7 @@ describe('exact text transfer', () => {
     const { sourceId } = value(await f.call('capture_text'));
     const args = { sourceId, start: 0, end: capture().totalLength, destinationObservationId: await f.destination(), x: 100, y: 100 };
     expect(value(await f.call('transfer_text', args))).toMatchObject({ status: 'uncertain', code: 'text-value-mismatch', inputStopped: true });
-    args.destinationObservationId = await f.destination();
+    expect(await f.destination()).toBeUndefined();
     expect(value(await f.call('transfer_text', args)).code).toBe('input-stopped');
     expect(value(await f.call('type_text', { observationId: args.destinationObservationId, x: 100, y: 100, text: 'retry' })).code).toBe('input-stopped');
     expect(f.input.execute).toHaveBeenCalledOnce(); f.host.close();

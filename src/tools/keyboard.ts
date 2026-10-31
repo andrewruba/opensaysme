@@ -50,9 +50,11 @@ export function createKeyboardTools(adapter: KeyboardAdapter, captureFrame: (sig
     }
     const { image, ...metadata } = frame;
     const focus = observation?.target;
+    const observationId = session.stopped ? undefined : observation?.id;
+    if (session.stopped) observation = undefined;
     return { ...(keyboardIssue ? { desktopIssue: keyboardIssue } : {}), content: [
       { type: 'text', text: JSON.stringify({ ...metadata, image: { width: image.width, height: image.height, mimeType: image.mimeType },
-        ...(focus ? { keyboardObservationId: observation!.id, keyboardFocus: {
+        ...(focus ? { ...(observationId ? { keyboardObservationId: observationId } : {}), keyboardFocus: {
           application: focus.application, role: focus.role, title: focus.title, description: focus.description, value: focus.value,
           valueTruncated: focus.valueTruncated, editable: focus.editable,
         }, ...(!focus.editable && !session.stopped ? { keyboardGuidance: noneditableFocusGuidance } : {}) } : { keyboardUnavailable, keyboardIssue }) }) },
@@ -68,7 +70,7 @@ export function createKeyboardTools(adapter: KeyboardAdapter, captureFrame: (sig
       description: (kind === 'press_key'
         ? 'Press and release one key with modifiers (Cmd, Ctrl, Alt, Shift; [] for none) at the current keyboard focus. Supports system shortcuts such as Cmd+Space for Spotlight, Cmd+L for the browser address bar, and navigation/editing keys. Letter/digit keys use US physical positions. Escape and Ctrl+C are reserved; clipboard paste is unavailable. Shortcuts and Enter receive an independent request check; Enter in a verified launcher/address bar can navigate when opening was requested. Sending/submitting requires that requested outcome.'
         : 'Type literal single-line text at the focused editable control using keyboard events, inserting at its caret or replacing its selection. Useful for Spotlight and browser address bars, including controls without writable AX values. This does NOT replace the entire field automatically; use a permitted selection shortcut if needed. No clipboard or newline/control characters. Use type_text for exact whole-value or multiline AX replacement. Text is unsent; submission is a separate authorized key/click.')
-        + ' Requires keyboardObservationId from a fresh capture_screen. No coordinates or existing app window required. Focus and user intervention are rechecked natively. Stay within the original request. After each action capture again, read the actual outcome, and obtain a new observation. Do not retry or use another tool after inputStopped, denial, or uncertainty.',
+        + ' Requires keyboardObservationId from a fresh capture_screen. No coordinates or existing app window required. Focus and user intervention are rechecked natively. Stay within the original request. The desktop host attempts to include a fresh screen and keyboardObservationId with the action result. Read that evidence and use the new observation directly; call capture_screen only if it is unavailable or stale. Do not retry or use another tool after inputStopped, denial, or uncertainty.',
       run: async (args, signal): Promise<ToolResult> => {
         if (session.stopped) return toolError('input-stopped', 'Input stopped after a commitment or uncertain outcome. Inspect and report; do not retry.');
         if (!request.trim() || request.length > 65_536) return toolError('request-required', 'Keyboard input requires the original user request.');
@@ -133,7 +135,7 @@ export function createKeyboardTools(adapter: KeyboardAdapter, captureFrame: (sig
           permission, inputStopped: session.stopped,
           message: result.status === 'not-issued' ? 'Native checks rejected input before execution. Use the failure code and fresh screen/focus evidence to resolve the target before retrying.'
             : result.status === 'uncertain' ? 'Input may have taken effect. Input stopped; inspect without retrying.'
-            : 'Capture fresh screen evidence to verify the outcome. Issued keys do not prove completion.',
+            : 'Inspect the fresh screen evidence included with this result, or capture again if unavailable. Issued keys do not prove completion.',
         }) }] };
       },
     };

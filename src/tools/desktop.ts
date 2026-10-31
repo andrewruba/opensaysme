@@ -32,6 +32,8 @@ export function createDesktopTools(adapter: Adapter, scope?: RequestScope): Tool
       ...(previousTurnIds.length ? { previousTurnIds } : {}) };
   };
   const session: InputSession = { stopped: false, revision: 0 };
+  let closed = false;
+  let calling = false;
   const inputs = adapter.input && adapter.captureWindow ? createInputTools(adapter.input, scope, session) : undefined;
   const keyboard = adapter.keyboard ? createKeyboardTools(adapter.keyboard, adapter.captureFrame, scope, session) : undefined;
   const texts = adapter.readText ? createTextTools(adapter.readText, inputs?.definitions.find(({ name }) => name === 'type_text')) : undefined;
@@ -93,7 +95,7 @@ export function createDesktopTools(adapter: Adapter, scope?: RequestScope): Tool
       },
     },
     { name: 'focus_window', effect: 'focus', input: windowInput,
-      description: 'Focus a window discovered by list_windows in this tool session. Use its windowId, never a native window ID from screen history. The target is rechecked and focus is verified. Prefer background inspection when useful, but focus a plausible host to investigate when background evidence is unavailable or inconclusive. Keep the user’s original work context while exploring; navigation does not make newly encountered work the requested destination. Finding a capable interface alone is insufficient to choose its workspace for input. Use the strongest work-specific match without requiring exact names; focus verification establishes only that the window was reached.',
+      description: 'Focus a window discovered by list_windows in this tool session. Use its windowId, never a native window ID from screen history. The target is rechecked and focus is verified. Prefer background inspection when useful, but focus a plausible host to investigate when background evidence is unavailable or inconclusive. Keep the user’s original work context while exploring; navigation does not make newly encountered work the requested destination. Finding a capable interface alone is insufficient to choose its workspace for input. Use the strongest work-specific match without requiring exact names; focus verification establishes only that the window was reached. When available, the result includes a fresh window image and observationId; use that evidence without a separate capture call.',
       run: async (args, signal) => {
         if (session.stopped) return toolError('input-stopped', 'Input has stopped; inspect and report before further navigation.');
         keyboard?.invalidate();
@@ -186,7 +188,7 @@ export function createDesktopTools(adapter: Adapter, scope?: RequestScope): Tool
       }
       const { image, bounds, capturedAt, warnings } = result;
       rememberWindow({ window: result.window, capturedAt, warnings });
-      const observationId = inputs?.observe(result);
+      const observationId = session.stopped ? undefined : inputs?.observe(result);
       return { content: [
         { type: 'text', text: JSON.stringify({ source: 'window-screenshot', window: { windowId, ...label(result.window) },
           capturedAt, bounds, coordinateSpace: 'global-desktop-logical-points',
@@ -200,7 +202,63 @@ export function createDesktopTools(adapter: Adapter, scope?: RequestScope): Tool
   if (keyboard) definitions.push(...keyboard.definitions);
   if (texts) definitions.push(...texts.definitions);
   const registry = new ToolRegistry(definitions);
-  return { list: () => registry.list(), call: (name, args, signal) => registry.call(name, args, signal),
+  const call = async (name: string, args: unknown, signal: AbortSignal): Promise<ToolResult> => {
+    signal.throwIfAborted();
+    if (calling) return toolError('busy', 'Another desktop tool is still running.');
+    calling = true;
+    try {
+      const definition = definitions.find((candidate) => candidate.name === name);
+      const parsed = definition?.input.safeParse(args);
+      // Resolve the source before an action consumes its observation. Never infer
+      // a new destination from whichever window becomes active afterward.
+      const target = !parsed?.success ? undefined : name === 'focus_window'
+        ? windows.get(parsed.data.windowId as string)
+        : inputs?.feedbackTarget((name === 'transfer_text' ? parsed.data.destinationObservationId : parsed.data.observationId) as string);
+      const windowId = target && [...windows.entries()].find(([, known]) => sameEvidence(known, target))?.[0];
+      const result = await registry.call(name, args, signal);
+      signal.throwIfAborted();
+      const first = result.content[0];
+      let outcome: { focused?: boolean; status?: string; inputStopped?: boolean } = {};
+      if (first?.type === 'text') {
+        try {
+          const parsed = JSON.parse(first.text);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) outcome = parsed;
+        } catch { /* Non-action output needs no refresh. */ }
+      }
+      const keyboardAction = name === 'press_key' || name === 'type_keyboard_text';
+      const refresh = name === 'focus_window' ? outcome.focused === true
+        : definition?.effect === 'input' && name !== 'move_pointer'
+          && (outcome.status === 'issued' || outcome.status === 'verified' || outcome.status === 'uncertain'
+            || (outcome.status === 'not-issued' && outcome.inputStopped === false));
+      const captureName = keyboardAction && keyboard ? 'capture_screen' : windowId && adapter.captureWindow ? 'capture_window' : undefined;
+      if (!refresh || !captureName || closed) return result;
+
+      // The action has already completed. Give its optional observation a separate
+      // budget so a failed/slow capture cannot erase a known native outcome.
+      const deadline = new AbortController();
+      const refreshSignal = AbortSignal.any([signal, deadline.signal]);
+      const timer = setTimeout(() => deadline.abort(), 2_000);
+      try {
+        const observed = await registry.call(captureName, captureName === 'capture_screen' ? {} : { windowId }, refreshSignal);
+        signal.throwIfAborted();
+        if (closed) throw new DOMException('Tool session closed.', 'AbortError');
+        return { ...result, ...(observed.desktopIssue ? { desktopIssue: observed.desktopIssue } : {}), content: [
+          ...result.content,
+          ...text({ postActionObservation: { status: observed.isError ? 'unavailable' : 'ok', tool: captureName,
+            message: 'Read this new evidence before the next action. The preceding action status is unchanged.' } }).content,
+          ...observed.content,
+        ] };
+      } catch {
+        signal.throwIfAborted();
+        if (closed) throw new DOMException('Tool session closed.', 'AbortError');
+        return { ...result, content: [...result.content, ...text({ postActionObservation: {
+          status: 'unavailable', tool: captureName,
+          message: 'The action result above is unchanged. Fresh observation could not be obtained; capture again before further input. Do not repeat an issued action merely because its observation is unavailable.',
+        } }).content] };
+      } finally { clearTimeout(timer); }
+    } finally { calling = false; }
+  };
+  return { list: () => registry.list(), call,
     feedbackTarget: (name, args) => {
       const definition = definitions.find((candidate) => candidate.name === name && candidate.effect !== 'read');
       const parsed = definition?.input.safeParse(args);
@@ -215,5 +273,5 @@ export function createDesktopTools(adapter: Adapter, scope?: RequestScope): Tool
     },
     conversationEvidence: () => ({ windows: structuredClone([...rememberedWindows.values()]), actions: inputs?.conversationActions() ?? [],
       ...(keyboard ? { keyboardActions: keyboard.conversationActions() } : {}) }),
-    close: () => { registry.close(); inputs?.close(); keyboard?.close(); texts?.close(); windows.clear(); rememberedWindows.clear(); conversation.length = 0; } };
+    close: () => { closed = true; registry.close(); inputs?.close(); keyboard?.close(); texts?.close(); windows.clear(); rememberedWindows.clear(); conversation.length = 0; } };
 }

@@ -29,7 +29,7 @@ resolving a name cannot change the requested action or its restrictions.
 | `capture_screen` | Capture the display under the pointer and, when stable, return keyboard focus evidence and a `keyboardObservationId`. |
 | `inspect_window` | Read bounded Accessibility text/roles without focusing a discovered window. |
 | `capture_window` | Capture that window's image without focusing it, including when obscured. |
-| `focus_window` | Recheck, focus and verify a discovered target. |
+| `focus_window` | Recheck, focus and verify a discovered target, then return its fresh window capture when available. |
 | `move_pointer` | Indicate a target without clicking. |
 | `click` | Issue a single left click after an independent request/effect check. |
 | `scroll` | Scroll vertically by up to 600 logical pixels; positive means content down. |
@@ -74,6 +74,20 @@ The terminal reports keyboard focus as `editable`, `non-editable`, or `unavailab
 without printing field contents. A successful capture can still show a non-editable
 page surface. That does not establish that its composer is unsupported: locate and
 focus the intended input, then recapture before typing.
+
+Focus and input results can include their own fresh observation. After verified
+focus, pointer clicks, scrolling and text replacement, the host attempts a capture
+of that same window. Keyboard actions return a display capture with fresh keyboard
+focus evidence. This removes the model round trip that would otherwise request
+the next screenshot. A native `not-issued` result can also include refreshed
+evidence for the model to reconsider; no action is retried automatically.
+The original action result comes first and remains authoritative about dispatch.
+Optional refresh failure does not turn an issued action into a failed action.
+That refresh has a separate two-second limit and remains cancellable; it does not
+repeat the action or grant another permission.
+Use the returned observation when suitable; capture explicitly when it is missing,
+the UI is still changing, or the next action needs another view or input modality.
+Point-only requests do not trigger this extra capture.
 
 `capture_text` reads the currently focused accessible text control, including
 read-only Terminal scrollback. It retains at most the last 65,536 UTF-16 units and
@@ -129,8 +143,9 @@ behavior with scripted decisions, not semantic accuracy on arbitrary interfaces.
 
 ## Native input checks
 
-Pointer actions and `type_text` require a recent `capture_window` `observationId`
-and coordinates in that image's pixels. Focus the window before capturing. The host
+Pointer actions and `type_text` require a recent window `observationId`
+and coordinates in that image's pixels. It can come from `capture_window` or the
+fresh capture bundled with focus/input results. Focus the window before capturing. The host
 maps pixels through its logical desktop bounds; native code hit-tests the visible control and checks
 window identity, focus, geometry, protected fields and held/user input.
 
@@ -149,7 +164,8 @@ normalization, rejection or unreadable results remain uncertain, even when text
 appears entered. There is no repeated write or automatic fallback to keyboard
 typing or paste.
 
-Keyboard tools instead require a recent `capture_screen` `keyboardObservationId`,
+Keyboard tools instead require a recent `keyboardObservationId` from
+`capture_screen` or a keyboard action's fresh capture,
 with no pointer coordinates or discovered window. This permits system shortcuts
 such as Cmd+Space and typing into Spotlight to open an app that has no window yet.
 The native helper rechecks the focused app/control, process identity, editable
@@ -171,8 +187,9 @@ characters are rejected. Use `type_text` for multiline preparation rather than
 simulating it with Enter. Neither text tool uses the clipboard.
 
 Observations expire after 30 seconds and are consumed before input. Mouse and
-keyboard tools share invalidation and stop state: recapture after each action to
-inspect its outcome and obtain a fresh observation. Unsupported targets fail
+keyboard tools share invalidation and stop state: inspect the fresh observation
+returned with an action, or recapture if unavailable. Never reuse the consumed
+handle. Unsupported targets fail
 explicitly, including purely visual pointer targets without accessible hit evidence.
 
 Pointer position or exact text can be verified locally. Click/scroll/key events
@@ -187,9 +204,13 @@ Escape/cancellation stops pending work and releases keys, shortcut modifiers and
 but cannot undo effects already issued. Keyboard typing checks cancellation and
 focus between event pairs; partial typing is uncertain and is not retried automatically.
 
-The reasoning loop defaults to at most 24 tool calls within 90 seconds when input
-tools are available, or five calls within 45 seconds otherwise. These are runtime
-bounds, not a required interaction sequence.
+The reasoning loop defaults to at most 24 tool calls within 180 seconds when input
+tools are available, or five calls within 45 seconds otherwise. Each provider call
+still has a 20-second timeout; the outer voice watchdog adds five seconds for
+cleanup. These are fixed bounds, not a required interaction sequence or a budget
+that resets after each action. Timeout feedback distinguishes an unfinished task
+from a stalled provider call and warns that earlier actions may already have taken
+effect. It does not claim completion or automatically retry.
 
 ## Follow-ups and feedback
 

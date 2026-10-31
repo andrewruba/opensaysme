@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AttentionHistory } from '../src/attention.js';
-import { defaultReasoningModel, openAIReasoning } from '../src/reasoning/openai.js';
+import { defaultReasoningModel, openAIReasoning, reasoningLoopTimeoutMs } from '../src/reasoning/openai.js';
 import type { ReasoningInput } from '../src/reasoning/types.js';
 import type { ToolDescriptor, ToolEvent, ToolHost, ToolResult } from '../src/tools/types.js';
 import type { DiagnosticSink, PreparedReasoningRequest } from '../src/diagnostics.js';
@@ -381,6 +381,12 @@ function toolHost() {
     close: vi.fn(),
   } satisfies ToolHost;
 }
+function inputToolHost() {
+  const host = toolHost();
+  host.list.mockReturnValue([...descriptors, { name: 'click', description: 'Guarded input fixture',
+    effect: 'input', inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false } }]);
+  return host;
+}
 function callItem(name = 'list_windows', args: unknown = {}, callId = 'call-1') {
   return { type: 'function_call', name, arguments: JSON.stringify(args), call_id: callId, status: 'completed' };
 }
@@ -413,8 +419,14 @@ describe('desktop tool reasoning loop', () => {
         return callResponse(callItem());
       })
       .mockResolvedValueOnce(callResponse(callItem('focus_window', { windowId: 'window-1' }, 'focus')))
-      .mockResolvedValueOnce(callResponse(callItem('capture_window', { windowId: 'window-1' }, 'capture')))
-      .mockResolvedValueOnce(callResponse(callItem('type_text', { observationId: 'observation-1', x: 100, y: 100, text }, 'write')))
+      .mockImplementationOnce(async (_url, init) => {
+        const output = JSON.parse(String(init?.body)).input.at(-1).output;
+        const observation = output.filter((part: { type: string }) => part.type === 'input_text')
+          .map((part: { text: string }) => JSON.parse(part.text)).find((part: { observationId?: string }) => part.observationId);
+        expect(observation).toMatchObject({ source: 'window-screenshot', window: { windowId: 'window-1' } });
+        expect(output.some((part: { type: string }) => part.type === 'input_image')).toBe(true);
+        return callResponse(callItem('type_text', { observationId: observation.observationId, x: 100, y: 100, text }, 'write'));
+      })
       .mockResolvedValueOnce(response('Prepared the explanation and left it unsent.'));
     const f = fixture(fetcher); f.input.transcript = request; f.input.tools = host;
     f.input.history.contexts[0]!.context.selectedText = selected;
@@ -423,6 +435,7 @@ describe('desktop tool reasoning loop', () => {
       expect(execute).toHaveBeenCalledExactlyOnceWith({ windowId: window.id, bounds: target.bounds, point: { x: 100, y: 100 } },
         { kind: 'type_text', text }, target.fingerprint, expect.any(AbortSignal));
       expect(authorize).not.toHaveBeenCalled();
+      expect(fetcher).toHaveBeenCalledTimes(4);
     } finally { host.close(); }
   });
 
@@ -455,10 +468,16 @@ describe('desktop tool reasoning loop', () => {
         expect(JSON.stringify(output)).not.toContain('native-target');
         return callResponse(callItem('focus_window', { windowId: 'window-1' }, 'focus'));
       })
-      .mockResolvedValueOnce(response('Switched to the requested project.'));
+      .mockImplementationOnce(async (_url, init) => {
+        const output = JSON.parse(String(init?.body)).input.at(-1).output;
+        expect(JSON.parse(output[1].text)).toMatchObject({ focused: true });
+        expect(output.some((part: { type: string }) => part.type === 'input_image')).toBe(true);
+        return response('Switched to the requested project.');
+      });
     const f = fixture(fetcher); f.input.tools = host; f.input.transcript = 'Switch to the project with the blue diagram';
     await expect(f.reason(f.input)).resolves.toBe('Switched to the requested project.');
-    expect(capture).toHaveBeenCalledExactlyOnceWith('native-target', expect.any(AbortSignal));
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(capture).toHaveBeenLastCalledWith('native-target', expect.any(AbortSignal));
     expect(focus).toHaveBeenCalledExactlyOnceWith('native-target', expect.any(AbortSignal));
     host.close();
   });
@@ -626,10 +645,8 @@ describe('desktop tool reasoning loop', () => {
   it.each([false, true])('enforces the tool budget even if the model ignores tool_choice none (input=%s)', async (inputEnabled) => {
     let index = 0;
     const f = fixture(vi.fn<typeof fetch>().mockImplementation(async () => callResponse(callItem('list_windows', {}, `call-${++index}`))));
-    const host = toolHost(); f.input.tools = host;
+    const host = inputEnabled ? inputToolHost() : toolHost(); f.input.tools = host;
     const limit = inputEnabled ? 24 : 5;
-    if (inputEnabled) host.list.mockReturnValue([...descriptors, { name: 'click', description: 'Guarded input fixture',
-      effect: 'input', inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false } }]);
     await expect(f.reason(f.input)).resolves.toContain('tool limit');
     expect(host.call).toHaveBeenCalledTimes(limit); expect(f.fetcher).toHaveBeenCalledTimes(limit + 1);
     expect(JSON.parse(String(f.fetcher.mock.calls[limit]![1]!.body)).tool_choice).toBe('none');
@@ -652,14 +669,52 @@ describe('desktop tool reasoning loop', () => {
     expect(events.map(({ phase }) => phase)).toEqual(['started']); expect(g.fetcher).toHaveBeenCalledOnce();
   });
 
-  it('enforces a whole-turn deadline even for a tool that ignores cancellation', async () => {
+  it('lets a progressing input-capable turn finish after ninety seconds', async () => {
     vi.useFakeTimers();
-    const f = fixture(vi.fn<typeof fetch>().mockResolvedValue(callResponse(callItem()))); const host = toolHost(); f.input.tools = host;
+    let step = 0;
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 6_000));
+      return ++step <= 16 ? callResponse(callItem('focus_window', { windowId: 'target' }, `call-${step}`)) : response('Finished.');
+    });
+    const f = fixture(); const host = inputToolHost(); f.input.tools = host;
+    const reason = openAIReasoning({ apiKey: 'fixture-key', model: 'fixture-model' }, fetcher);
+    const completed = vi.fn();
+    const pending = reason(f.input).then((value) => { completed(); return value; });
+    const result = expect(pending).resolves.toBe('Finished.');
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(completed).not.toHaveBeenCalled(); expect(host.call).toHaveBeenCalledTimes(15);
+    await vi.advanceTimersByTimeAsync(12_000); await result;
+    expect(host.call).toHaveBeenCalledTimes(16); expect(fetcher).toHaveBeenCalledTimes(17);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('keeps the shorter provider deadline during an input-capable turn', async () => {
+    vi.useFakeTimers();
+    const fetcher = vi.fn<typeof fetch>(() => new Promise(() => {}));
+    const f = fixture(); f.input.tools = inputToolHost();
+    const reason = openAIReasoning({ apiKey: 'fixture-key', model: 'fixture-model' }, fetcher);
+    const result = expect(reason(f.input)).rejects.toThrow('Reasoning provider timed out. Stopped without confirming completion.');
+    await vi.advanceTimersByTimeAsync(20_000); await result;
+    expect(fetcher).toHaveBeenCalledOnce(); expect(fetcher.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+    expect(f.input.tools.call).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([false, true])('enforces a whole-turn deadline even for a tool that ignores cancellation (input=%s)', async (inputEnabled) => {
+    vi.useFakeTimers();
+    const f = fixture(vi.fn<typeof fetch>().mockResolvedValue(callResponse(callItem())));
+    const host = inputEnabled ? inputToolHost() : toolHost(); f.input.tools = host;
     let entered!: () => void; const started = new Promise<void>((resolve) => { entered = resolve; });
-    host.call.mockImplementation(() => { entered(); return new Promise(() => {}); });
-    const result = expect(f.reason(f.input)).rejects.toThrow('timed out');
-    await started; await vi.advanceTimersByTimeAsync(45_000); await result;
+    let done!: (result: ToolResult) => void;
+    host.call.mockImplementation(() => { entered(); return new Promise((resolve) => { done = resolve; }); });
+    const events: ToolEvent[] = []; f.input.onTool = (event) => events.push(event);
+    const result = expect(f.reason(f.input)).rejects.toThrow('Desktop task timed out. Stopped without confirming completion.');
+    await started;
+    await vi.advanceTimersByTimeAsync(reasoningLoopTimeoutMs(inputEnabled) - 1);
+    expect(host.call.mock.calls[0]![2].aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1); await result;
     expect(host.call.mock.calls[0]![2].aborted).toBe(true);
+    done({ content: [{ type: 'text', text: 'Late success.' }] }); await Promise.resolve();
+    expect(events.map(({ phase }) => phase)).toEqual(['started']);
     expect(vi.getTimerCount()).toBe(0); expect(f.fetcher).toHaveBeenCalledOnce();
   });
 

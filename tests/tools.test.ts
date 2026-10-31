@@ -171,6 +171,167 @@ it('exposes keyboard focus from screen capture even without discoverable windows
   host.close(); f.host.close();
 });
 
+const payloads = (result: ToolResult) => result.content.flatMap((part) => part.type === 'text' ? [JSON.parse(part.text)] : []);
+const observation = (result: ToolResult) => payloads(result).find((part) => part.observationId || part.keyboardObservationId);
+function actionableDesktop() {
+  const f = desktopFixture();
+  let committing = false;
+  const request = 'Prepare the requested message and send it.';
+  const input = {
+    inspect: vi.fn<NonNullable<DesktopAdapter['input']>['inspect']>(async () => ({ fingerprint: 'a'.repeat(64),
+      role: 'AXTextArea', title: 'Message', description: '', value: '', focused: true, editable: true,
+      bounds: { x: -1200, y: -100, width: 800, height: 600 } })),
+    execute: vi.fn<NonNullable<DesktopAdapter['input']>['execute']>(async () => ({ status: 'verified' })),
+  };
+  const authorize = vi.fn(async () => ({ decision: 'allow' as const, effect: committing ? 'submit' as const : 'edit' as const,
+    requestQuote: request, reason: 'Scripted request-scoped decision.' }));
+  const host = createDesktopTools({ ...f.adapter, input }, { request, authorize });
+  return { ...f, host, input, authorize, commit: () => { committing = true; },
+    close: () => { host.close(); f.host.close(); } };
+}
+
+describe('fresh observations bundled with actions', () => {
+  it('runs focus, click, type and submit with fresh returned images and no separate capture requests', async () => {
+    const f = actionableDesktop();
+    await f.host.call('list_windows', {}, signal());
+    const focused = await f.host.call('focus_window', { windowId: 'window-1' }, signal());
+    expect(value(focused).focused).toBe(true);
+    const first = observation(focused).observationId;
+    const clicked = await f.host.call('click', { observationId: first, x: 100, y: 100 }, signal());
+    expect(value(clicked)).toMatchObject({ status: 'verified', inputStopped: false });
+    expect(observation(clicked).observationId).not.toBe(first);
+    const typed = await f.host.call('type_text', { observationId: observation(clicked).observationId,
+      x: 100, y: 100, text: 'Requested message' }, signal());
+    expect(value(typed)).toMatchObject({ status: 'verified', inputStopped: false });
+    expect(value(await f.host.call('click', { observationId: first, x: 100, y: 100 }, signal())).code).toBe('stale-observation');
+    expect(f.input.execute).toHaveBeenCalledTimes(2);
+    f.commit();
+    const submitted = await f.host.call('click', { observationId: observation(typed).observationId, x: 100, y: 100 }, signal());
+    expect(value(submitted)).toMatchObject({ status: 'verified', effect: 'submit', inputStopped: true });
+    expect(observation(submitted)).toBeUndefined();
+    for (const result of [focused, clicked, typed, submitted]) {
+      expect(result.content.filter((part) => part.type === 'image')).toHaveLength(1);
+      expect(payloads(result)).toContainEqual(expect.objectContaining({ postActionObservation: expect.objectContaining({ status: 'ok' }) }));
+    }
+    expect(f.adapter.captureWindow).toHaveBeenCalledTimes(4);
+    expect(f.authorize).toHaveBeenCalledTimes(2);
+    expect(value(await f.host.call('type_text', { observationId: observation(typed).observationId,
+      x: 100, y: 100, text: 'Must not run' }, signal())).code).toBe('input-stopped');
+    expect(f.input.execute).toHaveBeenCalledTimes(3);
+    f.close();
+  });
+
+  it('returns each new keyboard focus for navigation, typing and Enter without intervening capture calls', async () => {
+    const f = desktopFixture(); let revision = 0;
+    const request = 'Write and send the requested message.';
+    const keyboard = {
+      inspect: vi.fn<NonNullable<DesktopAdapter['keyboard']>['inspect']>(async () => ({ fingerprint: String(revision).repeat(64),
+        application: 'Workspace', role: 'AXTextArea', title: 'Message', description: '', value: revision > 1 ? 'Hello' : '',
+        valueTruncated: false, editable: true })),
+      execute: vi.fn<NonNullable<DesktopAdapter['keyboard']>['execute']>(async () => { revision++; return { status: 'issued' }; }),
+    };
+    const host = createDesktopTools({ ...f.adapter, keyboard }, { request,
+      authorize: async () => ({ decision: 'allow', effect: 'submit', requestQuote: request, reason: 'Send requested message.' }) });
+    const initial = await host.call('capture_screen', {}, signal());
+    const navigated = await host.call('press_key', { keyboardObservationId: observation(initial).keyboardObservationId,
+      key: 'Tab', modifiers: [] }, signal());
+    const typed = await host.call('type_keyboard_text', { keyboardObservationId: observation(navigated).keyboardObservationId, text: 'Hello' }, signal());
+    expect(observation(typed).keyboardFocus.value).toBe('Hello');
+    expect(value(await host.call('type_keyboard_text', { keyboardObservationId: observation(initial).keyboardObservationId, text: 'stale' }, signal())).code).toBe('stale-observation');
+    const sent = await host.call('press_key', { keyboardObservationId: observation(typed).keyboardObservationId, key: 'Enter', modifiers: [] }, signal());
+    expect(value(sent)).toMatchObject({ status: 'issued', effect: 'submit', inputStopped: true });
+    expect(observation(sent)).toBeUndefined();
+    expect(payloads(sent)).toContainEqual(expect.objectContaining({ keyboardFocus: expect.objectContaining({ value: 'Hello' }) }));
+    expect(f.adapter.captureFrame).toHaveBeenCalledTimes(4);
+    expect(keyboard.execute).toHaveBeenCalledTimes(3);
+    expect(value(await host.call('press_key', { keyboardObservationId: observation(typed).keyboardObservationId,
+      key: 'Enter', modifiers: [] }, signal())).code).toBe('input-stopped');
+    expect(keyboard.execute).toHaveBeenCalledTimes(3);
+    host.close(); f.host.close();
+  });
+
+  it.each(['not-issued', 'uncertain'] as const)('observes a native %s result without retrying or reopening stopped input', async (status) => {
+    const f = actionableDesktop(); await f.host.call('list_windows', {}, signal());
+    const focused = await f.host.call('focus_window', { windowId: 'window-1' }, signal());
+    f.input.execute.mockResolvedValue({ status, reason: 'stale-observation' });
+    const result = await f.host.call('click', { observationId: observation(focused).observationId, x: 100, y: 100 }, signal());
+    expect(value(result)).toMatchObject({ status, inputStopped: status === 'uncertain' });
+    expect(f.input.execute).toHaveBeenCalledOnce();
+    expect(result.content.some((part) => part.type === 'image')).toBe(true);
+    if (status === 'not-issued') expect(observation(result).observationId).not.toBe(observation(focused).observationId);
+    else expect(observation(result)).toBeUndefined();
+    f.close();
+  });
+
+  it.each(['throw', 'unavailable', 'malformed'] as const)('preserves an issued action when its optional refresh is %s', async (failure) => {
+    const f = actionableDesktop(); await f.host.call('list_windows', {}, signal());
+    const focused = await f.host.call('focus_window', { windowId: 'window-1' }, signal());
+    if (failure === 'throw') f.adapter.captureWindow.mockRejectedValue(new Error('private native details'));
+    if (failure === 'unavailable') f.adapter.captureWindow.mockResolvedValue({ status: 'unavailable', reason: 'inaccessible' });
+    if (failure === 'malformed') f.adapter.captureWindow.mockResolvedValue({ status: 'ok' } as never);
+    const result = await f.host.call('type_text', { observationId: observation(focused).observationId, x: 100, y: 100, text: 'Requested message' }, signal());
+    expect(value(result)).toMatchObject({ status: 'verified', inputStopped: false });
+    expect(result.isError).toBe(false);
+    expect(payloads(result)).toContainEqual(expect.objectContaining({ postActionObservation: expect.objectContaining({ status: 'unavailable' }) }));
+    expect(JSON.stringify(result)).not.toContain('private native details');
+    expect(observation(result)).toBeUndefined();
+    expect(f.input.execute).toHaveBeenCalledOnce();
+    f.close();
+  });
+
+  it('bounds optional refresh separately from focus and discards a late image', async () => {
+    vi.useFakeTimers();
+    const f = actionableDesktop(); await f.host.call('list_windows', {}, signal());
+    const frame = await f.adapter.captureWindow(editor.id, signal());
+    const late = deferred<typeof frame>(); let captureSignal: AbortSignal | undefined;
+    f.adapter.focus.mockImplementation(async () => { await new Promise((resolve) => setTimeout(resolve, 5_000)); f.state.current = editor; });
+    f.adapter.captureWindow.mockImplementation(async (_id, active) => { captureSignal = active; return late.promise; });
+    const pending = f.host.call('focus_window', { windowId: 'window-1' }, signal());
+    await vi.advanceTimersByTimeAsync(7_000);
+    const result = await pending;
+    expect(value(result).focused).toBe(true);
+    expect(payloads(result)).toContainEqual(expect.objectContaining({ postActionObservation: expect.objectContaining({ status: 'unavailable' }) }));
+    expect(captureSignal?.aborted).toBe(true);
+    late.resolve(frame); await Promise.resolve();
+    expect(value(await f.host.call('click', { observationId: 'observation-1', x: 100, y: 100 }, signal())).code).toBe('stale-observation');
+    expect(f.input.execute).not.toHaveBeenCalled();
+    f.close();
+  });
+
+  it('cancels a post-action refresh without publishing late observations or retrying input', async () => {
+    const f = actionableDesktop(); await f.host.call('list_windows', {}, signal());
+    const focused = await f.host.call('focus_window', { windowId: 'window-1' }, signal());
+    const frame = await f.adapter.captureWindow(editor.id, signal());
+    const gate = deferred<typeof frame>(); const entered = deferred<void>();
+    f.adapter.captureWindow.mockImplementation(async () => { entered.resolve(); return gate.promise; });
+    const controller = new AbortController();
+    const pending = f.host.call('type_text', { observationId: observation(focused).observationId, x: 100, y: 100, text: 'Requested message' }, controller.signal);
+    const cancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await entered.promise; controller.abort(); await cancelled;
+    gate.resolve(frame); await Promise.resolve();
+    expect(f.input.execute).toHaveBeenCalledOnce();
+    expect(f.host.conversationEvidence!().actions[0]?.status).toBe('verified');
+    expect(value(await f.host.call('click', { observationId: 'observation-2', x: 100, y: 100 }, signal())).code).toBe('stale-observation');
+    f.close();
+  });
+
+  it('does not capture after point-only, invalid, or denied actions', async () => {
+    const f = actionableDesktop(); await f.host.call('list_windows', {}, signal());
+    const focused = await f.host.call('focus_window', { windowId: 'window-1' }, signal());
+    const args = { observationId: observation(focused).observationId, x: 100, y: 100 };
+    await f.host.call('click', { ...args, unexpected: true }, signal());
+    await f.host.call('move_pointer', args, signal());
+    expect(f.adapter.captureWindow).toHaveBeenCalledOnce();
+    const fresh = await f.host.call('capture_window', { windowId: 'window-1' }, signal());
+    f.authorize.mockResolvedValue({ decision: 'deny' as never, effect: 'edit', requestQuote: 'Prepare the requested message and send it.', reason: 'Wrong recipient.' });
+    const denied = await f.host.call('click', { ...args, observationId: observation(fresh).observationId }, signal());
+    expect(value(denied).code).toBe('outside-request');
+    expect(f.adapter.captureWindow).toHaveBeenCalledTimes(2);
+    expect(f.input.execute).toHaveBeenCalledOnce();
+    f.close();
+  });
+});
+
 describe('desktop tool primitives', () => {
   it('resolves feedback labels from discovered windows without extra desktop access', async () => {
     const { host, adapter, state } = desktopFixture();

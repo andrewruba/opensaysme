@@ -5,7 +5,7 @@ import { cancelDesktopCommands } from './desktop/process.js';
 import { startVoiceHelper } from './desktop/voice-process.js';
 import { openAITranscription, streamingModel } from './speech/openai.js';
 import { VoiceRuntime, type VoiceOutput } from './runtime.js';
-import { openAIReasoning } from './reasoning/openai.js';
+import { openAIReasoning, reasoningLoopTimeoutMs } from './reasoning/openai.js';
 import { createDebugSession } from './debug-session.js';
 import type { DebugSession } from './diagnostics.js';
 import { capabilityNames } from './desktop/types.js';
@@ -82,7 +82,7 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
     const runtime = new VoiceRuntime({ input, transcribe: openAITranscription, captureContext: adapter.captureContext,
       workContext, observeWindow: (observationSignal) => adapter.inspect(false, observationSignal),
       captureFrame: adapter.captureFrame, reason, createTools: (request, referenceContext, conversation) => createDesktopTools(adapter, { request, referenceContext, conversation, authorize, activationHotkey }),
-      deadlines: { reasoning: adapter.input || adapter.keyboard ? 95_000 : 50_000 },
+      deadlines: { reasoning: reasoningLoopTimeoutMs(Boolean(adapter.input || adapter.keyboard)) + 5_000 },
       debug, apiKey, model: config.speech.model, emit: publish });
     let resolveStopped!: () => void;
     const stopped = new Promise<void>((resolve) => { resolveStopped = resolve; });

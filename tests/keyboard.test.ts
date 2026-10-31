@@ -116,7 +116,8 @@ describe('request-scoped keyboard input', () => {
     expect(f.session.stopped).toBe(status === 'uncertain');
     if (status === 'uncertain') {
       const next = await f.capture();
-      expect(value(await f.call(next.keyboardObservationId, { kind: 'type_keyboard_text', text: 'Draft' })).code).toBe('input-stopped');
+      expect(next.keyboardObservationId).toBeUndefined();
+      expect(value(await f.call(capture.keyboardObservationId, { kind: 'type_keyboard_text', text: 'Draft' })).code).toBe('input-stopped');
       expect(f.adapter.execute).toHaveBeenCalledOnce();
     }
   });
@@ -179,11 +180,13 @@ describe('request-scoped keyboard input', () => {
     expect((await f.call('press_key', { keyboardObservationId: capture.keyboardObservationId, key: 'Enter', modifiers: [] })).code)
       .toBe('outside-request');
     const screen = await f.call('capture_screen');
-    expect((await f.call('type_keyboard_text', { keyboardObservationId: screen.keyboardObservationId, text: 'Morgan' })).code)
+    expect(screen.keyboardObservationId).toBeUndefined();
+    expect((await f.call('type_keyboard_text', { keyboardObservationId: capture.keyboardObservationId, text: 'Morgan' })).code)
       .toBe('input-stopped');
     const window = await f.call('capture_window', { windowId: 'window-1' });
-    expect((await f.call('move_pointer', { observationId: window.observationId, x: 10, y: 10 })).code).toBe('input-stopped');
-    expect((await f.call('type_text', { observationId: window.observationId, x: 10, y: 10, text: 'Morgan' })).code).toBe('input-stopped');
+    expect(window.observationId).toBeUndefined();
+    expect((await f.call('move_pointer', { observationId: 'observation-1', x: 10, y: 10 })).code).toBe('input-stopped');
+    expect((await f.call('type_text', { observationId: 'observation-1', x: 10, y: 10, text: 'Morgan' })).code).toBe('input-stopped');
     expect(f.authorize).toHaveBeenCalledOnce();
     expect(f.keyboard.execute).not.toHaveBeenCalled();
     expect(f.pointer.inspect).not.toHaveBeenCalled(); expect(f.pointer.execute).not.toHaveBeenCalled();
@@ -195,9 +198,10 @@ describe('request-scoped keyboard input', () => {
     const window = await f.call('capture_window', { windowId: 'window-1' });
     expect((await f.call('click', { observationId: window.observationId, x: 10, y: 10 })).code).toBe('outside-request');
     const capture = await f.call('capture_screen');
-    expect((await f.call('type_keyboard_text', { keyboardObservationId: capture.keyboardObservationId, text: 'Morgan' })).code)
+    expect(capture.keyboardObservationId).toBeUndefined();
+    expect((await f.call('type_keyboard_text', { keyboardObservationId: 'keyboard-1', text: 'Morgan' })).code)
       .toBe('input-stopped');
-    expect((await f.call('press_key', { keyboardObservationId: capture.keyboardObservationId, key: 'Tab', modifiers: [] })).code)
+    expect((await f.call('press_key', { keyboardObservationId: 'keyboard-1', key: 'Tab', modifiers: [] })).code)
       .toBe('input-stopped');
     expect(f.authorize).toHaveBeenCalledOnce();
     expect(f.pointer.execute).not.toHaveBeenCalled(); expect(f.keyboard.execute).not.toHaveBeenCalled();
@@ -240,7 +244,8 @@ describe('request-scoped keyboard input', () => {
     expect(value(await f.call(capture.keyboardObservationId, { kind: 'press_key', key: 'Enter', modifiers: ['Cmd'] })))
       .toMatchObject({ status: 'issued', effect: 'submit', inputStopped: true });
     const next = await f.capture();
-    expect(value(await f.call(next.keyboardObservationId, { kind: 'type_keyboard_text', text: 'extra' })).code).toBe('input-stopped');
+    expect(next.keyboardObservationId).toBeUndefined();
+    expect(value(await f.call(capture.keyboardObservationId, { kind: 'type_keyboard_text', text: 'extra' })).code).toBe('input-stopped');
     const pointer = { inspect: vi.fn(), execute: vi.fn() };
     const inputs = createInputTools(pointer, f.scope, f.session);
     const pointerHost = new ToolRegistry(inputs.definitions);
@@ -369,7 +374,8 @@ describe('request-scoped keyboard input', () => {
     expect(result.isError).toBe(true); expect(f.session.stopped).toBe(true);
     expect(f.keyboard.conversationActions()[0]?.status).toBe('uncertain');
     const next = await f.capture();
-    expect(value(await f.call(next.keyboardObservationId, { kind: 'type_keyboard_text', text: 'Morgan' })).code).toBe('input-stopped');
+    expect(next.keyboardObservationId).toBeUndefined();
+    expect(value(await f.call(capture.keyboardObservationId, { kind: 'type_keyboard_text', text: 'Morgan' })).code).toBe('input-stopped');
     expect(f.adapter.execute).toHaveBeenCalledOnce();
   });
 

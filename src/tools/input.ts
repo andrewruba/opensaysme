@@ -45,7 +45,7 @@ export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestSc
     if ('text' in schema.shape) parameters.text = schema.shape.text.max(4096)
       .refine((text) => text.length <= 4096, 'Text exceeds 4096 UTF-16 code units.');
     return { name: kind, effect: 'input', timeoutMs: 20_000, input: z.object({ ...position, ...parameters }).strict(),
-      description: `${descriptions[kind]} Requires a recent capture_window observationId and x/y in that image's pixels, not screen coordinates. Target window must already be focused and unobscured. You must stay within the original request; clicks receive a separate permission check. Other input uses your request interpretation with native target checks. Tools cannot grant permission. Every issued action invalidates observations; capture again to inspect the outcome. Stop after a submission or uncertain outcome. macOS only.`,
+      description: `${descriptions[kind]} Requires a recent capture_window observationId and x/y in that image's pixels, not screen coordinates. Target window must already be focused and unobscured. You must stay within the original request; clicks receive a separate permission check. Other input uses your request interpretation with native target checks. Tools cannot grant permission. Every issued action invalidates old observations. Except for move_pointer, the desktop host attempts to include a fresh same-window image and observationId in the result; use it directly, or capture again if unavailable. Stop after a submission or uncertain outcome. macOS only.`,
       run: async (args, signal): Promise<ToolResult> => {
         if (closed || session.stopped) return toolError('input-stopped', 'Input has stopped for this turn after a commitment, uncertain outcome, or close. Inspect and report the result; do not retry.');
         if (!request.trim() || request.length > 65_536) return toolError('request-required', 'Input requires the original user request.');
@@ -128,7 +128,7 @@ export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestSc
         return { isError: ['not-issued', 'uncertain'].includes(result.status), content: [{ type: 'text', text: JSON.stringify({
           action: action.kind, effect, status: result.status, ...(result.reason ? { code: result.reason } : {}), permission,
           message: result.status === 'not-issued' ? 'Native checks rejected input before execution. Recheck the target, focus and permissions with fresh evidence.'
-            : 'Input may change the UI. Capture fresh evidence to verify the intended outcome. Issued events are not proof of submission success.',
+            : 'Input may change the UI. Inspect the fresh observation included with this result, or capture again if unavailable. Issued events are not proof of submission success.',
           inputStopped: session.stopped,
         }) }] };
       },

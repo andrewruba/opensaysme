@@ -318,7 +318,7 @@ export class VoiceRuntime {
     this.publishState('interpreting');
     const started = this.now();
     const deadline = this.timer(turn, this.options.deadlines?.reasoning ?? 50_000,
-      () => this.cancel('Reasoning timed out. Try a shorter request.'));
+      () => this.cancel('Desktop task timed out. Stopped without confirming completion. Earlier actions may already have occurred; check the current state before retrying.'));
     const visual = await prepareVisualContext(history, turn.abort.signal);
     if (this.turn !== turn || turn.abort.signal.aborted || this.closed) { discardVisualContext(visual); return; }
     turn.visual = visual;

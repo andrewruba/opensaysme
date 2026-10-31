@@ -87,6 +87,11 @@ that outcome in your request. Escape, Ctrl+C and your activation shortcut stay
 reserved for you. Keyboard typing inserts single-line text; multiline preparation
 uses direct text replacement in supported inputs.
 
+Focus and input tools return a fresh view when capture is available, letting the
+agent choose its next step without a separate screenshot request. Action turns
+can run for up to three minutes; Escape still cancels immediately. A timeout stops
+further work but cannot undo actions already taken.
+
 For longer context, it can read accessible text such as Terminal scrollback and
 transfer the requested section directly into an agent's input, preserving line
 breaks. Each capture retains up to 65,536 UTF-16 units; sending remains separate.

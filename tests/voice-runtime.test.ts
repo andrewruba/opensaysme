@@ -48,7 +48,7 @@ afterEach(() => { for (const runtime of runtimes.splice(0)) runtime.close(); vi.
 function fixture(capture: (signal: AbortSignal) => Promise<DesktopContext> = async () => ({ ...structuredClone(context), capturedAt: new Date().toISOString() }),
   interpret: ReasoningFactory = reason, captureFrame: () => Promise<ScreenFrameCapture> = async () => { throw new Error('no screen'); },
   debug?: DebugSession, createTools?: VoiceRuntimeOptions['createTools'],
-  work: Pick<VoiceRuntimeOptions, 'workContext' | 'observeWindow'> = {}) {
+  work: Pick<VoiceRuntimeOptions, 'workContext' | 'observeWindow' | 'deadlines'> = {}) {
   let clock = 0;
   const commands: NativeVoiceCommand[] = [];
   const outputs: VoiceOutput[] = [];
@@ -634,13 +634,17 @@ describe('live voice turn lifecycle', () => {
     expect(d.results).toMatchObject([{ turnId: id, result: { status: 'cancelled' } }]);
   });
 
-  it('bounds response latency and remains cancellable if interpretation stalls', async () => {
-    vi.useFakeTimers(); const f = fixture(undefined, () => new Promise(() => {}));
+  it.each([50_000, 185_000])('bounds response latency and remains cancellable if interpretation stalls (%sms)', async (deadline) => {
+    vi.useFakeTimers(); const f = fixture(undefined, () => new Promise(() => {}), undefined, undefined, undefined,
+      { deadlines: { reasoning: deadline } });
     f.runtime.toggle(); const id = f.id(); await flush();
     f.runtime.toggle(); f.runtime.handle({ type: 'audio-stopped', turnId: id });
     f.sessions[0]!.final.resolve('use this'); await flush();
-    await vi.advanceTimersByTimeAsync(50_000);
-    expect(f.outputs).toContainEqual({ type: 'error', turnId: id, message: 'Reasoning timed out. Try a shorter request.' });
+    await vi.advanceTimersByTimeAsync(deadline - 1);
+    expect(f.outputs.some((output) => output.type === 'error')).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(f.outputs).toContainEqual({ type: 'error', turnId: id,
+      message: 'Desktop task timed out. Stopped without confirming completion. Earlier actions may already have occurred; check the current state before retrying.' });
     expect(f.commands.at(-1)).toEqual({ type: 'cancel', turnId: id });
   });
 
