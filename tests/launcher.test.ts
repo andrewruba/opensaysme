@@ -39,8 +39,8 @@ process.stdout.write(JSON.stringify({ cwd: process.cwd(), args: process.argv.sli
 process.exitCode = 7;
 `, { mode: 0o644 });
   for (const name of ['opensaysme', 'osm']) {
-    await expect(execute(f.command(name), ['--hotkey', 'Cmd+Shift+Space'], { cwd: f.cwd })).rejects.toMatchObject({
-      code: 7, stdout: JSON.stringify({ cwd: f.cwd, args: ['--hotkey', 'Cmd+Shift+Space'] }), stderr: '',
+    await expect(execute(f.command(name), ['hotkey', '--show'], { cwd: f.cwd })).rejects.toMatchObject({
+      code: 7, stdout: JSON.stringify({ cwd: f.cwd, args: ['hotkey', '--show'] }), stderr: '',
     });
   }
 });

@@ -118,7 +118,8 @@ the event tap. A disabled tap fails instead of silently waiting without capturin
 The original AX focused-window identity is checked without reading titles or
 window text; inability to establish it reports capture unavailable.
 Detached terminal servers whose ancestry no longer includes the foreground app
-must use the explicit CLI shortcut argument. The CLI owns confirmation and saving.
+cannot record shortcuts; run `osm hotkey` in a local terminal instead.
+The CLI owns confirmation and saving.
 
 `--voice [activation-hotkey]` is the persistent JSONL process. It registers the
 configured shortcut without opening the microphone; the default is Ctrl+Shift+Space.

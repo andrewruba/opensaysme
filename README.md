@@ -34,10 +34,10 @@ osm doctor
 osm
 ```
 
-Run the install commands from this repository. `install:cli` builds the TypeScript
-and macOS helper, then links both `osm` and `opensaysme` into npm's global command
-directory. Either name works from any directory. Keep this checkout: the commands
-link to it.
+Run the install commands from this repository folder. `install:cli` builds the app
+and makes `osm` and `opensaysme` available in your terminal. Both commands run files
+from this folder, even when called from another directory. Keep the folder on your
+computer; if you move it, run `npm run install:cli` again from its new location.
 
 Setup stores environment-variable names, never keys. Replace `your-key` above with
 your API key; if you chose different variable names during setup, export those in
@@ -61,9 +61,7 @@ pointing and selection help the model resolve references.
 
 ```sh
 osm hotkey                   # press a key combination at the capture prompt
-osm hotkey "Cmd+Shift+Space"  # save directly
 osm hotkey --show            # show the saved shortcut
-osm --hotkey "Ctrl+Alt+Space" # override for this run only
 osm hotkey --help            # supported keys and modifiers
 ```
 
@@ -138,8 +136,7 @@ are not automatically ignored. Do not commit captured desktop content.
 - If a permission grant does not take effect, fully quit and reopen the launching
   terminal. Moving or rebuilding the unsigned helper can require renewed grants.
   Export your key again if it is no longer set in the new shell.
-- If the activation shortcut is unavailable, choose another with `osm hotkey` or
-  `osm --hotkey "Ctrl+Alt+Space"`.
+- If the activation shortcut is unavailable, choose another with `osm hotkey`.
 - To remove both CLI names, run `npm uninstall --global opensaysme`. Saved
   configuration remains in place.
 

@@ -2,8 +2,8 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Command, InvalidArgumentError } from 'commander';
-import { configPath, providerStatus, readConfig, writeConfig } from './config.js';
-import { activationHotkeySchema, defaultActivationHotkey, hotkeyHelp } from './hotkey.js';
+import { configPath, providerStatus, readConfig } from './config.js';
+import { defaultActivationHotkey, hotkeyHelp } from './hotkey.js';
 import { desktopAdapter } from './desktop/index.js';
 import { cancelDesktopCommands } from './desktop/process.js';
 import { capabilityNames, type DesktopReport } from './desktop/types.js';
@@ -28,19 +28,15 @@ const quickStart = `Quick start from the repository (macOS 14+, Node.js 22.20+, 
   osm doctor
   osm
 
-The install command builds and links this checkout as osm and opensaysme.
-Both names work from any directory. Keep the checkout in place after linking.
+The install command builds the app and makes osm and opensaysme available in your terminal.
+Both commands run files from this repository folder, even from another directory.
+Keep the folder on your computer. If you move it, rerun npm run install:cli there.
 Setup saves key environment-variable names, never keys. Export the names you chose
 in the same terminal used to launch voice mode; OPENAI_API_KEY is the default.
 Allow Microphone, Accessibility and Screen Recording for your terminal/helper in
 System Settings > Privacy & Security. Restart your terminal if grants do not apply.
 Doctor checks access and key presence without recording or making a provider call.
 `;
-function shortcut(value: string): string {
-  const parsed = activationHotkeySchema.safeParse(value);
-  if (!parsed.success) throw new InvalidArgumentError(hotkeyHelp);
-  return parsed.data;
-}
 function seconds(value: string): number {
   if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 30) {
     throw new InvalidArgumentError('Duration must be a whole number from 1 to 30 seconds.');
@@ -60,7 +56,6 @@ const program = new Command()
   .name('opensaysme')
   .description('Tap-to-talk with desktop context (also available as osm)')
   .version(version)
-  .option('--hotkey <shortcut>', 'Override activation for this run only (saved shortcut stays unchanged)', shortcut)
   .option('--debug [directory]', 'Save local context, model inputs, responses, and diagnostics (default: .opensaysme-debug)', (value: string) => {
     if (!value.trim()) throw new InvalidArgumentError('Enter a nonempty debug directory.');
     return resolve(value);
@@ -68,9 +63,7 @@ const program = new Command()
   .addHelpText('after', `\n${quickStart}
 Activation shortcuts:
   osm hotkey                       Record the shortcut you press, then save it
-  osm hotkey "Cmd+Shift+Space"      Save a shortcut directly
   osm hotkey --show                 Show the saved shortcut
-  osm --hotkey "Ctrl+Alt+Space"     Use a shortcut for this run only
   osm hotkey --help                 Supported keys and modifiers
 
 Using voice:
@@ -81,17 +74,15 @@ Using voice:
   Activated audio and screen/context go to your configured providers; charges apply.
 `)
   .showHelpAfterError()
-  .action(async (options: { debug?: true | string; hotkey?: string }) => {
-    const savedConfig = await readConfig();
-    if (!savedConfig) {
+  .action(async (options: { debug?: true | string }) => {
+    const config = await readConfig();
+    if (!config) {
       process.stderr.write(`${quickStart}\n`);
       throw new Error('Run osm setup first. See osm --help for shortcuts and examples.');
     }
-    const config = options.hotkey ? { ...savedConfig, activationHotkey: options.hotkey } : savedConfig;
     process.stderr.write(`OpenSaysMe voice mode. ${config.activationHotkey ?? defaultActivationHotkey} starts/stops; Escape cancels; Ctrl+C quits.\n`);
     process.stderr.write(`Configuration: ${safeText(configPath())}\n`);
     process.stderr.write(`Models: reasoning ${safeText(config.reasoning.model)}; speech ${safeText(config.speech.model)}.\n`);
-    if (options.hotkey) process.stderr.write('Using --hotkey for this run only; the saved shortcut is unchanged.\n');
     process.stderr.write('Change your shortcut: osm hotkey (interactive). Setup/access help: osm --help\n');
     process.stderr.write('Wait for ready, switch to your work, tap to talk, then tap again to finish. Try: "Explain this error."\n');
     process.stderr.write('Activated audio streams to OpenAI. Screen/context and cursor history are captured while recording.\n');
@@ -122,24 +113,17 @@ Using voice:
 program.command('setup').description('Configure environment-key references and explain macOS access; retain settings unless --replace')
   .option('--replace', 'Replace existing configuration after interactive setup')
   .action((options: { replace?: boolean }) => setup(stop.signal, Boolean(options.replace)));
-program.command('hotkey [shortcut]').description('Record a pressed shortcut or save one directly; Escape and Ctrl+C stay fixed')
+program.command('hotkey').description('Record a pressed activation shortcut; Escape and Ctrl+C stay fixed')
   .option('--show', 'Show the saved shortcut without prompting or changing it')
   .addHelpText('after', `\n${hotkeyHelp}\nDefault: ${defaultActivationHotkey}. Letter/digit keys use US physical key positions.
 Record: osm hotkey (press and release a shortcut, then confirm; Escape or Ctrl+C cancels)
 Recording requires macOS Accessibility access. Keep this terminal focused.
-Save directly: osm hotkey "Cmd+Shift+Space"
 Show: osm hotkey --show
-Restart voice mode after saving. If the shortcut is already in use, choose another.
-For one run without saving: osm --hotkey "Ctrl+Alt+Space"`)
-  .action(async (value: string | undefined, options: { show?: boolean }) => {
-    if (options.show && value !== undefined) throw new InvalidArgumentError('Use --show by itself, or supply a shortcut to save.');
-    if (value === undefined && !options.show) { await setupHotkey(stop.signal); return; }
-    const parsed = value === undefined ? undefined : shortcut(value);
+Restart voice mode after saving. If the shortcut is already in use, choose another.`)
+  .action(async (options: { show?: boolean }) => {
+    if (!options.show) { await setupHotkey(stop.signal); return; }
     const config = await readConfig();
-    if (!parsed) { console.log(`Activation shortcut: ${config?.activationHotkey ?? defaultActivationHotkey}`); return; }
-    if (!config) throw new Error('Run osm setup before saving a shortcut.');
-    await writeConfig({ ...config, activationHotkey: parsed }, configPath(), true);
-    console.log(`Saved activation shortcut: ${parsed}. Restart voice mode to apply it. Escape and Ctrl+C are unchanged.`);
+    console.log(`Activation shortcut: ${config?.activationHotkey ?? defaultActivationHotkey}`);
   });
 program.command('tools').description('List available agent tools and their schemas without reading the desktop')
   .action(async () => {

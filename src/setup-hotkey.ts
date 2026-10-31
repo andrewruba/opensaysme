@@ -5,22 +5,22 @@ import { desktopAdapter } from './desktop/index.js';
 
 const cancelled = 'Hotkey setup cancelled. No configuration was written.';
 const unavailable = {
-  'accessibility-permission-required': 'Allow Accessibility for your terminal/helper in System Settings → Privacy & Security, then retry osm hotkey. You can also set it directly with osm hotkey "Cmd+Shift+Space".',
-  'capture-unavailable': 'Could not record the shortcut. Run osm hotkey in a focused local terminal with Accessibility access; disable Secure Keyboard Entry if enabled. You can also set it directly with osm hotkey "Cmd+Shift+Space".',
+  'accessibility-permission-required': 'Allow Accessibility for your terminal/helper in System Settings → Privacy & Security, then retry osm hotkey.',
+  'capture-unavailable': 'Could not record the shortcut. Run osm hotkey in a focused local terminal with Accessibility access; disable Secure Keyboard Entry if enabled.',
   timeout: 'No shortcut was recorded within 30 seconds. Run osm hotkey to try again.',
   'focus-changed': 'Shortcut recording stopped because this terminal is not focused. Focus the terminal and run osm hotkey again.',
 };
 
 export async function setupHotkey(signal?: AbortSignal): Promise<void> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    throw new Error('Hotkey setup needs an interactive terminal. Use osm hotkey "Cmd+Shift+Space" to set it directly, or osm hotkey --show to display it.');
+    throw new Error('Hotkey setup needs an interactive terminal. Run osm hotkey in a local terminal to record a shortcut, or osm hotkey --show to display it.');
   }
   if (signal?.aborted) throw new Error(cancelled);
   const config = await readConfig();
   if (signal?.aborted) throw new Error(cancelled);
   if (!config) throw new Error('Run osm setup before choosing a shortcut.');
   const adapter = await desktopAdapter();
-  if (!adapter.recordHotkey) throw new Error('Physical shortcut recording is unavailable on this desktop. Use osm hotkey "Cmd+Shift+Space" to set it directly.');
+  if (!adapter.recordHotkey) throw new Error('Physical shortcut recording is unavailable on this desktop. Run osm hotkey in a local macOS terminal with Accessibility access.');
 
   intro('Activation shortcut');
   note(`Current: ${config.activationHotkey ?? defaultActivationHotkey}\n${hotkeyHelp}\n`
