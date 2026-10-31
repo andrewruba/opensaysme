@@ -1,4 +1,4 @@
-# OpenSaysMe 🦜
+# OpenSaysMe 🧙 — Less friction with your AI agents
 
 [![CI](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml/badge.svg?branch=main&event=push)](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml)
 [![Version 0.1.0](https://img.shields.io/badge/version-0.1.0-blue?style=flat-square)](package.json)
@@ -6,11 +6,9 @@
 [![macOS 14 or newer](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square)](#run-it)
 [![MIT license](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
-Less friction between what you want and what your AI agents do, using voice and desktop context.
-
-A ticket in one window, an error in another, an agent waiting for context. OpenSaysMe
-lets you say what you want while showing the relevant work, instead of copying it
-between windows and explaining it again.
+OpenSaysMe is a macOS command-line tool for interacting with AI agents through
+voice and desktop context. Speak while showing the relevant work; it gathers
+context, finds the right window, and carries out your request.
 
 ## What works today
 

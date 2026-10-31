@@ -52,7 +52,7 @@ and configuration.
   user changes and follow established conventions.
 - Keep changes focused. Separate unrelated cleanup and broad formatting from
   behavior changes.
-- This is a greenfield project with no backward-compatibility commitment yet.
+- Before `1.0.0`, the project has no backward-compatibility commitment.
   Replace obsolete internal designs directly; do not retain compatibility shims,
   legacy paths, or speculative migrations just to preserve earlier architecture.
   Update affected callers, tests, and docs together, and remove superseded code.
@@ -76,9 +76,6 @@ and configuration.
 - Run `npm run check` for version consistency, typecheck, lint, unit tests, and the
   TypeScript build. For Swift changes, also run `sh native/macos/test.sh` and
   `npm run build:native`.
-- Keep `package.json` and `package-lock.json` versions aligned. Prepare a version
-  bump with `npm version patch --no-git-tag-version` (or `minor`/`major`) in a PR.
-  Tag the merged release commit as `v<version>`; CI checks that the tag matches.
 - Run the existing checks relevant to the change. Once tooling exists, document
   its canonical install, development, typecheck, lint, and test commands.
 - Add meaningful tests for behavior and regressions, especially action routing,
@@ -90,6 +87,22 @@ and configuration.
   environments were tested and which remain unverified.
 - Review the final diff and run `git diff --check`. Report relevant checks and
   remaining limitations without claiming unperformed validation.
+
+## Versioning
+
+- Bump once per release, not per commit. Documentation, tests, CI changes, and
+  internal refactors that leave user-visible behavior unchanged do not need a bump.
+- While the version is `0.x`, use a patch bump for compatible bug fixes
+  (`0.1.0` → `0.1.1`) and a minor bump for new capabilities or breaking changes
+  (`0.1.1` → `0.2.0`). Use the largest applicable bump for the release.
+- Move to `1.0.0` when deliberately committing to stable CLI and configuration
+  interfaces. After that, use patch for compatible fixes, minor for compatible
+  features, and major for breaking changes.
+- Prepare the bump with `npm version patch --no-git-tag-version` (or `minor`/`major`)
+  in the release PR. Keep `package.json`, `package-lock.json`, and the README version
+  badge aligned. Use `npm version 1.0.0 --no-git-tag-version` for the first stable release.
+- After merging and passing CI, create `v<version>` on that exact tested commit.
+  Published tags stay on their original commits; corrections get a new version.
 
 ## Commits
 
