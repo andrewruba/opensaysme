@@ -1,10 +1,34 @@
 import AVFoundation
 import AppKit
+import Carbon
 import Foundation
 
 @main
 struct VoiceTests {
     static func main() throws {
+        let standardHotkey = ActivationHotkey.parse("Ctrl+Shift+Space")!
+        precondition(standardHotkey.keyCode == ActivationHotkey.standard.keyCode)
+        precondition(standardHotkey.modifiers == ActivationHotkey.standard.modifiers)
+        let remappedHotkey = ActivationHotkey.parse("Cmd+Shift+Space")!
+        precondition(remappedHotkey.keyCode == UInt32(kVK_Space))
+        precondition(remappedHotkey.modifiers == UInt32(cmdKey | shiftKey))
+        let reordered = ActivationHotkey.parse("Shift+Cmd+Space")!
+        precondition(reordered.modifiers == remappedHotkey.modifiers)
+        precondition(ActivationHotkey.parse("Alt+C")?.keyCode == UInt32(kVK_ANSI_C))
+        precondition(ActivationHotkey.parse("Ctrl+Alt+Shift+Cmd+F12")?.modifiers == UInt32(controlKey | optionKey | shiftKey | cmdKey))
+        var keyNames = ["Space"]
+        keyNames.append(contentsOf: (65...90).map { String(UnicodeScalar($0)!) })
+        keyNames.append(contentsOf: (0...9).map { String($0) })
+        keyNames.append(contentsOf: (1...12).map { "F\($0)" })
+        let supported = keyNames.compactMap { ActivationHotkey.parse("Alt+\($0)") }
+        precondition(supported.count == 49 && Set(supported.map(\.keyCode)).count == 49)
+        for invalid in ["", "Space", "A", "Shift+Space", "Ctrl+Escape", "Cmd+Escape", "Ctrl+C", "Ctrl+Shift+C",
+                        "Ctrl+Alt+C", "Ctrl+Cmd+C", "Ctrl+Alt+Shift+Cmd+C",
+                        "Ctrl+Ctrl+Space", "Ctrl++Space", "+Ctrl+Space", "Ctrl+Space+", "Ctrl+Space+A",
+                        "Ctrl+F13", "Ctrl+Enter", "Ctrl+Tab", "Ctrl+Space\n", "Control+Space", "ctrl+space",
+                        "Ctrl+" + String(repeating: "A", count: 65)] {
+            precondition(ActivationHotkey.parse(invalid) == nil, "Accepted invalid activation shortcut")
+        }
         precondition(visualCaptureFailure(CaptureExecutionError.timeout) == .timeout)
         precondition(visualCaptureFailure(CaptureExecutionError.displayUnavailable) == .unavailable)
         precondition(visualCaptureFailure(VisualCaptureError.permissionRequired) == .permissionRequired)
@@ -128,6 +152,6 @@ struct VoiceTests {
         let display = encoded["display"] as! [String: Any]
         let bounds = display["bounds"] as! [String: Double]
         precondition(bounds["x"] == -1920 && bounds["y"] == -200)
-        print("Passed synthetic PCM/timing, command, pointer trajectory, and bounded JPEG frame checks.")
+        print("Passed synthetic activation shortcut, PCM/timing, command, pointer trajectory, and bounded JPEG frame checks.")
     }
 }

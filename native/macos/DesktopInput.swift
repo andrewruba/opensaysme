@@ -1,7 +1,6 @@
 import AppKit
 import ApplicationServices
 import Carbon
-import CryptoKit
 import Foundation
 
 private struct ResolvedInput {
@@ -31,7 +30,7 @@ private func inputString(_ element: AXUIElement, _ attributeName: String, limit:
     guard result == .success else { throw InputError.unavailable }
     let value: String
     if let text = raw as? String { value = text }
-    else if let number = raw as? NSNumber { value = number.stringValue }
+    else if attributeName == kAXValueAttribute, let number = raw as? NSNumber { value = number.stringValue }
     else { throw InputError.unavailable }
     guard value.utf16.count <= limit else { throw InputError.unavailable }
     return value
@@ -47,39 +46,6 @@ private func assertInputFocus(_ application: NSRunningApplication, _ window: AXU
           !CGEventSource.buttonState(.hidSystemState, button: .right),
           !CGEventSource.buttonState(.hidSystemState, button: .center),
           !(0..<128).contains(where: { CGEventSource.keyState(.hidSystemState, key: CGKeyCode($0)) }) else { throw InputError.unavailable }
-}
-
-private func inputWindowContentFingerprint(_ window: AXUIElement, deadline: TimeInterval) throws -> String {
-    func check(_ element: AXUIElement) throws {
-        guard ProcessInfo.processInfo.systemUptime < deadline else { throw InputError.unavailable }
-        AXUIElementSetMessagingTimeout(element, 0.03)
-    }
-    let content = collectWindowContent(root: window, deadline: deadline, valueLimit: 4096,
-        same: { CFEqual($0, $1) }, read: { element, name in
-            try check(element)
-            var raw: CFTypeRef?
-            let status = AXUIElementCopyAttributeValue(element, name as CFString, &raw)
-            if status == .noValue || status == .attributeUnsupported { return nil }
-            guard status == .success else { throw InputError.unavailable }
-            if let value = raw as? String { return value }
-            if name == kAXValueAttribute, let value = raw as? NSNumber { return value.stringValue }
-            throw InputError.unavailable
-        }, children: { element, limit in
-            try check(element)
-            var count = 0
-            let status = AXUIElementGetAttributeValueCount(element, kAXChildrenAttribute as CFString, &count)
-            if status == .noValue || status == .attributeUnsupported { return [] }
-            guard status == .success, count >= 0 else { throw InputError.unavailable }
-            if count == 0 { return [] }
-            try check(element)
-            let requested = min(count, limit)
-            var values: CFArray?
-            guard AXUIElementCopyAttributeValues(element, kAXChildrenAttribute as CFString, 0, requested, &values) == .success,
-                  let children = values as? [AXUIElement], children.count == requested else { throw InputError.unavailable }
-            return children
-        })
-    do { return try windowContentFingerprint(content) }
-    catch WindowContentFingerprintError.incomplete { throw InputError.unavailable }
 }
 
 private func resolveInput(_ command: InputCommand) throws -> ResolvedInput {
@@ -98,13 +64,14 @@ private func resolveInput(_ command: InputCommand) throws -> ResolvedInput {
           let element = hit else { throw InputError.unavailable }
     AXUIElementSetMessagingTimeout(element, 0.1)
     let role = try inputString(element, kAXRoleAttribute, limit: 128)
+    guard !role.isEmpty else { throw InputError.unavailable }
     let hitWindow = role == kAXWindowRole ? element : try elementAttribute(element, kAXWindowAttribute)
     guard CFEqual(hitWindow, window), (try? attribute(element, kAXEnabledAttribute) as? Bool) != false else { throw InputError.unavailable }
     // Do not expose protected values or descendants of protected controls.
     var ancestor = element; var reachedWindow = false
     for _ in 0..<32 {
         guard ProcessInfo.processInfo.systemUptime < deadline,
-              stringAttribute(ancestor, kAXSubroleAttribute) != kAXSecureTextFieldSubrole else { throw InputError.unavailable }
+              try inputString(ancestor, kAXSubroleAttribute, limit: 128) != kAXSecureTextFieldSubrole else { throw InputError.unavailable }
         if CFEqual(ancestor, window) { reachedWindow = true; break }
         ancestor = try elementAttribute(ancestor, kAXParentAttribute)
         AXUIElementSetMessagingTimeout(ancestor, 0.05)
@@ -120,28 +87,23 @@ private func resolveInput(_ command: InputCommand) throws -> ResolvedInput {
         && AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success && settable.boolValue
     let focused = (try? focusedElement(applicationElement(application))).map { CFEqual($0, element) } ?? false
     if command.action.kind == "type_text" {
+        guard focused else { throw InputError.unavailable }
         guard let text = command.action.text, supportsInputText(text, role: role, editable: editable) else {
             throw DesktopError("The input does not support literal text replacement.", code: "unsupported-text-target")
         }
     }
     if command.action.kind == "press_key" { guard editable && focused else { throw InputError.unavailable } }
-    // Other fields can change programmatically without a HID event or changing
-    // the hit Submit button. Include their observed values in the revalidation.
-    let contentFingerprint = try inputWindowContentFingerprint(window, deadline: deadline)
     guard let pointer = CGEvent(source: nil)?.location else { throw InputError.unavailable }
     let events: [CGEventType] = [.mouseMoved, .leftMouseDown, .rightMouseDown, .keyDown, .scrollWheel]
-    let fingerprintData = try JSONSerialization.data(withJSONObject: [
-        "window": command.target.windowId, "windowBounds": [bounds.x, bounds.y, bounds.width, bounds.height],
-        "windowContent": contentFingerprint,
-        "role": role, "title": title, "description": description, "value": value,
-        "identifier": try inputString(element, kAXIdentifierAttribute, limit: 1024),
-        "bounds": [elementBounds.x, elementBounds.y, elementBounds.width, elementBounds.height],
-        "focused": focused, "editable": editable, "pointer": [pointer.x, pointer.y],
-        "interaction": events.map { CGEventSource.counterForEventType(.hidSystemState, eventType: $0) },
-    ], options: [.sortedKeys])
+    let fingerprint = try inputFingerprint(InputFingerprintState(
+        windowId: command.target.windowId, windowBounds: bounds,
+        role: role, title: title, description: description, value: value,
+        identifier: try inputString(element, kAXIdentifierAttribute, limit: 1024),
+        bounds: elementBounds, focused: focused, editable: editable,
+        pointer: InputPoint(x: pointer.x, y: pointer.y),
+        interaction: events.map { CGEventSource.counterForEventType(.hidSystemState, eventType: $0) }))
     try assertInputFocus(application, window)
     guard ProcessInfo.processInfo.systemUptime < deadline else { throw InputError.unavailable }
-    let fingerprint = SHA256.hash(data: fingerprintData).map { String(format: "%02x", $0) }.joined()
     return ResolvedInput(application: application, window: window, element: element,
         evidence: InputEvidence(fingerprint: fingerprint, role: role, title: title, description: description, value: value,
             bounds: elementBounds, focused: focused, editable: editable))
@@ -183,7 +145,8 @@ private func executeInput(_ command: InputCommand) -> InputResult {
               (try? assertInputFocus(resolved.application, resolved.window)) != nil else { return InputResult(status: "not-issued") }
         event.location = point; event.flags = []; event.postToPid(pid)
     case "type_text":
-        guard (try? assertInputFocus(resolved.application, resolved.window)) != nil else { return InputResult(status: "not-issued") }
+        guard (try? assertInputFocus(resolved.application, resolved.window)) != nil,
+              let focused = try? focusedElement(applicationElement(resolved.application)), CFEqual(focused, resolved.element) else { return InputResult(status: "not-issued") }
         return replaceInputText(action.text!, role: resolved.evidence.role, editable: resolved.evidence.editable,
             write: { AXUIElementSetAttributeValue(resolved.element, kAXValueAttribute as CFString, $0 as CFString) == .success },
             read: {

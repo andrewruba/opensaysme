@@ -107,14 +107,17 @@ it('starts optional feedback, preserves terminal events, and closes the panel on
   const sink = { send: vi.fn(), close: vi.fn(async () => {}) };
   mocks.feedback.mockReturnValue(sink);
   const captureContext = vi.fn(), captureFrame = vi.fn();
-  mocks.adapter.mockResolvedValue({ voiceHelper: async () => ({ file: 'fixture', args: ['--voice'] }),
+  const voiceHelper = vi.fn(async () => ({ file: 'fixture', args: ['--voice', 'Cmd+Space'] }));
+  mocks.adapter.mockResolvedValue({ voiceHelper,
     feedbackHelper: async () => ({ file: 'fixture', args: ['--feedback'] }), captureContext, captureFrame });
   mocks.start.mockImplementation((_spec: unknown, onEvent: (event: NativeVoiceEvent) => void) => {
     queueMicrotask(() => onEvent({ type: 'ready' }));
     return { ready: Promise.resolve(), done: new Promise(() => {}), send: vi.fn(), close: vi.fn(async () => {}) };
   });
   const emit = vi.fn((event) => { if (event.type === 'state' && event.state === 'ready') setTimeout(() => controller.abort(), 0); });
-  await runVoice(config, controller.signal, emit);
+  await runVoice({ ...config, activationHotkey: 'Cmd+Space' }, controller.signal, emit);
+  expect(voiceHelper).toHaveBeenCalledWith('Cmd+Space');
+  expect(mocks.start).toHaveBeenCalledWith({ file: 'fixture', args: ['--voice', 'Cmd+Space'] }, expect.any(Function));
   expect(mocks.feedback).toHaveBeenCalledWith({ file: 'fixture', args: ['--feedback'] }, expect.any(Function));
   expect(emit).toHaveBeenCalledWith({ type: 'state', state: 'ready' });
   expect(sink.send).toHaveBeenLastCalledWith({ type: 'hide' });

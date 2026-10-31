@@ -8,27 +8,17 @@
   "bin": {
     "opensaysme": "dist/cli.js"
   },
-  "files": [
-    "dist",
-    "native",
-    "scripts",
-    "README.md",
-    "LICENSE",
-    "docs"
-  ],
   "engines": {
     "node": ">=22.20.0"
   },
   "scripts": {
     "dev": "tsx src/cli.ts",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "build:native": "node scripts/build-native.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:x11": "vitest run tests/linux-live.test.ts",
-    "check": "npm run typecheck && npm run lint && npm test && npm run build",
-    "prepack": "npm run build"
+    "check": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",

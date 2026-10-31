@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AttentionHistory } from '../src/attention.js';
-import { openAIReasoning } from '../src/reasoning/openai.js';
+import { defaultReasoningModel, openAIReasoning } from '../src/reasoning/openai.js';
 import type { ReasoningInput } from '../src/reasoning/types.js';
 import type { ToolDescriptor, ToolEvent, ToolHost, ToolResult } from '../src/tools/types.js';
 import type { DiagnosticSink, PreparedReasoningRequest } from '../src/diagnostics.js';
@@ -30,9 +30,9 @@ function response(text = 'The indicated number is 42 (frame-1).', status = 'comp
     type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text, annotations: [] }],
   }] });
 }
-function fixture(fetcher = vi.fn<typeof fetch>().mockResolvedValue(response())) {
+function fixture(fetcher = vi.fn<typeof fetch>().mockResolvedValue(response()), model = 'gpt-5.4-mini') {
   const controller = new AbortController();
-  const reason = openAIReasoning({ apiKey: 'fixture-secret-value', model: 'gpt-5.4-mini', timeoutMs: 1000 }, fetcher);
+  const reason = openAIReasoning({ apiKey: 'fixture-secret-value', model, timeoutMs: 1000 }, fetcher);
   const captured = history();
   const input: ReasoningInput = { history: captured, transcript: 'What is that number?', signal: controller.signal,
     visual: { warnings: [], frames: [{ context: {
@@ -59,6 +59,21 @@ function priorTurn(): ConversationTurn {
 }
 
 describe('natural desktop response', () => {
+  it.each(['gpt-6-astra', 'configured-model'])('uses compatible request settings for %s without changing the image contract', async (model) => {
+    const f = fixture(undefined, model);
+    const requests: PreparedReasoningRequest[] = [];
+    f.input.onRequest = (request) => requests.push(request);
+    await expect(f.reason(f.input)).resolves.toContain('42');
+    const wire = JSON.parse(String(f.fetcher.mock.calls[0]![1]!.body));
+    expect(wire.model).toBe(model);
+    expect(wire.reasoning).toEqual(model === 'gpt-6-astra' ? { effort: 'low' } : undefined);
+    expect(wire.max_output_tokens).toBe(model === 'gpt-6-astra' ? 4096 : 2500);
+    expect(requests[0]?.reasoning).toEqual(wire.reasoning);
+    expect(wire.input[0].content.filter((part: { type: string }) => part.type === 'input_image')).toHaveLength(2);
+    expect(wire.temperature).toBeUndefined();
+    expect(wire.top_p).toBeUndefined();
+  });
+
   it('supplies historical requests and native outcomes separately from current speech and images', async () => {
     const f = fixture();
     const previous = priorTurn();
@@ -385,7 +400,7 @@ describe('desktop tool reasoning loop', () => {
       await f.reason(f.input);
       expect(execute).toHaveBeenCalledExactlyOnceWith({ windowId: window.id, bounds: target.bounds, point: { x: 100, y: 100 } },
         { kind: 'type_text', text }, target.fingerprint, expect.any(AbortSignal));
-      expect(authorize).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ request, action: { kind: 'type_text', text } }), expect.any(AbortSignal));
+      expect(authorize).not.toHaveBeenCalled();
     } finally { host.close(); }
   });
 
@@ -475,7 +490,7 @@ describe('desktop tool reasoning loop', () => {
       .mockResolvedValueOnce(callResponse(thinking, commentary, listing))
       .mockResolvedValueOnce(callResponse(switching))
       .mockResolvedValueOnce(response('Switched to the frontend project.'));
-    const f = fixture(fetcher); const host = toolHost(); f.input.tools = host;
+    const f = fixture(fetcher, defaultReasoningModel); const host = toolHost(); f.input.tools = host;
     f.input.transcript = 'Switch to the frontend';
     host.call.mockImplementation(async (name) => name === 'list_windows' ? { content: [{ type: 'text', text: JSON.stringify({ windows: [
       { id: 'discovered-api', application: 'Visual Studio Code', title: 'server.ts — api' },
@@ -501,7 +516,10 @@ describe('desktop tool reasoning loop', () => {
       { type: 'input_text', text: '{"isError":false}' }, { type: 'input_text', text: expect.stringContaining('discovered-frontend') },
     ] });
     expect(wire[2].input.at(-1)).toMatchObject({ call_id: 'call-2', output: expect.any(Array) });
-    for (const request of wire) expect(request.previous_response_id).toBeUndefined();
+    for (const request of wire) {
+      expect(request.previous_response_id).toBeUndefined();
+      expect(request).toMatchObject({ model: 'gpt-6-astra', reasoning: { effort: 'low' }, max_output_tokens: 4096 });
+    }
     expect(wire[0].instructions).toContain('never require the user to register names');
     expect(wire[0].instructions).toContain('before asking the user');
     expect(JSON.stringify(requests)).not.toContain('fixture-secret-value');

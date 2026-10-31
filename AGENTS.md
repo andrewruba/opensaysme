@@ -8,10 +8,10 @@ an in-process tool host, and desktop probes. See
 
 ## Project direction
 
-- Ship a macOS-only v1 of a CLI-first tool that runs locally and complements
-  existing agents. Windows and Linux implementation, validation, and distribution
-  are deferred until after v1. Keep OS access isolated for those later ports,
-  setup in the terminal, and desktop feedback minimal.
+- Prove a useful macOS 14+ loop in a CLI-first tool that runs locally and complements
+  existing agents. Build from source with Xcode Command Line Tools. Keep setup in
+  the terminal and desktop feedback minimal. Do not maintain other-platform ports,
+  release packaging, signing, or credential-store workflows while proving the loop.
 - Reduce friction between user intent and agent behavior. Context gathering,
   preparing input, navigation, answers, and actions are possible interactions.
   Let the user's request determine the flow; do not impose a universal
@@ -42,6 +42,10 @@ an in-process tool host, and desktop probes. See
 - Prioritize the interactions in `BACKLOG.md`. Add abstractions when a concrete
   capability or integration needs them; avoid speculative frameworks and unrelated
   features.
+- Use the tool for real work and record brief observations before choosing the next
+  change. Keep the manual scenarios as examples of success, not a formal release
+  matrix. Add automated regressions for observed failures; do not build a paid live
+  evaluation harness or optimize an unmeasured bottleneck.
 
 ## Implementation practices
 

@@ -43,9 +43,3 @@ xcrun swiftc -O \
   -module-cache-path "$helper_dir/bin/module-cache" \
   "$helper_dir/FeedbackSupport.swift" "$helper_dir/FeedbackTests.swift" -o "$helper_dir/bin/feedback-tests"
 "$helper_dir/bin/feedback-tests"
-xcrun swiftc -O \
-  -target "$(uname -m)-apple-macosx12.0" \
-  -module-cache-path "$helper_dir/bin/module-cache" \
-  -framework AVFoundation \
-  "$helper_dir/PermissionsProtocol.swift" "$helper_dir/PermissionsTests.swift" -o "$helper_dir/bin/permission-tests"
-"$helper_dir/bin/permission-tests"

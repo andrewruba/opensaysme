@@ -3,6 +3,49 @@ import AVFoundation
 import Carbon
 import Foundation
 
+struct ActivationHotkey {
+    let keyCode: UInt32
+    let modifiers: UInt32
+
+    static let standard = ActivationHotkey(keyCode: UInt32(kVK_Space), modifiers: UInt32(controlKey | shiftKey))
+
+    // Match the bounded shortcut vocabulary accepted by the TypeScript config.
+    // Letter/digit keys refer to physical ANSI positions, as Carbon registration does.
+    static func parse(_ shortcut: String) -> ActivationHotkey? {
+        guard shortcut.utf8.count <= 64 else { return nil }
+        let parts = shortcut.split(separator: "+", omittingEmptySubsequences: false).map(String.init)
+        guard (2...5).contains(parts.count), let key = parts.last, let code = keyCodes[key] else { return nil }
+        let modifierCodes = ["Ctrl": UInt32(controlKey), "Alt": UInt32(optionKey),
+                             "Shift": UInt32(shiftKey), "Cmd": UInt32(cmdKey)]
+        var modifiers: UInt32 = 0
+        for name in parts.dropLast() {
+            guard let bit = modifierCodes[name], modifiers & bit == 0 else { return nil }
+            modifiers |= bit
+        }
+        guard modifiers & UInt32(controlKey | optionKey | cmdKey) != 0 else { return nil }
+        // The terminal reserves Ctrl+C, including combinations with other modifiers.
+        if key == "C", modifiers & UInt32(controlKey) != 0 { return nil }
+        return ActivationHotkey(keyCode: UInt32(code), modifiers: modifiers)
+    }
+
+    private static let keyCodes: [String: Int] = [
+        "Space": kVK_Space,
+        "A": kVK_ANSI_A, "B": kVK_ANSI_B, "C": kVK_ANSI_C, "D": kVK_ANSI_D,
+        "E": kVK_ANSI_E, "F": kVK_ANSI_F, "G": kVK_ANSI_G, "H": kVK_ANSI_H,
+        "I": kVK_ANSI_I, "J": kVK_ANSI_J, "K": kVK_ANSI_K, "L": kVK_ANSI_L,
+        "M": kVK_ANSI_M, "N": kVK_ANSI_N, "O": kVK_ANSI_O, "P": kVK_ANSI_P,
+        "Q": kVK_ANSI_Q, "R": kVK_ANSI_R, "S": kVK_ANSI_S, "T": kVK_ANSI_T,
+        "U": kVK_ANSI_U, "V": kVK_ANSI_V, "W": kVK_ANSI_W, "X": kVK_ANSI_X,
+        "Y": kVK_ANSI_Y, "Z": kVK_ANSI_Z,
+        "0": kVK_ANSI_0, "1": kVK_ANSI_1, "2": kVK_ANSI_2, "3": kVK_ANSI_3,
+        "4": kVK_ANSI_4, "5": kVK_ANSI_5, "6": kVK_ANSI_6, "7": kVK_ANSI_7,
+        "8": kVK_ANSI_8, "9": kVK_ANSI_9,
+        "F1": kVK_F1, "F2": kVK_F2, "F3": kVK_F3, "F4": kVK_F4,
+        "F5": kVK_F5, "F6": kVK_F6, "F7": kVK_F7, "F8": kVK_F8,
+        "F9": kVK_F9, "F10": kVK_F10, "F11": kVK_F11, "F12": kVK_F12,
+    ]
+}
+
 struct VoiceCommand {
     let type: String
     let turnID: String?
@@ -229,6 +272,7 @@ final class VoiceOutput {
 }
 
 final class VoiceSession {
+    private let activationHotkey: ActivationHotkey
     private let output = VoiceOutput()
     private var running = true
     private var input = Data()
@@ -241,6 +285,10 @@ final class VoiceSession {
     private var waitingForPermission = false
     private var captureDeadline: Date?
     private var pointerSampler = PointerTrajectorySampler()
+
+    init(activationHotkey: ActivationHotkey = .standard) {
+        self.activationHotkey = activationHotkey
+    }
 
     func run() {
         signal(SIGPIPE, SIG_IGN)
@@ -266,7 +314,7 @@ final class VoiceSession {
             return Unmanaged<VoiceSession>.fromOpaque(context).takeUnretainedValue().keyEvent(event)
         }, eventTypes.count, &eventTypes, Unmanaged.passUnretained(self).toOpaque(), &handler)
         guard installed == noErr,
-              register(key: UInt32(kVK_Space), modifiers: UInt32(controlKey | shiftKey), id: 1, ref: &toggleHotkey) else {
+              register(key: activationHotkey.keyCode, modifiers: activationHotkey.modifiers, id: 1, ref: &toggleHotkey) else {
             output.send(["type": "error", "code": "hotkey-unavailable"])
             return
         }

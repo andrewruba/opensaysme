@@ -23,17 +23,26 @@ export interface ActionReview {
 }
 export type ActionAuthorizer = (review: ActionReview, signal: AbortSignal) => Promise<PermissionDecision>;
 
-/** The actor cannot supply an effect or approval. Interpretations are checked here,
- * then used once for the exact action and native evidence reviewed by the guard. */
+/** Routine operations follow the actor's interpretation of the spoken request.
+ * Clicks can commit regardless of their labels; Enter always gets a separate check. */
+export function routineEffect(action: DesktopInput): 'point' | 'navigate' | 'edit' | undefined {
+  switch (action.kind) {
+    case 'move_pointer': return 'point';
+    case 'scroll': return 'navigate';
+    case 'type_text': return 'edit';
+    case 'press_key': return action.key === 'Tab' ? 'navigate' : undefined;
+    case 'click': return undefined;
+  }
+}
+
+/** An independent decision is used once for the exact click or Enter reviewed.
+ * The actor cannot supply its effect, supporting quote or approval. */
 export function permits(request: string, action: DesktopInput, decision: PermissionDecision): boolean {
   if (decision.decision !== 'allow' || !decision.requestQuote.trim()
     || !request.includes(decision.requestQuote) || decision.effect === 'unknown') return false;
   switch (action.kind) {
-    case 'move_pointer': return decision.effect === 'point';
-    case 'scroll': return decision.effect === 'navigate';
-    case 'type_text': return decision.effect === 'edit' || decision.effect === 'submit';
-    case 'press_key': return action.key === 'Enter' ? decision.effect === 'submit'
-      : ['navigate', 'edit', 'submit'].includes(decision.effect);
+    case 'press_key': return action.key === 'Enter' && decision.effect === 'submit';
     case 'click': return ['navigate', 'edit', 'submit'].includes(decision.effect);
+    default: return false;
   }
 }

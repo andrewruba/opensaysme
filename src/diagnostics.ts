@@ -16,6 +16,7 @@ export interface PreparedReasoningRequest {
   instructions: string;
   store: false;
   max_output_tokens: number;
+  reasoning?: { effort: 'low' };
   tools?: Array<{ type: 'function'; name: string; description: string; parameters: Record<string, unknown>; strict: true }>;
   tool_choice?: 'auto' | 'none';
   parallel_tool_calls?: false;

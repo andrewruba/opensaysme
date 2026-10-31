@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import CryptoKit
 
 enum InputError: String, Error { case invalid = "invalid-input", unavailable = "input-unavailable" }
 struct InputPoint: Codable { let x: Double; let y: Double; var cg: CGPoint { CGPoint(x: x, y: y) } }
@@ -27,6 +28,23 @@ struct InputEvidence: Encodable {
     let bounds: InputBounds; let focused: Bool; let editable: Bool
 }
 struct InputResult: Encodable { let status: String }
+
+// Revalidate the actual target and user intervention, not unrelated live content
+// elsewhere in the window. Other form fields are contextual evidence for the
+// actor/commit check, not part of this native target identity.
+struct InputFingerprintState: Encodable {
+    var windowId: String; var windowBounds: InputBounds
+    var role: String; var title: String; var description: String; var value: String
+    var identifier: String; var bounds: InputBounds
+    var focused: Bool; var editable: Bool
+    var pointer: InputPoint; var interaction: [UInt32]
+}
+
+func inputFingerprint(_ state: InputFingerprintState) throws -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    return SHA256.hash(data: try encoder.encode(state)).map { String(format: "%02x", $0) }.joined()
+}
 
 func validInputText(_ text: String) -> Bool {
     text.utf16.count <= 4096 && text.unicodeScalars.allSatisfy {

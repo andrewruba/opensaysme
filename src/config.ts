@@ -2,12 +2,14 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
+import { activationHotkeySchema } from './hotkey.js';
 
 const environmentName = z.string().regex(/^[A-Z_][A-Z0-9_]*$/).max(128);
 const modelName = z.string().trim().min(1).max(256)
   .refine((value) => [...value].every((character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127));
 export const configSchema = z.strictObject({
   version: z.literal(1),
+  activationHotkey: activationHotkeySchema.optional(),
   reasoning: z.strictObject({
     provider: z.literal('openai'),
     model: modelName,
@@ -22,14 +24,9 @@ export const configSchema = z.strictObject({
 });
 export type Config = z.infer<typeof configSchema>;
 
-export function configPath(env = process.env, platform = process.platform): string {
+export function configPath(env = process.env): string {
   if (env.OPENSAYSME_CONFIG_DIR) return join(env.OPENSAYSME_CONFIG_DIR, 'config.json');
-  const base = platform === 'win32'
-    ? env.APPDATA ?? join(homedir(), 'AppData', 'Roaming')
-    : platform === 'darwin'
-      ? join(homedir(), 'Library', 'Application Support')
-      : env.XDG_CONFIG_HOME ?? join(homedir(), '.config');
-  return join(base, 'opensaysme', 'config.json');
+  return join(homedir(), 'Library', 'Application Support', 'opensaysme', 'config.json');
 }
 
 export async function readConfig(path = configPath()): Promise<Config | null> {

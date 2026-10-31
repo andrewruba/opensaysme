@@ -24,7 +24,26 @@ it('shows CLI commands without reading desktop context', async () => {
   expect(stdout).toContain('doctor');
   expect(stdout).toContain('desktop');
   expect(stdout).toContain('tools');
+  expect(stdout).toContain('hotkey');
   expect(stdout).toContain('--debug [directory]');
+});
+
+it('saves and displays an activation shortcut without changing providers or requiring desktop access', async () => {
+  const env = await configured();
+  const file = join(env.OPENSAYSME_CONFIG_DIR, 'config.json');
+  const before = JSON.parse(await readFile(file, 'utf8'));
+  expect((await execute(process.execPath, [...args, 'hotkey'], { env })).stdout).toContain('Ctrl+Shift+Space');
+  const { stdout } = await execute(process.execPath, [...args, 'hotkey', 'cmd+shift+space'], { env });
+  expect(stdout).toContain('Restart voice mode');
+  expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({ ...before, activationHotkey: 'Cmd+Shift+Space' });
+  expect((await execute(process.execPath, [...args, 'hotkey'], { env })).stdout).toContain('Cmd+Shift+Space');
+  const saved = await readFile(file, 'utf8');
+  await expect(execute(process.execPath, [...args, 'hotkey', 'Ctrl+C'], { env })).rejects.toMatchObject({ code: 1,
+    stderr: expect.stringContaining('reserved') });
+  expect(await readFile(file, 'utf8')).toBe(saved);
+  await expect(execute(process.execPath, args, { env })).rejects.toMatchObject({
+    stderr: expect.stringContaining('Cmd+Shift+Space starts/stops; Escape cancels; Ctrl+C quits'),
+  });
 });
 
 it('lists tool schemas without configuration, keys, or a graphical session', async () => {
@@ -88,15 +107,15 @@ it('logs startup configuration failures only when debugging is explicitly enable
 it('does not enable debug persistence for help, setup, or desktop probes', async () => {
   const env = await configured();
   const cwd = await realpath(env.OPENSAYSME_CONFIG_DIR);
-  for (const command of [['--help'], ['setup'], ['desktop', 'test-microphone', '--seconds', '0']]) {
+  for (const command of [['--help'], ['setup'], ['desktop', 'inspect', '--delay', '0']]) {
     const result = await execute(process.execPath, [...args, '--debug', 'images', ...command], { env, cwd }).catch((error: { stdout: string; stderr: string }) => error);
     expect(result.stderr).not.toContain('Debug enabled');
     expect(await readdir(cwd)).toEqual(['config.json']);
   }
 });
 
-it('rejects invalid test durations before native execution', async () => {
-  await expect(execute(process.execPath, [...args, 'desktop', 'test-microphone', '--seconds', '0'])).rejects.toMatchObject({ code: 1 });
+it('rejects invalid inspection delays before native execution', async () => {
+  await expect(execute(process.execPath, [...args, 'desktop', 'inspect', '--delay', '0'])).rejects.toMatchObject({ code: 1 });
 });
 
 it('does not hang in non-interactive setup', async () => {

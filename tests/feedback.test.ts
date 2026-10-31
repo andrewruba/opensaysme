@@ -4,14 +4,22 @@ import type { VoiceOutput } from '../src/runtime.js';
 import { desktopMessages } from '../src/desktop/errors.js';
 
 afterEach(() => vi.useRealTimers());
-function fixture() {
+function fixture(activationHotkey?: string) {
   vi.useFakeTimers();
   const sink = { send: vi.fn(), close: vi.fn(async () => {}) };
-  const feedback = createFeedback(sink);
+  const feedback = createFeedback(sink, activationHotkey);
   const state = (state: 'starting' | 'listening' | 'acting' | 'interpreting', turnId = 'one') => feedback.handle({ type: 'state', state, turnId });
   const response = (text: string, turnId = 'one') => feedback.handle({ type: 'result', turnId, response: text } as VoiceOutput);
   return { sink, feedback, state, response, last: () => sink.send.mock.lastCall?.[0] };
 }
+
+it('shows the configured activation shortcut for recording and follow-ups while keeping Escape', async () => {
+  const f = fixture('Cmd+Space'); f.state('starting'); f.state('listening');
+  expect(f.last().detail).toBe('Cmd+Space to finish · Escape to cancel');
+  f.response('Ready.');
+  expect(f.last().detail).toBe('Cmd+Space to reply · Full response in terminal');
+  await f.feedback.close();
+});
 
 it('shows status and actual target, then keeps the answer visible when the runtime returns to ready', async () => {
   const f = fixture(); f.state('starting'); f.state('listening');

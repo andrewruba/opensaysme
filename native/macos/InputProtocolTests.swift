@@ -77,6 +77,37 @@ struct InputProtocolTests {
         var invalid = target; invalid["bounds"] = ["x": 0, "y": 0, "width": 0, "height": 10]
         reject(try data(["kind": "click"], targetOverride: invalid))
         reject(Data(repeating: 32, count: 65537))
-        print("Input protocol checks passed (typed actions, literal multiline text, text-area gating, exact UTF-16 verification, uncertain writes, key limits, bounds and fingerprints). No desktop input issued.")
+
+        func targetState(_ values: [String: String]) -> InputFingerprintState {
+            InputFingerprintState(windowId: target["windowId"] as! String,
+                windowBounds: InputBounds(CGRect(x: -1200, y: -100, width: 800, height: 600)),
+                role: "AXTextArea", title: "Message", description: "Agent input", value: values["input"]!,
+                identifier: "composer", bounds: InputBounds(CGRect(x: -1150, y: -50, width: 700, height: 400)),
+                focused: true, editable: true, pointer: InputPoint(x: -1100, y: 0), interaction: [1, 2, 3, 4, 5])
+        }
+        let state = targetState(["input": multiline, "badge": "9"])
+        let digest = try inputFingerprint(state)
+        let unrelatedChange = try inputFingerprint(targetState(["input": multiline, "badge": "10", "timer": "00:42"]))
+        precondition(digest == unrelatedChange, "Unrelated live window content must not invalidate the target")
+        func changed(_ update: (inout InputFingerprintState) -> Void) throws {
+            var current = state; update(&current)
+            let currentDigest = try inputFingerprint(current)
+            precondition(currentDigest != digest, "Target or user-intervention changes must invalidate input")
+        }
+        try changed { $0.value = "different request" }
+        try changed { $0.identifier = "other-composer" }
+        try changed { $0.windowId = "mac:123:1700000000001:" + String(repeating: "a", count: 64) }
+        try changed { $0.windowBounds = InputBounds(CGRect(x: -1200, y: -50, width: 800, height: 600)) }
+        try changed { $0.bounds = InputBounds(CGRect(x: -1150, y: 0, width: 700, height: 400)) }
+        try changed { $0.focused = false }
+        try changed { $0.editable = false }
+        try changed { $0.role = "AXButton" }
+        try changed { $0.pointer = InputPoint(x: -1000, y: 0) }
+        try changed { $0.interaction[3] += 1 }
+        let longText = String(repeating: "x", count: 4095) + "a"
+        let longDigest = try inputFingerprint(targetState(["input": longText]))
+        let tailDigest = try inputFingerprint(targetState(["input": String(longText.dropLast()) + "b"]))
+        precondition(longDigest != tailDigest, "The full target value, including its tail, remains revalidated")
+        print("Input protocol checks passed (typed actions, literal multiline text, exact read-back, target freshness and user intervention). No desktop input issued.")
     }
 }

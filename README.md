@@ -2,83 +2,68 @@
 
 Less friction between what you want and what your AI agents do, using voice and desktop context.
 
-## Why
+A ticket in one window, an error in another, an agent waiting for context. OpenSaysMe
+lets you say what you want while showing the relevant work, instead of copying it
+between windows and explaining it again.
 
-Speaking to an agent can feel effortless. Getting it to understand what you mean and do what you want often takes more work.
+## What works today
 
-The details may be scattered: a ticket in one browser tab, a discussion in a chat app, an error in your terminal, eight windows in between. You end up hunting for windows, copying context, and re-explaining what you mean to keep the work moving.
+An early **macOS 14+ prototype**, built from source. Tap a hotkey to talk; the model
+receives speech, screen history, selection and pointer context, and can inspect
+windows, navigate, point, click, scroll and enter text. Short follow-ups carry
+context across activations. A small panel shows status and answers without taking
+focus. The aim is a useful everyday loop with existing agents; the next work is
+using it on real tasks and fixing what gets in the way.
 
-OpenSaysMe explores a simpler way: say what you want, with context from what you're working on.
+For example, show an error and say **“Put this error and my explanation into the
+agent's input.”** Then say **“Now send it.”** Preparation should leave the input
+unsent; the follow-up authorizes sending. “Point to that setting” should only point.
+No window labels, routing rules or mandatory review ceremony.
 
-## What we're exploring
+## Run it
 
-Tap a hotkey and say:
-
-> "Take the ticket I was just reading and that chat thread, and have the agent start on it."
-
-OpenSaysMe explores how what you say and the context of your work can make that interaction easier. Gathering context, preparing input, getting an answer, navigating windows, or directing an agent's actions are all possibilities. The interaction should fit the request.
-
-The core is collecting the right context, giving it to the model alongside the tools it can use, and carrying out the request within the permission you gave. The intended tools include inspecting windows, switching between them, moving the pointer to indicate something, clicking, scrolling, and typing. The model uses the results to decide what to do next. These shared desktop capabilities should work with existing agent interfaces; dedicated integrations can improve particular interactions.
-
-That might mean bringing together context:
-
-- A bug report in one tab and logs in another: "Debug this."
-- PR review comments: "Address these."
-- A spec plus a screenshot of the current UI: "Build this."
-
-It can also mean navigating or directing agent work:
-
-- With a terminal error visible, say: "Send this to the debugging agent."
-- Say: "Switch to the agent working on authentication."
-- Say: "Show me the agent waiting for my input, then take me back here."
-
-Voice expresses the request. Screen content and application state provide context; pointing or selecting can help clarify what you mean. Gaze could supplement that context later as an optional input. A hotkey or other deliberate action initiates the interaction.
-
-The goal is to complement the mouse and keyboard, not replace them or build another coding agent.
-
-## Design goals
-
-- **User control:** Explicit activation and permission scoped to your request. “Fill in this form” leaves it unsubmitted; “fill in this form and submit it” authorizes submission without a redundant confirmation. Ask when the target, information, or consequences remain materially unclear or exceed the request. Context alone never authorizes execution.
-- **Privacy:** Local processing where practical, minimal retention, and explicit consent for external data transfer.
-- **Interoperability:** Work alongside existing agents through their interfaces and documented integrations, using shared desktop capabilities wherever practical.
-
-## Status
-
-Early development prototype targeting **macOS 14+ only for v1**. Windows and Linux support is deferred until after v1; existing adapters and checks remain available for development.
-
-Tap-to-talk combines speech with desktop history and a local tool loop: the agent can discover windows, inspect current context, capture the current screen, and focus a verified target. On macOS it can also read bounded accessibility text and controls from a discovered background window, or capture that window's image on macOS 14+, without changing focus. You do not need to name windows or define routing rules. Historical full-screen images remain paired with nearby speech phrases and timed cursor trails.
-
-The voice agent calls desktop tools directly within the local runtime. On macOS 14+, a first mouse/keyboard slice adds pointing, single clicks, scrolling, literal text replacement in accessible inputs, and Tab/Enter. Writable text areas support multiline prompts, code and error details, preserving line breaks and indentation as text without generating Enter presses. “Put this error into the agent's input” leaves it unsent; sending requires an explicit request. Each input is checked independently against the original spoken request and target evidence. Targets must be focused, visible, and grounded in a recent window screenshot. The guard interprets natural language with the configured reasoning model; live permission accuracy and desktop input behavior still need validation. Some apps do not expose writable accessible inputs, and ambiguous native window identities remain a limitation.
-
-Recent conversation now carries across activations for follow-ups such as “now submit it,” “click it,” or an answer to a clarification. The runtime keeps up to three completed turns in memory, at most 64 KiB total, with each turn expiring after two minutes. It retains requests, responses, target observations and action outcomes; screenshots, audio and input approvals do not carry over. Each turn still gathers fresh action evidence and checks permission independently. Follow-up interpretation and comparison of changed contents remain model-dependent and need live validation.
-
-On macOS, a small panel shows listening and processing status, the known target while acting, and responses or errors. It passes clicks through and does not take keyboard focus. Responses, including clarification questions, remain for up to a minute or until the next activation; use the hotkey to reply. Long text is shortened in the panel, with the full response retained in the terminal. If the panel is unavailable, voice continues with terminal feedback. Native focus and display behavior still need manual validation.
-
-Setup now guides microphone, Accessibility and Screen Recording permissions separately. It shows the observed launcher and helper identity, and offers optional local checks that discard capture data without calling a provider. Known desktop failures retain specific recovery guidance in the terminal and feedback panel. Permission prompts, revocation and launcher restarts still need manual macOS validation.
-
-See the [MVP backlog](BACKLOG.md) for feature status and remaining work.
-
-<!-- demo video goes here -->
-
-## Quick start
+Requires Node.js 22.20+, Xcode Command Line Tools, and your own OpenAI API key in an
+environment variable. Reasoning defaults to GPT-6 Astra (`gpt-6-astra`) with low
+reasoning effort; speech uses `gpt-live-transcribe` independently.
 
 ```sh
 npm ci
-npm run build:native  # Builds the helper on macOS; requires Xcode Command Line Tools
+npm run build:native
 npm run build
-node dist/cli.js doctor
 node dist/cli.js setup
-node dist/cli.js       # Requires the API-key environment variable chosen in setup
+node dist/cli.js doctor
+node dist/cli.js
 ```
 
-Rerun `node dist/cli.js setup` to check or repair desktop access while retaining valid saved provider settings. Use `setup --replace` to change those settings. Each local verification is an explicit menu choice; `doctor` and setup's status recheck remain read-only.
+Setup stores environment-variable names, never keys. Set the variables it names in
+your launching shell. Grant Microphone, Accessibility and Screen Recording in
+System Settings → Privacy & Security as needed; restart your terminal after changing
+grants if access still fails. `doctor` reports access status without capturing or
+requesting permissions. Use `setup --replace` to change provider settings.
 
-Tap Ctrl+Shift+Space to start and stop; Escape cancels pending work, hides the feedback panel, and clears recent conversation, but cannot undo input already issued. While idle, press Escape in the CLI terminal to hide the panel and clear conversation; the global Escape shortcut is active only during a turn. Activated audio streams to OpenAI using your key. After stopping, the agent can gather additional evidence and use available desktop actions within your request. Context, recent conversation, tool results, and input authorization checks go to your independently configured reasoning provider. macOS screen capture requires Screen Recording permission, and input also requires Accessibility access.
+- **Ctrl+Shift+Space** (default): start talking; tap again to finish.
+- **Escape:** stop pending work and clear follow-up context. While idle, press it
+  in the CLI terminal. It cannot undo actions already issued.
+- **Ctrl+C:** quit and release native resources.
 
-Run `npm run dev -- tools` to inspect the catalog without reading the desktop. See [the tool framework](docs/tools.md) for how to add capabilities.
+Remap activation with `node dist/cli.js hotkey "Cmd+Shift+Space"`, then restart
+voice mode. Run `node dist/cli.js hotkey` to show the saved shortcut. Escape and
+Ctrl+C stay fixed. Setup also asks for the activation shortcut.
 
-## Debugging a session
+## Permission and privacy
 
-To inspect a session, run `npm run dev -- --debug` (optionally followed by a directory). This saves captured context, clean screenshots and trail copies, prepared model requests including recent conversation, responses, and timed diagnostics locally. Files remain until you delete them; normal runs keep this data in memory.
+Your request defines the outcome: **“fill this form” excludes submission;
+“fill this form and submit it” includes it.** Screen content supplies evidence,
+not authority. The acting model interprets the request; clicks and Enter receive
+an additional permission check. Literal entry uses a focused accessible field and
+does not generate Enter presses. Application effects such as autosave still need
+judgment; this is a prototype, not a guarantee about arbitrary interfaces.
 
-See [development instructions](docs/development.md) for platform prerequisites, provider configuration, explicit desktop tests, and current limitations.
+Activated audio goes to your speech provider. Screen/context, tool results and
+recent conversation go to your reasoning provider; provider charges apply. Capture
+stays in memory unless you explicitly enable `--debug`, which saves sensitive
+context locally until you delete it. Keys and raw audio are excluded from diagnostics.
+
+See [development and limitations](docs/development.md), [the tool contract](docs/tools.md),
+and the [core-loop backlog](BACKLOG.md). Windows/Linux ports and release packaging
+are outside the current work.

@@ -68,19 +68,24 @@ it('fails closed before dispatch for history containing reusable handles or over
   }
 });
 
-it('isolates original speech from untrusted proposed effects and images, without exposing tools to the guard', async () => {
+it.each(['gpt-6-astra', 'configured-model'])('isolates evidence and keeps a strict permission response with %s', async (model) => {
   const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
     const body = JSON.parse(String(init?.body));
-    expect(body).toMatchObject({ model: 'configured-model', store: false, text: { format: { type: 'json_schema', strict: true } } });
+    expect(body).toMatchObject({ model, store: false, text: { format: { type: 'json_schema', strict: true } } });
+    expect(body.reasoning).toEqual(model === 'gpt-6-astra' ? { effort: 'low' } : undefined);
+    expect(body.max_output_tokens).toBe(model === 'gpt-6-astra' ? 4096 : 1200);
+    expect(body.temperature).toBeUndefined();
     expect(body.tools).toBeUndefined();
     const content = body.input[0].content;
     expect(JSON.parse(content[0].text)).toEqual({ original_request: review.request });
     expect(JSON.parse(content[1].text)).toMatchObject({ untrusted_evidence: { action: review.action, target: review.target } });
     expect(content[2]).toMatchObject({ type: 'input_image', detail: 'high' });
     expect(body.instructions).toContain('Enter MUST be classified submit');
-    return response();
+    return Response.json({ status: 'completed', output: [
+      { type: 'reasoning', id: 'reason-1', summary: [] }, output(JSON.stringify(decision)),
+    ] });
   });
-  const authorize = openAIActionAuthorizer({ apiKey: 'test-key', model: 'configured-model' }, fetcher);
+  const authorize = openAIActionAuthorizer({ apiKey: 'test-key', model }, fetcher);
   expect(await authorize(review, new AbortController().signal)).toEqual(decision);
   expect(fetcher).toHaveBeenCalledOnce();
 });

@@ -30,6 +30,8 @@ export const conversationTurnSchema = z.object({
   evidence: conversationEvidenceSchema,
 }).strict();
 export type ConversationTurn = z.infer<typeof conversationTurnSchema>;
+// Conservative development limits for memory, privacy and request size. These
+// are tuning defaults to revisit after real follow-ups, not a product contract.
 export const conversationSchema = z.array(conversationTurnSchema).max(3)
   .refine((turns) => Buffer.byteLength(JSON.stringify(turns)) <= 64 * 1024, 'Conversation exceeded its retention limit.');
 export const conversationLifetimeMs = 120_000;

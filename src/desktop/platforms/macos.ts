@@ -2,23 +2,21 @@ import { access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { activationHotkeySchema, defaultActivationHotkey } from '../../hotkey.js';
 
 import { runCommand } from '../process.js';
 import { DesktopError, desktopCommandError, desktopIssue, desktopMessages, desktopIssueSchema } from '../errors.js';
-import { permissionNameSchema, permissionReportSchema, permissionVerificationSchema, type PermissionAccess } from '../permissions.js';
 import { desktopInputSchema, inputEvidenceSchema, inputResultSchema, inputTargetSchema, type DesktopInputAdapter } from '../input-types.js';
 import { desktopContextSchema, type DesktopContext, type VoiceHelperSpec } from '../voice-types.js';
 import { screenFrameCaptureSchema, type ScreenFrameCapture } from '../visual-types.js';
 import {
   desktopReportSchema,
   desktopSnapshotSchema,
-  desktopTestResultSchema,
   windowInventorySchema,
   windowInspectionSchema,
   windowFrameCaptureSchema,
   type DesktopReport,
   type DesktopSnapshot,
-  type DesktopTestResult,
   type WindowInventory,
   type WindowInspection,
   type WindowFrameCapture,
@@ -179,27 +177,10 @@ export async function focusMacOS(targetId: string, signal?: AbortSignal): Promis
   decode(focusResultSchema, await invoke(['--focus', targetId], 10_000, signal));
 }
 
-async function test(capability: 'globalHotkey' | 'microphone', durationSeconds: number): Promise<DesktopTestResult> {
-  if (!Number.isInteger(durationSeconds) || durationSeconds < 1 || durationSeconds > 30) {
-    throw new Error('Test duration must be an integer from 1 to 30 seconds.');
-  }
-  const option = capability === 'globalHotkey' ? '--test-hotkey' : '--test-microphone';
-  const result = decode(desktopTestResultSchema, await invoke([option, String(durationSeconds)], (durationSeconds + 10) * 1000));
-  if (result.capability !== capability) throw new Error('The macOS helper returned an unexpected test result.');
-  return result;
-}
-
-export function testMacOSHotkey(durationSeconds: number): Promise<DesktopTestResult> {
-  return test('globalHotkey', durationSeconds);
-}
-
-export function testMacOSMicrophone(durationSeconds: number): Promise<DesktopTestResult> {
-  return test('microphone', durationSeconds);
-}
-
-export async function macOSVoiceHelper(): Promise<VoiceHelperSpec> {
+export async function macOSVoiceHelper(activationHotkey = defaultActivationHotkey): Promise<VoiceHelperSpec> {
+  const shortcut = activationHotkeySchema.parse(activationHotkey);
   await requireHelper();
-  return { file: helperPath, args: ['--voice'] };
+  return { file: helperPath, args: ['--voice', shortcut] };
 }
 
 export async function macOSFeedbackHelper(): Promise<VoiceHelperSpec> {
@@ -223,13 +204,3 @@ export async function captureMacOSFrame(signal?: AbortSignal): Promise<ScreenFra
   }
   return result;
 }
-
-export const macOSPermissions: PermissionAccess = {
-  inspect: async (signal) => decode(permissionReportSchema, await invoke(['--permissions'], 4_000, signal)),
-  verify: async (permission, signal) => {
-    const name = permissionNameSchema.parse(permission);
-    const result = decode(permissionVerificationSchema, await invoke(['--verify-permission', name], 25_000, signal));
-    if (result.permission !== name) throw new DesktopError('helper-invalid-response');
-    return result;
-  },
-};

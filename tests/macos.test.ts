@@ -3,6 +3,7 @@ import { test, vi } from 'vitest';
 import { access } from 'node:fs/promises';
 import { CommandError, runCommand } from '../src/desktop/process.js';
 import { DesktopError } from '../src/desktop/errors.js';
+import { desktopAdapter } from '../src/desktop/index.js';
 
 import {
   focusMacOS,
@@ -12,20 +13,23 @@ import {
   macOSInput,
   macOSVoiceHelper,
   macOSFeedbackHelper,
-  macOSPermissions,
   parseMacOSSnapshot,
   inspectMacOS,
   listMacOSWindows,
   inspectMacOSWindow,
   probeMacOS,
-  testMacOSHotkey,
-  testMacOSMicrophone,
 } from '../src/desktop/platforms/macos.js';
 
 vi.mock('node:fs/promises', () => ({ access: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('../src/desktop/process.js', async (importOriginal) => ({
   ...await importOriginal<typeof import('../src/desktop/process.js')>(), runCommand: vi.fn(),
 }));
+
+test('rejects inactive platforms instead of claiming desktop support', async () => {
+  for (const platform of ['linux', 'win32'] as const) {
+    await assert.rejects(desktopAdapter(platform), /macOS 14\+ only/);
+  }
+});
 
 test('doctor reports missing helper prerequisites without recursing into doctor', async () => {
   vi.mocked(access).mockRejectedValueOnce(new Error('missing native binary'));
@@ -77,17 +81,13 @@ test('invalid focus identifiers are rejected before launching a helper', async (
   await assert.rejects(focusMacOS(`mac:9999999999:1700000000000:${'a'.repeat(64)}`), /Use a macOS window ID/);
 });
 
-test('interactive native tests reject unbounded durations before launching', async () => {
-  await assert.rejects(testMacOSHotkey(0), /integer from 1 to 30/);
-  await assert.rejects(testMacOSMicrophone(31), /integer from 1 to 30/);
-  await assert.rejects(testMacOSMicrophone(Number.NaN), /integer from 1 to 30/);
-});
-
 test('voice resolves a built helper without opening the microphone', async () => {
   const previous = vi.mocked(runCommand).mock.calls.length;
   const helper = await macOSVoiceHelper();
   assert.match(helper.file, /native\/macos\/bin\/opensaysme-desktop$/);
-  assert.deepEqual(helper.args, ['--voice']);
+  assert.deepEqual(helper.args, ['--voice', 'Ctrl+Shift+Space']);
+  assert.deepEqual((await macOSVoiceHelper('cmd+shift+space')).args, ['--voice', 'Cmd+Shift+Space']);
+  await assert.rejects(() => macOSVoiceHelper('Ctrl+C'));
   assert.equal(vi.mocked(runCommand).mock.calls.length, previous);
 });
 
@@ -99,30 +99,13 @@ test('feedback resolves the optional native UI without desktop access', async ()
   assert.equal(vi.mocked(runCommand).mock.calls.length, calls);
 });
 
-test('permission inspection is separate from explicit local verification and validates the requested capability', async () => {
-  const report = { helperPath: '/fixture/helper', bundleIdentifier: 'dev.opensaysme.desktop', launcher: null,
-    desktopAvailable: true, permissions: { microphone: 'not-determined', accessibility: 'not-granted', screenCapture: 'granted' } };
-  const signal = new AbortController().signal;
-  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(report));
-  assert.deepEqual(await macOSPermissions.inspect(signal), report);
-  assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.slice(1), [['--permissions'], { timeoutMs: 4000, signal }]);
-  vi.mocked(runCommand).mockResolvedValueOnce('{"permission":"microphone","outcome":"verified"}');
-  assert.deepEqual(await macOSPermissions.verify('microphone', signal), { permission: 'microphone', outcome: 'verified' });
-  assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.slice(1), [['--verify-permission', 'microphone'], { timeoutMs: 25000, signal }]);
-  vi.mocked(runCommand).mockResolvedValueOnce('{"permission":"microphone","outcome":"verified"}');
-  await assert.rejects(macOSPermissions.verify('screenCapture'), { code: 'helper-invalid-response' });
-  const previous = vi.mocked(runCommand).mock.calls.length;
-  await assert.rejects(macOSPermissions.inspect(AbortSignal.abort()));
-  assert.equal(vi.mocked(runCommand).mock.calls.length, previous);
-});
-
 test('known transport failures keep their cause and never reuse arbitrary error text', async () => {
   for (const [reason, code] of [['timeout', 'timeout'], ['signal', 'helper-crashed'], ['spawn-failed', 'helper-unavailable']] as const) {
     vi.mocked(runCommand).mockRejectedValueOnce(new CommandError(reason));
     await assert.rejects(captureMacOSFrame(), (error: unknown) => error instanceof DesktopError && error.code === code);
   }
   vi.mocked(access).mockRejectedValueOnce(new Error('private path'));
-  await assert.rejects(macOSPermissions.inspect(), { code: 'helper-missing' });
+  await assert.rejects(captureMacOSFrame(), { code: 'helper-missing' });
   vi.mocked(runCommand).mockRejectedValueOnce(new CommandError('timeout'));
   const report = await probeMacOS();
   assert.match(report.capabilities.screenCapture.detail, /timed out/);

@@ -7,5 +7,6 @@ if (process.platform === 'darwin') {
   if (result.error) throw result.error;
   process.exitCode = result.status ?? 1;
 } else {
-  process.stdout.write('No native build required on this platform. Run doctor for runtime prerequisites.\n');
+  process.stderr.write('OpenSaysMe currently supports macOS 14+ only. Build on macOS with Xcode Command Line Tools.\n');
+  process.exitCode = 1;
 }

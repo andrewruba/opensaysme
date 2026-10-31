@@ -1,30 +1,13 @@
-# Developing the voice and desktop context prototype
+# Developing the macOS loop
 
-The product goal is to reduce friction between what the user wants and what their
-AI agents do. Each interaction should fit the request and available capabilities.
+OpenSaysMe is a macOS 14+ source-built prototype. The immediate goal is to use
+speech and desktop context to get useful work into an existing agent, then improve
+whatever makes that interaction awkward. See the [backlog](../BACKLOG.md) and keep
+brief observations in [field notes](field-notes.md).
 
-V1 targets macOS 14+ only. Windows/Linux implementation, validation and distribution
-are deferred until after v1. Existing adapters, CI and platform notes remain for
-development; they do not establish v1 support or add release requirements.
+## Setup
 
-Today, the CLI records a spoken request with desktop context, then lets the agent
-gather more evidence, navigate, or answer naturally. Screens and application history provide context;
-selections and timed cursor paths can help clarify references. Gestures have no
-predefined command meanings, content categories, or required response types.
-The shared tool host supports window discovery, current-context inspection,
-current-screen capture, verified focus, and macOS background-window accessibility
-inspection and image capture. A first macOS input slice adds pointer movement,
-single clicks, vertical scrolling, literal Accessibility text replacement (including
-multiline text in writable text areas) and Tab/Enter,
-with an independent request check before input. Broader keyboard entry and live
-permission validation remain work; Windows/Linux input and background-window
-inspection/capture are deferred until after v1.
-Dedicated agent integrations and on-screen drawing overlays
-remain future work. Gaze stays optional.
-The voice runtime calls this host in the same Node.js process. See
-[the tool framework](tools.md) for the catalog and extension points.
-
-Use Node.js 22.20+ and npm:
+Use Node.js 22.20+ and Xcode Command Line Tools:
 
 ```sh
 npm ci
@@ -35,237 +18,25 @@ node dist/cli.js doctor
 node dist/cli.js
 ```
 
-Set the API-key environment variables chosen during setup before starting. Speech
-and reasoning can use the same key or separate keys. `npm run dev -- <arguments>`
-runs TypeScript directly; `npm run dev` starts the runtime. Desktop probes need no
-keys. The package remains private while release packaging is unfinished.
+`npm run dev -- <arguments>` runs TypeScript directly; `npm run dev` starts voice
+mode. Rebuild the native helper after Swift changes. Setup stores environment
+variable names and independent speech/reasoning settings. It makes no provider
+request and never asks for a key value. Set the named variables in your launching
+shell; they may need exporting again after a terminal restart.
 
-Rerun `node dist/cli.js setup` for guided macOS desktop permissions. A valid saved
-configuration is retained, so local access checks need no provider key or connection.
-Use `setup --replace` when you want to change provider settings. New settings are
-saved before the optional permission flow; skipping or cancelling its checks does
-not remove that configuration.
+A valid saved configuration is retained by `setup`. Use `setup --replace` to
+change it. There is no Keychain storage or automatic configuration migration.
+If you tried the removed Keychain experiment, rerun `setup --replace`; any
+previously saved `dev.opensaysme.provider` items can be removed manually in Keychain
+Access. The application no longer reads or modifies them.
 
-Existing speech-only configurations need `npm run dev -- setup --replace`. This
-asks for reasoning preferences and visual-sharing consent before replacing the
-file. Configuration is not silently migrated or opted into screen sharing.
-Rebuild the macOS helper with `npm run build:native` after updating: audio events
-now require capture timestamps and sample offsets. Run `npm ci` after updating to
-install sharp and its platform image-processing binaries. Existing visual-sharing
-configuration and provider keys are unchanged.
-
-## Voice interaction
-
-- Keep the CLI running and work in another app. Tap **Ctrl+Shift+Space** to begin.
-- Wait for “Listening…” in the macOS panel or `listening` in the terminal, then say
-  your request. Point or select content when useful; existing desktop context is
-  captured either way. The terminal bell depends on terminal settings.
-- Tap **Ctrl+Shift+Space** again to stop audio and freeze visual capture. No hold
-  is needed. Silence does not automatically finish a turn.
-- Final transcript feedback appears immediately when transcription finishes.
-  `interpreting` prepares visual evidence and runs the agent loop; `inspecting`
-  indicates evidence gathering and `acting` a requested focus/input operation (including its internal permission check).
-- **Escape** cancels recording, interpretation, or pending tools, hides the panel,
-  and clears recent conversation. While idle, Escape in the CLI terminal hides the
-  panel and clears conversation; global Escape is registered
-  only during an active turn. **Ctrl+C** quits and cleans up
-  native hooks, microphone capture, screenshot processes, and provider requests.
-- The runtime returns to `ready` after each turn. Activation is ignored during
-  processing. A subsequent activation starts fresh capture and tools while retaining
-  bounded conversation context for follow-ups and clarification answers.
-
-Recording is limited to two minutes. Startup, provider connection, finalization,
-reasoning, and native cleanup have deadlines. If microphone cleanup cannot be
-confirmed, the runtime exits rather than claiming it is ready to record again.
-Automatic history capture stops at the second tap. The agent may request fresh
-desktop evidence while fulfilling that activated turn. Cancellation cannot undo
-an input or focus change already issued to the OS.
-
-The macOS feedback panel starts automatically with voice mode. It stays above the
-current work without taking keyboard focus or intercepting clicks. It shows runtime
-status and known focus/input targets from the tool host's window evidence; an
-unresolved target is labelled as such. These labels do not authorize actions or
-verify their outcome. Answers, clarification questions and errors appear as plain
-text for up to 60 seconds, until replaced by the next activation, or until dismissed.
-Use the hotkey to answer a clarification. Display text is bounded and may be
-shortened; the full response remains in the terminal. No interactive controls or
-additional hotkeys are installed.
-
-The panel uses a separate helper process, with bounded messages over stdin,
-startup and shutdown deadlines, and a native hide failsafe. It makes no provider
-requests and does not delay voice startup; failures warn in the terminal while
-voice continues. Helper-owned windows are excluded from discovery, action targets,
-and ScreenCaptureKit display captures using executable identity. Manual focus,
-Spaces, display-placement and capture-exclusion validation remains outstanding.
-
-## Conversational follow-ups
-
-Requests such as “fill this form” followed by “now submit it,” or “point to that
-setting” followed by “click it,” receive recent conversation alongside new desktop
-context. Clarification answers can complete an earlier user request without
-repeating it. Current speech stays separate from verbatim earlier requests;
-assistant responses and observed UI content never establish permission.
-
-The runtime retains at most three completed turns and 64 KiB total in memory.
-Each turn expires two minutes after completion, including while idle. A reasoning
-turn receives the unexpired context at its start and releases that snapshot on
-completion or cancellation. Records
-contain the request, response, up to three reference-context samples, observed
-window/control information and native action outcomes. They contain no screenshots,
-audio, tool observation IDs or permission decisions. An invalid or individually
-oversized record clears the history with a warning rather than truncating user
-constraints. Cancellation, failed turns and shutdown also clear it.
-
-Every activation gets a new tool host. Fresh window results include
-`previousTurnIds` when native identity, application and title match a retained
-source; this does not establish unchanged contents. Input still requires fresh
-capture and native inspection. The independent guard receives the same prior
-conversation and must ground its supporting quote in current speech. Comparing
-changed contents and past commitments, including uncertain outcomes, remains
-model-dependent; there is no cross-turn content fingerprint or reusable approval.
-Action records distinguish pre-dispatch control values from requested replacement
-text and the native result (`verified`, `issued`, `not-issued` or `uncertain`).
-Unit tests exercise retention, expiry, continuation and enforcement with mocked
-providers. Real-model acceptance belongs to the unified live suite after v1 implementation.
-
-## Attention history and reasoning
-
-Audio, speech connection, screen capture, and window/selection capture start
-concurrently. Native helpers report changed cursor positions at up to 20 Hz. The
-collector retains points about 80 ms apart, plus display changes, up to 1,500.
-No gesture is assigned a fixed meaning.
-
-Screenshots run sequentially, 1.5 seconds after the previous capture completes;
-window and selection queries use a one-second interval. Each query times out after
-three seconds. Two consecutive screenshot failures stop image retries for that
-turn. Speech continues with explicit warnings when context is unavailable.
-
-History retains at most twelve representative JPEGs, 24 context observations,
-and 8 MB of base64 image data. Images have a maximum edge of 1,600 pixels and a
-maximum JPEG size of 700 KB. Repeated screenshots are retained so later speech
-and movement still have a nearby frame; identical context observations are
-coalesced. Crowded interior samples are thinned while retaining the first and
-latest. Selected text
-is capped at 4,096 characters per observation. Limits appear in history warnings.
-
-Frame IDs, display bounds, and capture times identify historical screen content.
-macOS and Windows capture the display under the pointer at each sample; Linux
-captures the X11 virtual root. Sampling can miss scrolling or a brief display
-switch. Cursor paths between frames do not prove that the image stayed unchanged.
-
-Native wall timestamps map to a monotonic turn clock. Every audio chunk carries
-the first sample's capture timestamp, a cumulative 24 kHz sample offset, and its
-clock quality. macOS uses the device host clock when available. Windows uses an
-estimated capture-start clock; Linux estimates from the first recorder pipe read.
-Those estimates include unknown device/startup buffering. Missing or repeated
-sample offsets fail the turn; invalid capture clocks leave phrase times null
-with a warning instead of substituting arrival time.
-
-Transcription uses one connection per activated turn. A lightweight local energy
-check commits phrases after 400 ms of quiet following sound, or four seconds of
-continuous input. All captured audio is streamed once; speech is never discarded
-based on the energy check. Phrases finalize while recording continues, so stopping
-waits only for unfinished phrases. There is no extra alignment model call and no
-requirement to pause or change the tap-to-toggle interaction. A final fragment
-shorter than the provider's minimum is padded with silence; that padding is excluded
-from the recorded sample range.
-
-`attention.transcript` contains final phrase text, `startSample`/`endSample`
-(exclusive end), mapped `startMs`/`endMs`, `receivedAtMs`, a `pause`/`limit`/`stop`
-boundary, and `device`/`estimated`/`unavailable` timing. Provider item IDs keep phrases
-in capture order despite delayed results. These are **committed audio intervals**,
-not exact word boundaries: pauses are included and duration limits can split words.
-The model can compare a phrase's interval with cursor and screen history, but
-should acknowledge ambiguity when timing or visual evidence is insufficient.
-
-After the transcript finishes, each retained frame is paired with overlapping
-speech phrases and a nearby cursor interval, at most 750 ms on either side of
-capture. Adjacent frames and observed window changes narrow that interval. Cursor
-coordinates are normalized using the captured display bounds. Trails break across
-observed window/display changes, out-of-bounds samples, and gaps over 250 ms.
-Sampling can still miss navigation, and a single phrase can refer to several frames.
-
-Optional full-size copies show cyan trails fading from older to newer observations.
-A filled dot marks the latest trail endpoint, which may be after frame capture; a
-hollow ring marks the last observed pointer at or before capture. Exact point times
-remain in metadata. The clean screenshot accompanies its marked copy so trails do
-not hide the only view of content. No crops or on-screen cursor-trail overlays are created.
-
-Local rendering uses two workers, a two-second deadline, and an additional 8 MB
-base64 budget. Failures or limits fall back to clean images and timed coordinates,
-with warnings. The initial OpenAI Responses request sends at most twelve originals
-and twelve marked copies, plus bounded attention history. The initial reasoning
-model is `gpt-5.4-mini`, independently configurable from speech. It can answer
-directly or call local tools and inspect their results before answering. There is
-no fixed action enum or required per-phrase outcome. The agent discovers window
-references itself; no user naming or routing rules are required.
-
-Without input tools the loop permits six provider requests/five tools within 45 seconds.
-With input tools it permits thirteen provider requests/twelve tools within 90 seconds,
-including authorization time. Each acting-provider request has a twenty-second deadline;
-read/focus tools have six seconds and input tools have twenty. The runtime's outer
-deadline is 95 seconds with input capabilities and 50 seconds otherwise.
-Tool results, including requested screenshots, enter subsequent model requests.
-On macOS, `inspect_window` can read a discovered window's accessibility content
-without switching to it. Its results retain source identity and capture time;
-protected fields, unavailable content, and truncation are explicit. The catalog
-omits the operation on Windows/Linux. Unchanged window references survive inventory
-refreshes within a turn, but content is read afresh and targets are revalidated.
-`capture_window` supplies a full window image on macOS 14+ without changing focus,
-including when another window covers it. It uses a uniquely matched, revalidated
-ScreenCaptureKit source; hidden/minimized or ambiguous targets fail without a
-foreground-screen fallback. The image comes with its window reference, capture
-time, logical desktop bounds, and pixel dimensions. It is independent of historical
-full-screen frames and cursor trails. Protected or non-rendered content may be blank.
-The operation has a four-second native deadline and five-second parent timeout.
-On macOS, successful window captures also return a short-lived `observationId` for
-input. Input coordinates use that image's pixels. The host retains original speech
-and desktop reference context; each input is independently checked by the reasoning
-provider against that request and fresh native evidence. This uses one additional,
-tool-free, structured-output request (ten-second maximum) per proposed input. Only
-the validated exact action proceeds to native revalidation. Enter requires a submit
-decision. Text replacement accepts literal line breaks and tab indentation only in
-writable AXTextArea controls; other C0 controls and DEL remain rejected. A submission or
-uncertain outcome stops further input for the turn, while read tools can verify it.
-See [input and execution permissions](tools.md#input-and-execution-permissions) for
-coordinates, lifecycle, supported operations, model-dependent limits and sharing.
-For “put this error and my explanation into the agent's input,” the model can
-assemble selected or inspected text with the spoken instructions and replace the
-intended text area's value. Replacement is bounded to 4096 UTF-16 code units and
-verified by exact read-back; existing content is replaced, not appended. Line
-breaks and tabs are text, never Enter/Tab key events. The runtime uses no clipboard
-or keyboard fallback for unsupported controls. A later “send it” needs fresh
-evidence and a separate submission check. Actual agent-composer compatibility and
-model target accuracy remain unverified; routine tests use mocked providers and
-synthetic native checks.
-Requests remain stateless with `store: false`, replaying tool outputs and encrypted
-reasoning context. More tool steps can increase latency and provider usage; simple
-answers still need just one reasoning request. The model is instructed to gather
-useful evidence before asking for clarification and to avoid unnecessary steps.
-
-Result JSON contains `response`, `attention`, and `visualContext.frames`. Each
-visual entry records its frame ID, interval, associated phrase/context IDs,
-normalized timed paths, pointer sample, warnings, and `trailImageIncluded`.
-`visualContext.warnings` describes rendering omissions. Image bytes are not printed.
-
-## Configuration and data sharing
-
-Speech uses OpenAI `gpt-live-transcribe` over Realtime WebSocket transcription,
-with client-selected phrase boundaries and low-delay streaming. It does not return
-word timestamps. Other speech models are
-rejected before native access. Reasoning uses image input, function calling, and text output
-through Responses. Official documentation: [transcription](https://developers.openai.com/api/docs/guides/realtime-transcription),
-[image input](https://developers.openai.com/api/docs/guides/images-vision), and
-[text generation](https://developers.openai.com/api/docs/guides/text), and
-[function calling](https://developers.openai.com/api/docs/guides/function-calling).
-
-Setup saves environment-variable names, never keys. Configuration lives in the
-platform's user config directory; `OPENSAYSME_CONFIG_DIR` overrides it. Setup only
-overwrites an existing file with `--replace`. Minimal `config.json`:
+Configuration lives at `~/Library/Application Support/opensaysme/config.json`.
+`OPENSAYSME_CONFIG_DIR` overrides the directory. For example:
 
 ```json
 {
   "version": 1,
+  "activationHotkey": "Ctrl+Shift+Space",
   "shareVisualContext": true,
   "speech": {
     "provider": "openai",
@@ -274,280 +45,160 @@ overwrites an existing file with `--replace`. Minimal `config.json`:
   },
   "reasoning": {
     "provider": "openai",
-    "model": "gpt-5.4-mini",
+    "model": "gpt-6-astra",
     "apiKeyEnv": "OPENAI_API_KEY"
   }
 }
 ```
 
-Reasoning configuration and explicit `shareVisualContext: true` are required.
-Only OpenAI is implemented for this slice; OS credential-store setup remains
-future work. Setup makes no provider request.
+Only OpenAI is implemented. Speech uses streaming transcription; reasoning needs
+image input and function calling. New setups default to
+[GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra), using low
+reasoning effort for the actor and click/Enter checks. Saved provider choices are
+retained; edit `reasoning.model` to `gpt-6-astra` to switch an existing configuration.
+The actual request reports authentication/model failures; setup and doctor do not
+issue test requests.
 
-Activated audio streams directly to OpenAI. After stopping, full screenshots and
-optional trail copies, window titles, selected text, cursor history, and transcripts
-go directly to the reasoning provider. Requested tool results can include window
-inventory, current context, macOS window accessibility content, and additional screen
-or window screenshots. Setup explains this sharing.
-Actor requests and input checks also send the bounded recent conversation. Input
-checks additionally send the current original request, reference context, proposed
-text/action, control metadata and window image to the configured reasoning provider.
-These guard requests are not currently saved as separate debug request files;
-tool results record the decision's effect and supporting quote/reason. Provider
-charges and data policies apply. The Responses request uses `store: false`;
-provider retention policies still apply.
+Change only the activation shortcut without repeating setup:
 
-By default, screenshots and audio stay in memory locally; no files or application
-logs are created. Images and full attention history are released on completion;
-the bounded conversation record described above can retain text and target evidence
-for follow-ups. Cancellation clears both. Screen
-image payloads are never printed. Results are JSON on stdout; state, transcript,
-and response feedback appear on stderr. The macOS panel also displays bounded
-status, target and response text, clearing it when hidden. Text and attention metadata can contain
-private content and remain in terminal scrollback or user-created redirects.
-Cancellation aborts requests; data already sent cannot be recalled. `doctor`
-checks key presence only, without authentication, paid requests, or device capture.
+```sh
+node dist/cli.js hotkey "Cmd+Shift+Space"
+node dist/cli.js hotkey   # show the saved shortcut
+```
 
-## Inspect a debug session
+Restart voice mode after changing it. Supported modifiers are Ctrl, Alt, Cmd and
+Shift with Space, A–Z, 0–9 or F1–F12; include at least Ctrl, Alt or Cmd. Case and
+surrounding spaces are normalized. Letter/digit keys use US physical key positions.
+Escape and any Ctrl+C combination are reserved. Other controls keep their existing
+bindings. If another app or macOS owns the shortcut, startup reports it unavailable;
+choose another combination. Omitting `activationHotkey` uses Ctrl+Shift+Space.
 
-Opt in for the current process only:
+## Permissions and the first run
+
+Microphone, Accessibility and Screen Recording are separate macOS grants. Use
+System Settings → Privacy & Security to enable the terminal/helper identified by
+macOS. Screen Recording is called Screen & System Audio Recording on some versions.
+If access still fails after a grant, fully quit/reopen the launching terminal and
+retry. Moving or rebuilding an unsigned helper can require renewed access.
+
+`doctor` reports available access and missing dependencies without requesting
+permissions, recording, capturing selections/screenshots or changing focus. It
+checks provider key presence, not authentication. Start voice mode and try a real
+request to find out whether capture and interaction work. There are no separate
+microphone, screenshot or hotkey verification commands.
+
+Known desktop failures preserve specific error codes and useful recovery advice.
+A crash, timeout or unavailable device is not automatically a permission denial.
+The panel can retain an earlier warning while the agent continues with the context
+it has. Permission grants allow access; they do not authorize arbitrary actions.
+
+## Using the loop
+
+Keep the CLI running while working in another app. Tap your activation shortcut
+(**Ctrl+Shift+Space** by default), wait
+for “Listening…”, speak and show the relevant content, then tap again. The model
+can inspect windows before answering or acting. Pointing and selection help resolve
+references without requiring manual window labels.
+
+**Escape** cancels pending work and clears recent conversation. While idle, use
+Escape in the CLI terminal; the global Escape shortcut runs only during a turn.
+**Ctrl+C** shuts down capture, native helpers and provider work. Cancellation cannot
+undo input already issued. The feedback panel passes mouse input through, never
+takes keyboard focus, and leaves full responses in the terminal.
+
+Start with a real task such as preparing an error and explanation in your agent's
+input. Follow with “now send it.” The [manual scenarios](field-notes.md#manual-scenarios)
+describe what useful behavior means; run them when they help investigate the current work.
+No automated live-provider harness or formal baseline report is required.
+
+## Context and action behavior
+
+Audio streams while recording. Screen, active-window, selection and cursor samples
+are collected locally and paired with nearby speech intervals. Phrase intervals
+are capture-time envelopes, not exact word timestamps. The agent can then discover
+windows, inspect background Accessibility content, capture a window image, focus
+it and act using the tools in [tools.md](tools.md).
+
+The acting model interprets the request for every operation. Clicks and Enter get
+an additional independent check using the current request, screenshot and native
+target. Pointing, scrolling, Tab and literal text entry skip that extra model call.
+Text entry requires an already-focused writable AXTextField or AXTextArea; multiline
+text requires AXTextArea. It replaces the value without generating keyboard events.
+The model must still account for autosave or blur handlers; the routine path does
+not independently verify their effect.
+
+Before input, native code rechecks the target window/control, focus, geometry and
+user input. It no longer traverses or fingerprints the entire window; unrelated
+badges, timers, protected siblings or truncated AX trees do not block an otherwise
+supported target. Other form fields can change during a pending click check, so
+material submission contents still require fresh model inspection. Clicks, scroll
+and key events report issued events; that is not proof the intended app outcome
+occurred. Uncertain outcomes stop further input rather than encouraging blind retry.
+
+Recent conversation is bounded in memory and cleared on cancellation, failed turns
+and shutdown. Images, audio, action handles and approvals do not carry over. The
+size/time constants in `src/conversation.ts` are conservative development defaults;
+change them based on actual follow-ups, not as a separate product milestone.
+
+Known limits to investigate when they block a task:
+
+- Some apps expose little Accessibility content or no writable composer. Purely
+  visual input targets and arbitrary keyboard shortcuts are unsupported.
+- Window titles/process identity can become stale or ambiguous; matching titles
+  alone do not establish the intended agent or unchanged contents.
+- Retained requests and screenshots can be misinterpreted by the model. Routine
+  mocks do not establish real-model permission accuracy.
+- Multi-display coordinates, focus races, app normalization of entered text and
+  physical cancellation behavior need observation on the desktop being used.
+
+## Privacy and debugging
+
+Activated audio goes to the speech provider. Selected screen frames, context,
+transcripts, recent conversation and requested tool results go to the reasoning
+provider. Click/Enter checks also send the proposed action and target evidence.
+Provider charges and retention policies apply. Reasoning requests use `store: false`.
+There is no clipboard use or arbitrary model-generated shell execution.
+
+Normal capture stays in memory. Terminal output includes transcripts, responses
+and metadata, which may remain in scrollback or redirects. Optional debug files
+include sensitive screen pixels and captured context; screenshots are not redacted.
+Keys and raw audio are excluded from diagnostics.
 
 ```sh
 npm run dev -- --debug
 npm run dev -- --debug ./my-captures
 ```
 
-Without a directory argument, debug sessions go under `.opensaysme-debug/` in the
-current directory (ignored by Git). The CLI prints the unique session directory;
-turn results include their `debugDirectory`. Custom output paths are not automatically
-ignored by Git. This flag does not change setup or configuration.
+The default `.opensaysme-debug/` directory is ignored by Git. Custom paths are not.
+A session contains `session.jsonl` plus per-turn context, prepared requests,
+responses, tool events and images. Files remain until deleted. A prepared request
+is not proof it was dispatched. Debug failures warn without stopping normal use.
+Do not commit captured desktop content; use a minimal synthetic regression instead.
 
-Each session contains `session.jsonl` and a `turns/<turn-id>/` directory for each turn:
+Normal results already contain timing information for capture, transcription,
+reasoning/tools and stop-to-response. Use it when a wait is noticeable; do not
+build another metrics system before finding a bottleneck worth fixing.
 
-- `context.json`: transcript, phrase timing, window/selection context, cursor history,
-  frame bounds, and visual alignment.
-- `request.json`, `request-2.json`, ...: each prepared model request, including
-  recent conversation, the catalog and replayed tool exchanges, with image URLs replaced by local paths.
-  Images remain the exact JPEG bytes prepared for the provider.
-- `tool-1-started.json`, `tool-1-completed.json`, ...: tool arguments, results,
-  and duration. Additional tool images are saved under `images/`.
-- `result.json`: response, latency, and completed/failed/cancelled/interrupted status.
-- `images/f1-clean.jpg`, `images/f1-trail.jpg`: retained clean frames and available
-  annotated copies, with corresponding files for the other frame IDs.
-
-The session log records startup, capabilities, helper and provider lifecycle,
-request state, failures, cancellation, and cleanup. Entries include a wall timestamp,
-monotonic session time, and a turn ID where applicable. A saved request means it was
-prepared; dispatch and completion events distinguish what happened afterward.
-
-Diagnostic text redacts configured provider keys; authorization headers, raw
-audio, and opaque encrypted reasoning are not saved. Screenshot pixels remain unchanged; screenshots and captured
-context can contain private content.
-Completed records remain until you delete them, including failed or cancelled turns.
-Unfinished writes are cleaned up where possible. Directories/files request owner-only
-access on systems supporting Unix permissions; Windows uses inherited directory ACLs.
-
-Debug writes run alongside the voice flow, with a 32 MiB pending queue and an
-8 MiB/10,000-entry session log limit. Disk failures or limits warn and disable or
-skip logging without failing the turn. The destination must support hardlinks
-(standard APFS, ext4, and NTFS do). Shutdown waits at most two seconds to flush;
-slow filesystem operations may settle and clean up later. Delete the debug
-directory when finished.
-
-## Latency measurements
-
-Completed results include milliseconds on a monotonic clock:
-
-- `activationToListeningMs`, `activationToFirstAudioMs`: native microphone readiness
-  and the first PCM chunk received by the runtime.
-- `activationToProviderReadyMs`, `activationToFirstTranscriptMs`: speech session
-  configuration and first nonempty partial transcript.
-- `activationToFirstPhraseMs`: first completed phrase delivered to the runtime.
-- `maxPhraseFinalizationMs`: largest capture-end-to-phrase-delivery delay, when
-  capture timing is available; estimated capture clocks also affect this metric.
-- `maxAudioDeliveryLagMs`: largest captured-chunk-end-to-Node-delivery delay.
-- `stopToFinalTranscriptMs`: second tap to final speech transcript.
-- `contextCaptureMs`: activation to the first retained context observation, if any.
-- `visualPreparationMs`: alignment and local trail-image preparation.
-- `reasoningMs`: the full agent loop through the final text, including any tool time.
-- `toolMs`, `toolCalls`: accumulated local tool time and completed call count, when tools run.
-- `stopToResponseMs`, `stopToResultMs`: second tap through the response/result.
-- `recordingMs`, `totalMs`: activation-to-stop and activation-to-result.
-
-Frame/context capture and receipt timestamps expose query overhead. Audio delivery
-and phrase finalization measurements expose buffering/provider delays separately.
-These do not establish acoustic or word-level alignment. Real reference accuracy,
-phrase-boundary quality, and responsiveness need interactive evaluation; fixture
-timings are not performance results.
-
-## Platform prerequisites
-
-macOS is the v1 target. Other rows document existing experimental adapters for
-future platform work.
-
-| Platform | Prerequisites and limits |
-| --- | --- |
-| macOS | Xcode Command Line Tools for Swift helpers. Screenshots require macOS 14+ and Screen Recording permission for the terminal/helper. Accessibility enables window/selection capture; microphone access is separate. Development binaries are unsigned. |
-| Windows (deferred) | Native Windows Node.js, Windows PowerShell 5.1, and an interactive desktop. Screen/cursor capture requires Windows 10 1703+ per-monitor DPI support. Uses Win32/UI Automation, System.Drawing, and .NET Framework. Execution policy is respected; WSL is unsupported. |
-| Linux/X11 (deferred) | `xdotool`, `xprop`, `xsel`, Python 3, `libX11`, `arecord`, and Pillow with XCB support (`python3-pil` on Debian); an EWMH window manager. Frames cover the virtual root. PRIMARY selection may belong to another window, reported as a warning. |
-| Linux/Wayland (deferred) | Native targeting and global activation are not implemented; voice mode rejects Wayland even when XWayland sets `DISPLAY`. |
-
-Dependencies are never installed by the CLI. See platform protocols and
-permission instructions under [macOS](../native/macos/README.md),
-[Windows](../native/windows/README.md), and [Linux](../native/linux/README.md).
-Sharp supplies prebuilt image-processing binaries for supported macOS, Windows,
-and Linux targets through npm. Its wrapper is Apache-2.0; the bundled libvips package
-declares LGPL-3.0-or-later and includes other dependency licenses. Audit these
-binaries and notices before redistribution, including commercial packaging.
-External Linux utilities are not bundled; review their licenses before redistribution.
-
-### Guided macOS permissions and recovery
-
-Run `node dist/cli.js setup` from the same launcher you use for voice mode. The
-permission menu reports microphone, Accessibility and Screen Recording grants
-separately. It also shows the helper path/bundle identifier and, when available,
-the nearest observed launching app and its path. These observations help locate
-the Privacy & Security entry; they do not determine which identity macOS uses.
-
-Each **Request/verify** choice is deliberate and may display an OS permission
-prompt. The local checks are bounded and require no provider key or request:
-
-| Check | Local operation |
-| --- | --- |
-| Microphone | Receives up to three seconds of audio frames, retaining only a frame count. Audio is discarded. |
-| Accessibility | Reads the focused window's role without reading titles or selection, changing focus, or issuing input. |
-| Screen Recording | Captures one image and discards it inside the helper; no image bytes leave the helper and no system audio is captured. |
-
-Only the permission name and outcome are returned. No check saves capture data.
-**Recheck access status** and `doctor` never prompt or capture. A granted status
-is distinct from a successful local operation; skipped checks remain unverified.
-The current setup session clears verification labels when grants or observed
-launcher/helper identity change. Finishing the menu does not claim unchecked
-permissions work.
-
-Use System Settings > Privacy & Security for the matching Microphone,
-Accessibility, or Screen & System Audio Recording entry (called Screen Recording
-on some macOS versions). If an enabled grant still fails, fully quit and reopen
-the launching app and rerun setup. Moving or rebuilding an unsigned helper can
-require renewed grants. Shell-only API-key exports may need to be set again;
-setup retains names, not key values. See Apple's
-[screen and system audio recording guidance](https://support.apple.com/guide/mac-help/control-access-screen-system-audio-recording-mchld6aa7d23/mac).
-
-Known native failures retain specific recovery guidance through capture history,
-tool results and the feedback panel: denied access, missing or crashed helper,
-timeout, unsupported control, and stale target are separate outcomes. Unknown
-failures do not establish denied permission. A capture warning can leave the
-turn running with limited context. The panel retains the latest issue as an earlier
-warning, without claiming it still applies after a successful recovery.
-Actual prompt, revocation/restart and device behavior remain manual acceptance
-work under [P03](../BACKLOG.md#desktop-reliability).
-
-## Desktop experiments and checks
-
-`doctor` does not record, register shortcuts, request permissions, read selected
-text, or change focus. A zero exit means a report was produced, not that every
-capability works. Explicit desktop experiments remain available:
+## Checks
 
 ```sh
-node dist/cli.js desktop inspect --selection --delay 3
-node dist/cli.js desktop focus '<target-id>'
-node dist/cli.js desktop test-hotkey --seconds 10
-node dist/cli.js desktop test-microphone --seconds 3
-npm run check
+npm run typecheck
+npm run lint
+npm test
+npm run check          # typecheck, lint, unit tests, TypeScript build
 sh native/macos/test.sh
-npm pack --dry-run
+npm run build:native
 ```
 
-Window IDs are temporary. Microphone probes discard audio; bounded input tests
-exit 0 for passed, 1 for not observed, and 2 for unavailable. Routine provider
-tests use fixtures without keys or paid requests. Windows CI compiles helpers,
-parses PowerShell scripts, and runs device-free protocol/image encoding tests.
+Routine tests use mocked providers and synthetic native inputs. They require no
+keys, provider charges, actual screenshots or desktop input. Keep regressions for
+target resolution, request boundaries, provider parsing and cancellation; add
+new tests for observed failures rather than expanding an abstract acceptance matrix.
+CI runs on macOS only. Other-platform implementations and checks were removed from
+the active tree; previous versions remain in Git history.
 
-Continue v1 development with unit tests and mocked provider responses. Once the
-v1 implementation is ready, add one unified live-provider suite with explicit
-expected outcomes for the acceptance trials. There is currently no live-provider
-test runner or per-feature live-test flag.
-
-### Platform and regression checks
-
-The existing X11 suite is retained for later Linux work and does not gate macOS
-v1. It uses an isolated virtual desktop and synthetic recorder:
-
-```sh
-docker build -f scripts/Dockerfile.x11 -t opensaysme-x11-test .
-docker run --rm --init --network none opensaysme-x11-test
-```
-
-Current validation coverage and limits:
-
-- Routine provider/tool tests cover multimodal request construction, source and
-  timing metadata, tool sequencing, stale targets, bounded errors, cancellation
-  and request-scoped input enforcement. Provider and authorization decisions are
-  scripted, so these checks do not establish model understanding or permission accuracy.
-- Native macOS checks cover process identity, Accessibility traversal and protected
-  fields, complete-content input fingerprints, capture source/geometry validation,
-  initialization, main-thread resumption, synthetic audio and JPEG encoding.
-  Feedback tests cover protocol bounds, executable identity and screen placement;
-  runtime tests cover target labels, stale events, dismissal and helper cleanup. They
-  issue no desktop input and do not capture the screen.
-- Permission setup tests use mocked grants, verification results and cancellation.
-  Native checks cover grant-state decisions, bounded launcher ancestry and finite
-  content-free responses; routine checks request no grants or device capture.
-- The isolated Linux/X11 suite exercises window discovery, screenshots, cursor
-  sampling, recording lifecycle and cleanup. Its synthetic audio and virtual desktop
-  do not establish physical-device behavior. Windows adapter/protocol/image checks
-  likewise do not establish native desktop operation.
-- User-run macOS sessions have exercised transcription, visual history, window
-  discovery, accessibility inspection and focus. Complete background-window capture,
-  target accuracy, desktop input outcomes, cancellation races and multi-display
-  coordinates remain unverified. Earlier preview timings are individual observations,
-  not performance benchmarks.
-
-Two native fixes from those checks remain part of the runtime. Window identity uses
-validated kernel process start time because directly launched applications may lack
-`NSRunningApplication.launchDate`; PID reuse still invalidates old targets. Capture
-initializes CoreGraphics through public `CGMainDisplayID()` before ScreenCaptureKit
-filter construction. This addresses the confirmed `CGS_REQUIRE_INIT: did_initialize`
-assertion; moving work to the main thread alone did not address it. The capture
-bridge also retains main-thread execution across awaits, bounds execution time,
-and reports missing displays or helper crashes without exposing native output.
-Rebuild with `npm run build:native` after updating. Successful compilation and
-synthetic checks do not replace a live capture check from the authorized terminal.
-
-Manual acceptance: ask about visible content using existing context, then try
-pointing or selecting to clarify a reference and a request spanning several windows.
-Inspect `visualContext.frames` and compare phrase, cursor, and frame times with
-the response. Repeat during rapid navigation,
-scrolling, incidental movement, missing screen permission, and multiple displays.
-Try both paused and continuous speech: energy-based phrase boundaries can include
-several referents. Cancel during capture and interpretation, disconnect/retry, and
-confirm resources release on Ctrl+C.
-Open editor windows for two different projects and ask to switch to one by context,
-without registering names. Use `--debug` to inspect the discovered titles, selected
-window reference, and verified tool result. Try indistinguishable titles and a
-window closed or retitled during processing; the agent should inspect again or
-explain the remaining ambiguity.
-On macOS, use two discoverable windows whose contents distinguish the projects and
-check that `inspect_window` supplies relevant text without a focus change before
-the requested navigation. Verify protected fields are omitted, try an application
-with limited accessibility support, and close or retitle a candidate during
-inspection. Native windows with identical title/AX-identifier tokens are still
-omitted as ambiguous; this slice does not resolve that platform limitation.
-For window screenshots, cover a target with another window and request a visual
-detail from the target when its accessibility text is insufficient. Verify
-`capture_window` returns that window's pixels without changing focus. Repeat with
-a moved/resized/closed target, duplicate matching candidates, a minimized/hidden
-window, denied Screen Recording access, and windows on a display with a negative
-origin or different scale. Inspect the source identity, bounds, and capture time
-in opt-in debug output; confirm failures do not contain substitute screen pixels.
-
-For input acceptance, use a controlled form or disposable agent-input fixture.
-Try “fill this form” and “fill this form and submit it”; verify exact field values,
-no send in the first case and exactly one send in the second. Repeat prepare/send
-through both a button and Enter, with negative instructions, an autosaving field,
-similarly titled destinations and misleading instructions in UI content. Point
-without clicking, scroll and inspect again, and check image coordinates across
-display scales/negative origins. Change focus, move the pointer, hold a key, resize
-the window, edit another field, and cancel during authorization/input; inspect and
-record actual effects rather than assuming cancellation undid them. Measure guard
-latency and unnecessary denials/clarifications separately from actor reasoning.
+The native capture path includes fixes for process-start identity and CoreGraphics
+initialization before ScreenCaptureKit use. Compilation and synthetic tests do not
+prove real application behavior. Follow the [native protocol notes](../native/macos/README.md)
+when changing OS access. Distribution/signing and prebuilt binaries are parked;
+this repository is currently installed from source.

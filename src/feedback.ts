@@ -1,6 +1,7 @@
 import type { VoiceOutput } from './runtime.js';
 import type { FeedbackSink } from './desktop/feedback-process.js';
 import { desktopMessages, type DesktopIssue } from './desktop/errors.js';
+import { defaultActivationHotkey } from './hotkey.js';
 
 // Cut on code-point boundaries while enforcing the native UTF-16 bound.
 function clip(value: string, limit: number): string {
@@ -22,7 +23,7 @@ const actionTitles: Record<string, string> = {
 };
 
 /** Projects runtime events into optional UI; never makes requests or decisions. */
-export function createFeedback(sink: FeedbackSink) {
+export function createFeedback(sink: FeedbackSink, activationHotkey = defaultActivationHotkey) {
   let turnId: string | undefined;
   let settled = false, closed = false;
   let closing: Promise<void> | undefined;
@@ -48,14 +49,14 @@ export function createFeedback(sink: FeedbackSink) {
         if (event.state === 'ready') { if (!settled) hide(); return; }
         if (event.state === 'cancelling') { settled = true; hide(); return; }
         if (!settled) show(stateTitles[event.state], '', recovery ? `Earlier warning: ${desktopMessages[recovery]}` : event.state === 'listening'
-          ? 'Ctrl+Shift+Space to finish · Escape to cancel' : 'Escape to cancel');
+          ? `${activationHotkey} to finish · Escape to cancel` : 'Escape to cancel');
       } else if (event.type === 'cancelled') {
         settled = true; hide();
       } else if (event.type === 'result') {
         if (settled) return;
         settled = true;
         show(recovery ? 'OpenSaysMe · Earlier desktop warning' : 'OpenSaysMe', event.response,
-          recovery ? `Earlier warning: ${desktopMessages[recovery]}` : 'Ctrl+Shift+Space to reply · Full response in terminal', true);
+          recovery ? `Earlier warning: ${desktopMessages[recovery]}` : `${activationHotkey} to reply · Full response in terminal`, true);
       } else if (event.type === 'error' || event.type === 'warning') {
         if (settled && event.type === 'warning') return;
         if (event.type === 'warning' && event.desktopIssue) recovery = event.desktopIssue;

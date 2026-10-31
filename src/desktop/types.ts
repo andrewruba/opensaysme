@@ -2,7 +2,6 @@ import { z } from 'zod';
 import type { DesktopContext, VoiceHelperSpec } from './voice-types.js';
 import { frameBoundsSchema, frameImageSchema, type ScreenFrameCapture } from './visual-types.js';
 import type { DesktopInputAdapter } from './input-types.js';
-import type { PermissionAccess } from './permissions.js';
 
 export const capabilityNames = [
   'activeWindow', 'focusWindow', 'selectedText', 'globalHotkey', 'microphone', 'screenCapture',
@@ -82,16 +81,7 @@ export const windowFrameCaptureSchema = z.discriminatedUnion('status', [
 ]);
 export type WindowFrameCapture = z.infer<typeof windowFrameCaptureSchema>;
 
-export const desktopTestResultSchema = z.object({
-  capability: z.enum(['globalHotkey', 'microphone']),
-  status: z.enum(['passed', 'not-observed', 'unavailable']),
-  detail: z.string(),
-  metrics: z.record(z.string(), z.number()).optional(),
-});
-export type DesktopTestResult = z.infer<typeof desktopTestResultSchema>;
-
 export interface DesktopAdapter {
-  permissions?: PermissionAccess;
   input?: DesktopInputAdapter;
   probe(): Promise<DesktopReport>;
   listWindows(signal?: AbortSignal): Promise<WindowInventory>;
@@ -100,9 +90,7 @@ export interface DesktopAdapter {
   captureWindow?(targetId: string, signal?: AbortSignal): Promise<WindowFrameCapture>;
   inspect(includeSelection: boolean, signal?: AbortSignal): Promise<DesktopSnapshot>;
   focus(targetId: string, signal?: AbortSignal): Promise<void>;
-  testHotkey(durationSeconds: number): Promise<DesktopTestResult>;
-  testMicrophone(durationSeconds: number): Promise<DesktopTestResult>;
-  voiceHelper(): Promise<VoiceHelperSpec>;
+  voiceHelper(activationHotkey?: string): Promise<VoiceHelperSpec>;
   feedbackHelper?(): Promise<VoiceHelperSpec>;
   captureContext(signal?: AbortSignal): Promise<DesktopContext>;
   captureFrame(signal?: AbortSignal): Promise<ScreenFrameCapture>;

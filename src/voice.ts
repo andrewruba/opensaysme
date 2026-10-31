@@ -12,12 +12,14 @@ import { capabilityNames } from './desktop/types.js';
 import { createDesktopTools } from './tools/desktop.js';
 import { openAIActionAuthorizer } from './reasoning/action-authorization.js';
 import { createFeedback } from './feedback.js';
+import { defaultActivationHotkey } from './hotkey.js';
 import { feedbackUnavailable, startFeedbackHelper, type FeedbackCommand, type FeedbackSink } from './desktop/feedback-process.js';
 
 export async function runVoice(config: Config, signal: AbortSignal, emit: (output: VoiceOutput) => void,
   options: { debugDirectory?: string } = {}): Promise<void> {
   const apiKey = process.env[config.speech.apiKeyEnv];
   const reasoningKey = process.env[config.reasoning.apiKeyEnv];
+  const activationHotkey = config.activationHotkey ?? defaultActivationHotkey;
   let debug: DebugSession | undefined;
   let feedback: ReturnType<typeof createFeedback> | undefined;
   let feedbackClosed = false;
@@ -51,7 +53,7 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
       feedback = createFeedback({
         send(command) { if (sink) sink.send(command); else pending = command; },
         async close() { pending = undefined; await sink?.close(); },
-      });
+      }, activationHotkey);
       // Resolve/start optional UI alongside voice startup; it never delays listening.
       void Promise.resolve().then(() => adapter.feedbackHelper!()).then((feedbackSpec) => {
         if (signal.aborted || feedbackClosed) return;
@@ -70,7 +72,7 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
       }).catch(() => debug?.event({ component: 'desktop', event: 'capabilities-check-failed' }));
     }
     debug?.event({ component: 'desktop', event: 'helper-starting' });
-    const spec = await adapter.voiceHelper();
+    const spec = await adapter.voiceHelper(activationHotkey);
     if (signal.aborted) return;
     const input = startVoiceHelper(spec, (event) => runtime.handle(event));
     const runtime = new VoiceRuntime({ input, transcribe: openAITranscription, captureContext: adapter.captureContext,

@@ -2,8 +2,7 @@ import { cancel, confirm, intro, isCancel, note, outro, text } from '@clack/prom
 import { configPath, readConfig, writeConfig } from './config.js';
 import { streamingModel } from './speech/openai.js';
 import { defaultReasoningModel } from './reasoning/openai.js';
-import { desktopAdapter } from './desktop/index.js';
-import { setupPermissions } from './setup-permissions.js';
+import { activationHotkeySchema, defaultActivationHotkey, hotkeyHelp } from './hotkey.js';
 
 function answer<T>(value: T): Exclude<T, symbol> {
   if (isCancel(value)) {
@@ -17,12 +16,12 @@ export async function setup(signal?: AbortSignal, replace = false): Promise<void
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error('Setup needs an interactive terminal. See docs/development.md for the configuration format.');
   }
-  signal?.throwIfAborted();
+  if (signal?.aborted) throw new Error('Setup cancelled. No configuration was written.');
   const existing = replace ? null : await readConfig();
   intro('OpenSaysMe setup');
   if (existing && !replace) {
-    note(`Using saved provider settings at ${configPath()}. Use setup --replace to change them.\nNo provider key or connection is needed for local permission checks.`, 'Existing configuration');
-    await permissions(signal);
+    note(`Using saved provider settings at ${configPath()}. Use setup --replace to change them.`, 'Existing configuration');
+    permissions();
     outro('Provider settings retained. Run opensaysme when desktop access is ready.');
     return;
   }
@@ -49,24 +48,27 @@ export async function setup(signal?: AbortSignal, replace = false): Promise<void
   const model = answer(await text({ signal, message: 'Reasoning model with image input and function calling', initialValue: defaultReasoningModel,
     validate: (value) => value?.trim() ? undefined : 'Enter a compatible model identifier.',
   }));
+  const activationHotkey = activationHotkeySchema.parse(answer(await text({ signal,
+    message: 'Shortcut to start and finish talking (Escape still cancels)', initialValue: defaultActivationHotkey,
+    validate: (value) => activationHotkeySchema.safeParse(value).success ? undefined : hotkeyHelp,
+  })));
   if (!answer(await confirm({ signal, message: 'Enable sharing captured screen/context with your reasoning provider after each turn?', initialValue: false }))) {
     throw new Error('Visual sharing was not enabled. No configuration was written.');
   }
   if (signal?.aborted) throw new Error('Setup cancelled. No configuration was written.');
   await writeConfig({
     version: 1,
+    activationHotkey,
     speech: { provider: 'openai', model: streamingModel, apiKeyEnv },
     reasoning: { provider: 'openai', model, apiKeyEnv: reasoningKeyEnv },
     shareVisualContext: true,
   }, configPath(), replace);
-  note(`Saved ${configPath()}. Provider settings remain saved if you skip or cancel local checks.`, 'Configuration saved');
-  await permissions(signal);
+  permissions();
   outro(`Saved ${configPath()}. Set ${[...new Set([apiKeyEnv, reasoningKeyEnv])].join(' and ')} in your environment, then run opensaysme.`);
 }
 
-async function permissions(signal?: AbortSignal): Promise<void> {
-  signal?.throwIfAborted();
-  const adapter = await desktopAdapter();
-  if (adapter.permissions) await setupPermissions(adapter.permissions, signal);
-  else note('Guided desktop permissions currently support macOS only.', 'Desktop permissions');
+function permissions(): void {
+  note('In System Settings → Privacy & Security, allow Microphone, Accessibility, and Screen Recording for your terminal/helper.\n'
+    + 'Run opensaysme doctor to inspect access, then try a voice request. If a grant does not take effect, fully quit and reopen the launching terminal.\n'
+    + 'Setup does not capture audio or images, request macOS grants, or call a provider.', 'macOS access');
 }

@@ -1,7 +1,6 @@
 import AppKit
 import ApplicationServices
 import AVFoundation
-import Carbon
 import CryptoKit
 import Foundation
 
@@ -15,13 +14,6 @@ struct DesktopReport: Encodable {
     let session: String
     let capabilities: [String: Capability]
     let notes: [String]
-}
-
-struct TestResult: Encodable {
-    let capability: String
-    let status: String
-    let detail: String
-    var metrics: [String: Double]? = nil
 }
 
 struct Window: Encodable {
@@ -169,9 +161,9 @@ func selectedTextCapability(_ app: AXUIElement) -> Capability {
 func microphoneCapability() -> Capability {
     switch AVCaptureDevice.authorizationStatus(for: .audio) {
     case .authorized:
-        return Capability(status: "unverified", detail: "Microphone permission is granted; use desktop test-microphone to verify audio frames without retaining audio.")
+        return Capability(status: "unverified", detail: "Microphone permission is granted; try a voice request to verify capture. Doctor does not record.")
     case .notDetermined:
-        return Capability(status: "permission-required", detail: "Microphone permission has not been requested. This probe does not prompt or record.")
+        return Capability(status: "permission-required", detail: "Microphone permission has not been requested. Start voice mode and activate a request to allow access; doctor does not prompt or record.")
     case .denied:
         return Capability(status: "permission-required", detail: "Microphone access is denied. Enable it in System Settings > Privacy & Security > Microphone before recording.")
     case .restricted:
@@ -196,7 +188,7 @@ func probe() -> DesktopReport {
         "activeWindow": permission,
         "focusWindow": permission,
         "selectedText": permission,
-        "globalHotkey": Capability(status: "unverified", detail: "Use desktop test-hotkey to register and test Ctrl+Shift+Space temporarily; doctor installs no hook."),
+        "globalHotkey": Capability(status: "unverified", detail: "Start voice mode and press your configured activation hotkey to activate a request; doctor installs no hook."),
         "microphone": microphoneCapability(),
         "screenCapture": screenCaptureCapability(),
     ]
@@ -517,118 +509,6 @@ func inspectWindow(_ id: String) throws -> WindowInspection {
         nodes: content.nodes, warnings: content.warnings)
 }
 
-final class TestState {
-    var cancelled = false
-    var observed = false
-}
-
-// Signals are delivered on the main queue so cleanup happens outside a signal
-// handler. Every interactive test has a deadline even if its parent goes away.
-func cancellationSources(_ state: TestState) -> [DispatchSourceSignal] {
-    return [SIGINT, SIGTERM].map { number in
-        signal(number, SIG_IGN)
-        let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
-        source.setEventHandler { state.cancelled = true }
-        source.resume()
-        return source
-    }
-}
-
-func testHotkey(seconds: Int) -> TestResult {
-    guard NSWorkspace.shared.frontmostApplication != nil else {
-        return TestResult(capability: "globalHotkey", status: "unavailable", detail: "Run inside the logged-in graphical desktop session to test global hotkeys.")
-    }
-    let state = TestState()
-    let signals = cancellationSources(state)
-    defer { signals.forEach { $0.cancel() } }
-    var handler: EventHandlerRef?
-    var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-    let installed = InstallEventHandler(GetApplicationEventTarget(), { _, _, context in
-        guard let context else { return OSStatus(eventNotHandledErr) }
-        Unmanaged<TestState>.fromOpaque(context).takeUnretainedValue().observed = true
-        return noErr
-    }, 1, &eventType, Unmanaged.passUnretained(state).toOpaque(), &handler)
-    guard installed == noErr, let handler else {
-        return TestResult(capability: "globalHotkey", status: "unavailable", detail: "Could not install a macOS hotkey handler (code \(installed)).")
-    }
-    defer { RemoveEventHandler(handler) }
-    var hotkey: EventHotKeyRef?
-    let registered = RegisterEventHotKey(UInt32(kVK_Space), UInt32(controlKey | shiftKey), EventHotKeyID(signature: 0x4f534d45, id: 1), GetApplicationEventTarget(), 0, &hotkey)
-    guard registered == noErr, let hotkey else {
-        return TestResult(capability: "globalHotkey", status: "unavailable", detail: "Could not register Ctrl+Shift+Space; the shortcut may be reserved (code \(registered)).")
-    }
-    defer { UnregisterEventHotKey(hotkey) }
-    let deadline = Date().addingTimeInterval(Double(seconds))
-    while !state.observed && !state.cancelled && Date() < deadline {
-        // A CLI has no NSApplication event pump. Explicitly dispatch Carbon
-        // hotkey events instead of leaving them queued in the CFRunLoop.
-        var event: EventRef?
-        if ReceiveNextEvent(1, &eventType, 0.05, true, &event) == noErr, let event {
-            SendEventToEventTarget(event, GetApplicationEventTarget())
-            ReleaseEvent(event)
-        }
-        RunLoop.current.run(until: Date().addingTimeInterval(0.001))
-    }
-    return TestResult(capability: "globalHotkey", status: state.observed ? "passed" : "not-observed", detail: state.observed ? "Received Ctrl+Shift+Space. The temporary hotkey has been released." : "No hotkey event received before cancellation or deadline. The temporary registration has been released.")
-}
-
-final class AudioStats {
-    private let lock = NSLock()
-    private var frames: UInt64 = 0
-    func add(_ count: AVAudioFrameCount) {
-        lock.lock()
-        frames += UInt64(count)
-        lock.unlock()
-    }
-    func total() -> UInt64 {
-        lock.lock()
-        defer { lock.unlock() }
-        return frames
-    }
-}
-
-func testMicrophone(seconds: Int) -> TestResult {
-    let state = TestState()
-    let signals = cancellationSources(state)
-    defer { signals.forEach { $0.cancel() } }
-    let deadline = Date().addingTimeInterval(Double(seconds))
-    if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-        AVCaptureDevice.requestAccess(for: .audio) { _ in }
-        while AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined && !state.cancelled && Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-        }
-    }
-    guard !state.cancelled, Date() < deadline else {
-        return TestResult(capability: "microphone", status: "not-observed", detail: "Cancelled or timed out before capture began; no audio retained.")
-    }
-    guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
-        return TestResult(capability: "microphone", status: "unavailable", detail: "Microphone permission is not granted. Check System Settings > Privacy & Security > Microphone.")
-    }
-    let engine = AVAudioEngine()
-    let input = engine.inputNode
-    let format = input.outputFormat(forBus: 0)
-    guard format.channelCount > 0, format.sampleRate > 0 else {
-        return TestResult(capability: "microphone", status: "unavailable", detail: "No usable default microphone input format was found.")
-    }
-    let stats = AudioStats()
-    input.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in
-        stats.add(buffer.frameLength)
-    }
-    defer {
-        engine.stop()
-        input.removeTap(onBus: 0)
-        engine.reset()
-    }
-    do { try engine.start() } catch {
-        return TestResult(capability: "microphone", status: "unavailable", detail: "macOS could not start the microphone engine; verify the input device and permission.")
-    }
-    while !state.cancelled && Date() < deadline {
-        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-    }
-    let frames = stats.total()
-    return TestResult(capability: "microphone", status: frames > 0 ? "passed" : "not-observed", detail: frames > 0 ? "Received microphone audio frames. Buffers were discarded without saving or transmitting audio; capture has stopped." : "No audio frames received before cancellation or deadline; capture has stopped.", metrics: ["frames": Double(frames), "sampleRate": format.sampleRate, "channels": Double(format.channelCount)])
-}
-
 func output<T: Encodable>(_ value: T) throws {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
@@ -643,21 +523,21 @@ struct DesktopMain {
             let arguments = Array(CommandLine.arguments.dropFirst())
             switch arguments {
             case ["--probe"]: try output(probe())
-            case ["--permissions"]: try output(permissionReport())
             case ["--inspect"]: try output(inspect(includeSelection: false))
             case ["--inspect-selection"]: try output(inspect(includeSelection: true))
             case ["--list-windows"]: try output(listWindows())
             case ["--context"]: try output(captureContext())
             case ["--frame"]: try output(captureFrame())
             case ["--voice"]: VoiceSession().run()
+            case let args where args.count == 2 && args[0] == "--voice":
+                guard let hotkey = ActivationHotkey.parse(args[1]) else {
+                    try output(["type": "error", "code": "invalid-command"])
+                    return
+                }
+                VoiceSession(activationHotkey: hotkey).run()
             case ["--feedback"]: FeedbackSession().run()
             case ["--inspect-input"]: try desktopInput(execute: false)
             case ["--execute-input"]: try desktopInput(execute: true)
-            case let args where args.count == 2 && args[0] == "--verify-permission":
-                guard let permission = DesktopPermission(rawValue: args[1]) else {
-                    throw DesktopError("Unknown permission.", code: "invalid-permission")
-                }
-                try output(verifyPermission(permission))
             case let args where args.count == 2 && args[0] == "--inspect-window":
                 try output(inspectWindow(args[1]))
             case let args where args.count == 2 && args[0] == "--capture-window":
@@ -665,13 +545,8 @@ struct DesktopMain {
             case let args where args.count == 2 && args[0] == "--focus":
                 try focus(args[1])
                 try output(["ok": true])
-            case let args where args.count == 2 && ["--test-hotkey", "--test-microphone"].contains(args[0]):
-                guard let seconds = Int(args[1]), (1...30).contains(seconds) else {
-                    throw DesktopError("Test duration must be an integer from 1 to 30 seconds.")
-                }
-                try output(args[0] == "--test-hotkey" ? testHotkey(seconds: seconds) : testMicrophone(seconds: seconds))
             default:
-                throw DesktopError("Expected --probe, --inspect, --inspect-selection, --list-windows, --inspect-window <target-id>, --capture-window <target-id>, --context, --frame, --voice, --focus <target-id>, --test-hotkey <seconds>, or --test-microphone <seconds>.")
+                throw DesktopError("Expected --probe, --inspect, --inspect-selection, --list-windows, --inspect-window <target-id>, --capture-window <target-id>, --context, --frame, --voice [activation-hotkey], or --focus <target-id>.")
             }
         } catch let error as VisualCaptureError {
             try? output(["error": error.rawValue])

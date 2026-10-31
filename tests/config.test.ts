@@ -1,5 +1,5 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { configPath, configSchema, providerStatus, readConfig, writeConfig, type Config } from '../src/config.js';
@@ -34,6 +34,15 @@ describe('configuration', () => {
     expect(configSchema.safeParse({ ...config, reasoning: { ...config.reasoning, apiKeyEnv: 'sk-private' } }).success).toBe(false);
   });
 
+  it('normalizes a saved activation shortcut and rejects shortcuts that would interfere with fixed controls', async () => {
+    const file = await path();
+    await writeConfig({ ...config, activationHotkey: ' cmd + shift + space ' }, file);
+    expect((await readConfig(file))?.activationHotkey).toBe('Cmd+Shift+Space');
+    for (const activationHotkey of ['Escape', 'Cmd+Escape', 'Ctrl+C', 'Cmd+Ctrl+Shift+C', 'Space', 'Shift+A', 'Cmd+Cmd+A', 'Cmd+A+B', 'Cmd+F13', 'Cmd+\nA']) {
+      expect(configSchema.safeParse({ ...config, activationHotkey }).success, activationHotkey).toBe(false);
+    }
+  });
+
   it('requires explicit visual sharing and a configured supported reasoning provider', () => {
     expect(configSchema.safeParse({ ...config, shareVisualContext: false }).success).toBe(false);
     expect(configSchema.safeParse({ ...config, shareVisualContext: undefined }).success).toBe(false);
@@ -62,9 +71,8 @@ describe('configuration', () => {
     expect(JSON.stringify(report)).not.toContain('private-token');
   });
 
-  it('uses platform configuration roots and supports an explicit override', () => {
-    expect(configPath({ OPENSAYSME_CONFIG_DIR: '/test/config' }, 'linux')).toBe(join('/test/config', 'config.json'));
-    expect(configPath({ APPDATA: 'profile' }, 'win32')).toBe(join('profile', 'opensaysme', 'config.json'));
-    expect(configPath({ XDG_CONFIG_HOME: '/test/xdg' }, 'linux')).toBe(join('/test/xdg', 'opensaysme', 'config.json'));
+  it('uses the macOS configuration root and supports an explicit override', () => {
+    expect(configPath({ OPENSAYSME_CONFIG_DIR: '/test/config' })).toBe(join('/test/config', 'config.json'));
+    expect(configPath({})).toBe(join(homedir(), 'Library', 'Application Support', 'opensaysme', 'config.json'));
   });
 });

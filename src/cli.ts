@@ -2,7 +2,8 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Command, InvalidArgumentError } from 'commander';
-import { configPath, providerStatus, readConfig } from './config.js';
+import { configPath, providerStatus, readConfig, writeConfig } from './config.js';
+import { activationHotkeySchema, defaultActivationHotkey, hotkeyHelp } from './hotkey.js';
 import { desktopAdapter } from './desktop/index.js';
 import { cancelDesktopCommands } from './desktop/process.js';
 import { capabilityNames, type DesktopReport } from './desktop/types.js';
@@ -45,7 +46,7 @@ const program = new Command()
   .action(async (options: { debug?: true | string }) => {
     const config = await readConfig();
     if (!config) throw new Error('Run opensaysme setup first. Desktop probes work without provider configuration.');
-    process.stderr.write('OpenSaysMe voice mode. Ctrl+Shift+Space starts/stops; Escape cancels; Ctrl+C quits.\n');
+    process.stderr.write(`OpenSaysMe voice mode. ${config.activationHotkey ?? defaultActivationHotkey} starts/stops; Escape cancels; Ctrl+C quits.\n`);
     process.stderr.write('Activated audio streams to OpenAI. Screen/context and cursor history are captured while recording.\n');
     process.stderr.write('After stopping, your agent can inspect desktop evidence and switch windows to fulfill your request.\n');
     process.stderr.write('Selected frames, context, and requested tool results go to your reasoning provider.\n');
@@ -71,9 +72,20 @@ const program = new Command()
     console.log('Stopped.');
   });
 
-program.command('setup').description('Configure providers and guide macOS permissions; retain saved settings unless --replace')
+program.command('setup').description('Configure environment-key references and explain macOS access; retain settings unless --replace')
   .option('--replace', 'Replace existing configuration after interactive setup')
   .action((options: { replace?: boolean }) => setup(stop.signal, Boolean(options.replace)));
+program.command('hotkey [shortcut]').description('Show or save the activation shortcut; Escape and Ctrl+C stay fixed')
+  .addHelpText('after', `\n${hotkeyHelp}\nExample: opensaysme hotkey "Cmd+Shift+Space"`)
+  .action(async (shortcut?: string) => {
+    const parsed = shortcut === undefined ? undefined : activationHotkeySchema.safeParse(shortcut);
+    if (parsed && !parsed.success) throw new InvalidArgumentError(hotkeyHelp);
+    const config = await readConfig();
+    if (!parsed) { console.log(`Activation shortcut: ${config?.activationHotkey ?? defaultActivationHotkey}`); return; }
+    if (!config) throw new Error('Run opensaysme setup before saving a shortcut.');
+    await writeConfig({ ...config, activationHotkey: parsed.data }, configPath(), true);
+    console.log(`Saved activation shortcut: ${parsed.data}. Restart voice mode to apply it. Escape and Ctrl+C are unchanged.`);
+  });
 program.command('tools').description('List available agent tools and their schemas without reading the desktop')
   .action(async () => {
     const host = createDesktopTools(await desktopAdapter());
@@ -89,6 +101,7 @@ program.command('doctor')
     try {
       const config = await readConfig();
       configuration = { path: configPath(), configured: config !== null,
+        activationHotkey: config?.activationHotkey ?? defaultActivationHotkey,
         providers: config ? providerStatus(config) : null,
         note: 'Key presence only; no authentication or model request is performed.' };
     } catch (error) {
@@ -102,6 +115,7 @@ program.command('doctor')
       if (!configuration.configured) console.log('  Not configured or invalid. Run opensaysme setup or inspect the configuration.');
       if (configuration.error) console.log(`  ${safeText(String(configuration.error))}`);
       if (configuration.providers) json(configuration.providers);
+      if (configuration.activationHotkey) console.log(`  Activation shortcut: ${configuration.activationHotkey}`);
       console.log('  Provider credentials have not been authenticated.');
     }
   });
@@ -122,22 +136,6 @@ desktop.command('focus <target-id>')
     await (await desktopAdapter()).focus(id);
     console.log('Target focused.');
   });
-for (const kind of ['hotkey', 'microphone'] as const) {
-  desktop.command(`test-${kind}`)
-    .description(kind === 'hotkey' ? 'Explicitly test global Ctrl+Shift+Space' : 'Explicitly capture and discard microphone audio; output only metrics')
-    .option('--seconds <seconds>', 'Bounded test duration (1–30)', seconds, kind === 'hotkey' ? 10 : 3)
-    .action(async (options: { seconds: number }) => {
-      process.stderr.write(kind === 'hotkey'
-        ? `Press Ctrl+Shift+Space within ${options.seconds} seconds.\n`
-        : `Testing microphone for ${options.seconds} seconds; audio is discarded locally.\n`);
-      const adapter = await desktopAdapter();
-      const result = await (kind === 'hotkey' ? adapter.testHotkey(options.seconds) : adapter.testMicrophone(options.seconds));
-      if (stop.signal.aborted) { process.exitCode = 130; return; }
-      json(result);
-      if (result.status !== 'passed') process.exitCode = result.status === 'unavailable' ? 2 : 1;
-    });
-}
-
 async function delay(duration: number): Promise<void> {
   await new Promise<void>((resolve) => {
     const timer = setTimeout(done, duration * 1000);
