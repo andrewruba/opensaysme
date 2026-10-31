@@ -1,4 +1,4 @@
-# OpenSaysMe 🧙 — Less friction with your AI agents
+# OpenSaysMe 🧙 — A richer interface to your AI agents
 
 [![CI](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml/badge.svg?branch=main&event=push)](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml)
 [![Version 0.3.0](https://img.shields.io/badge/version-0.3.0-blue?style=flat-square)](package.json)
@@ -6,9 +6,12 @@
 [![macOS 14 or newer](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square)](#run-it)
 [![MIT license](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
-OpenSaysMe is a command-line tool for interacting with AI agents through voice
-and desktop context. Speak while showing the relevant work; it gathers
-context, finds the right window, and carries out your request.
+OpenSaysMe is a command-line tool that lets you work with AI agents
+through voice and desktop context. It aims to widen the input/output bandwidth
+between users and agents, with an orchestration layer that connects intent,
+context and actions. The longer-term direction is fluid, continuous interaction
+as models become able to work natively with streams of audio, live video and
+system metrics.
 
 ## What works today
 
