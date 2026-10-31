@@ -11,6 +11,7 @@ import { DesktopError, desktopCommandError, desktopIssue, desktopMessages, deskt
 import { desktopInputSchema, inputEvidenceSchema, inputResultSchema, inputTargetSchema, type DesktopInputAdapter } from '../input-types.js';
 import { desktopContextSchema, type DesktopContext, type VoiceHelperSpec } from '../voice-types.js';
 import { screenFrameCaptureSchema, type ScreenFrameCapture } from '../visual-types.js';
+import { textCaptureSchema, type TextCapture } from '../text-types.js';
 import {
   desktopReportSchema,
   desktopSnapshotSchema,
@@ -149,10 +150,14 @@ async function inputCommand(mode: 'inspect' | 'execute', target: unknown, action
   fingerprint: string | null, signal: AbortSignal): Promise<string> {
   const parsed = inputTargetSchema.parse(target);
   if (!targetIdSchema.safeParse(parsed.windowId).success) throw new Error('Invalid macOS input target.');
-  const input = JSON.stringify({ target: parsed, action: desktopInputSchema.parse(action), fingerprint });
+  const parsedAction = desktopInputSchema.parse(action);
+  const input = JSON.stringify({ target: parsed, action: parsedAction, fingerprint });
+  const timeoutMs = mode === 'execute' && parsedAction.kind === 'type_text' && parsedAction.text.length > 4096 ? 8_000 : 3_000;
   signal.throwIfAborted(); await requireHelper(); signal.throwIfAborted();
   // Text and captured context never appear in process arguments or a temporary file.
-  try { return await runCommand(helperPath, [`--${mode}-input`], { input, timeoutMs: 3_000, signal }); }
+  try { return await runCommand(helperPath, [`--${mode}-input`], {
+    input, maxInputBytes: 1024 * 1024, timeoutMs, signal,
+  }); }
   catch (error) { signal.throwIfAborted(); throw desktopCommandError(error); }
 }
 
@@ -163,6 +168,10 @@ export const macOSInput: DesktopInputAdapter = {
     return decode(inputResultSchema, await inputCommand('execute', target, action, fingerprint, signal));
   },
 };
+
+export async function readMacOSText(signal?: AbortSignal): Promise<TextCapture> {
+  return decode(textCaptureSchema, await invoke(['--read-focused-text'], 4_000, signal));
+}
 
 export const macOSKeyboard: KeyboardAdapter = {
   inspect: async (signal) => decode(keyboardEvidenceSchema, await invoke(['--inspect-keyboard'], 3_000, signal)),

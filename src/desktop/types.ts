@@ -4,6 +4,7 @@ import { frameBoundsSchema, frameImageSchema, type ScreenFrameCapture } from './
 import type { DesktopInputAdapter } from './input-types.js';
 import type { HotkeyCaptureResult } from './hotkey-process.js';
 import type { KeyboardAdapter } from './keyboard-types.js';
+import type { TextCapture } from './text-types.js';
 
 export const capabilityNames = [
   'activeWindow', 'focusWindow', 'selectedText', 'globalHotkey', 'microphone', 'screenCapture',
@@ -47,6 +48,9 @@ export const windowInventorySchema = z.object({
     title: z.string().max(16_384).optional(),
   }).strict()).max(128),
   warnings: z.array(z.string().max(1024)).max(16),
+  applicationsWithoutWindows: z.array(z.string().min(1).max(256)
+    .refine((name) => name.length <= 256, 'Application name exceeds 256 UTF-16 code units.')).min(1).max(128)
+    .refine((names) => new Set(names).size === names.length, 'Application names must be unique').optional(),
 }).strict().refine((inventory) => new Set(inventory.windows.map(({ id }) => id)).size === inventory.windows.length,
   'Window IDs must be unique');
 export type WindowInventory = z.infer<typeof windowInventorySchema>;
@@ -91,6 +95,7 @@ export interface DesktopAdapter {
   // Omitted when the platform has no implementation; do not advertise a phantom tool.
   inspectWindow?(targetId: string, signal?: AbortSignal): Promise<WindowInspection>;
   captureWindow?(targetId: string, signal?: AbortSignal): Promise<WindowFrameCapture>;
+  readText?(signal?: AbortSignal): Promise<TextCapture>;
   inspect(includeSelection: boolean, signal?: AbortSignal): Promise<DesktopSnapshot>;
   focus(targetId: string, signal?: AbortSignal): Promise<void>;
   voiceHelper(activationHotkey?: string): Promise<VoiceHelperSpec>;

@@ -239,6 +239,24 @@ describe('desktop tool primitives', () => {
     expect(adapter.focus).not.toHaveBeenCalled();
   });
 
+  it('reports running apps with empty inventories without inventing window handles', async () => {
+    const { host, adapter } = desktopFixture();
+    adapter.listWindows.mockResolvedValueOnce({ windows: [], warnings: [], applicationsWithoutWindows: ['Chat App'] });
+    expect(value(await host.call('list_windows', {}, signal()))).toEqual({
+      windows: [], warnings: [], applicationsWithoutWindows: ['Chat App'],
+    });
+    expect(value(await host.call('focus_window', { windowId: 'window-1' }, signal())).code).toBe('unknown-window');
+    expect(adapter.focus).not.toHaveBeenCalled();
+    expect(host.conversationEvidence!()).toEqual({ windows: [], actions: [] });
+
+    const window = { id: 'native-chat-43', application: 'Chat App', title: 'Project conversation' };
+    adapter.listWindows.mockResolvedValueOnce({ windows: [window], warnings: [] });
+    expect(value(await host.call('list_windows', {}, signal()))).toEqual({
+      windows: [{ windowId: 'window-1', application: 'Chat App', title: window.title }], warnings: [],
+    });
+    expect(adapter.focus).not.toHaveBeenCalled();
+  });
+
   it('rejects raw, undiscovered, and removed discovery handles before focusing', async () => {
     const { host, adapter, state } = desktopFixture();
     expect((await host.call('focus_window', { windowId: editor.id }, signal())).isError).toBe(true);

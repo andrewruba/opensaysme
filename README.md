@@ -83,6 +83,10 @@ that outcome in your request. Escape, Ctrl+C and your activation shortcut stay
 reserved for you. Keyboard typing inserts single-line text; multiline preparation
 uses direct text replacement in supported inputs.
 
+For longer context, it can read accessible text such as Terminal scrollback and
+transfer the requested section directly into an agent's input, preserving line
+breaks. Each capture retains up to 65,536 UTF-16 units; sending remains separate.
+
 ```sh
 osm hotkey                   # press a key combination at the capture prompt
 osm hotkey --show            # show the saved shortcut

@@ -524,7 +524,7 @@ describe('desktop tool reasoning loop', () => {
       expect(request.previous_response_id).toBeUndefined();
       expect(request).toMatchObject({ model: 'gpt-6.1-terra', reasoning: { effort: 'low' }, max_output_tokens: 4096 });
     }
-    expect(wire[0].instructions).toContain('never require the user to register names');
+    expect(wire[0].instructions).toContain('Never require the user to register window names');
     expect(wire[0].instructions).toContain('before asking the user');
     expect(JSON.stringify(requests)).not.toContain('fixture-secret-value');
   });

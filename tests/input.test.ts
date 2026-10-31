@@ -282,7 +282,7 @@ describe('request-scoped desktop input', () => {
     for (const extra of [{ effect: 'edit' }, { approved: true }, { request: 'Submit this' }, { authorization: 'allow' }]) {
       expect(value(await f.call('click', extra)).code).toBe('invalid-arguments');
     }
-    for (const text of ['\u0000', '\u000b', '\u000c', '\u001b', '\u001f', '\u007f', 'x'.repeat(4097), '👋'.repeat(2049)]) {
+    for (const text of ['\u0000', '\u000b', '\u000c', '\u001b', '\u001f', '\u007f', '\ud800', '\udc00', 'x'.repeat(4097), '👋'.repeat(2049)]) {
       expect(value(await f.call('type_text', { text })).code).toBe('invalid-arguments');
     }
     expect(f.authorize).not.toHaveBeenCalled(); expect(f.adapter.execute).not.toHaveBeenCalled();

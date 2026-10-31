@@ -35,7 +35,8 @@ enum InputFailureReason: String, Encodable, CaseIterable, Error {
     case staleObservation = "stale-observation", focusChanged = "focus-changed"
     case userIntervention = "user-intervention", unsupportedTextTarget = "unsupported-text-target"
     case eventCreationFailed = "event-creation-failed", cancelled
-    case textWriteUnverified = "text-write-unverified", pointerUnverified = "pointer-unverified"
+    case textWriteFailed = "text-write-failed", textReadUnavailable = "text-read-unavailable"
+    case textValueMismatch = "text-value-mismatch", pointerUnverified = "pointer-unverified"
 }
 struct InputResult: Encodable {
     let status: String
@@ -80,7 +81,7 @@ func inputFingerprint(_ state: InputFingerprintState) throws -> String {
 }
 
 func validInputText(_ text: String) -> Bool {
-    text.utf16.count <= 4096 && text.unicodeScalars.allSatisfy {
+    text.utf16.count <= 65536 && text.unicodeScalars.allSatisfy {
         [9, 10, 13].contains($0.value) || ($0.value >= 32 && $0.value != 127)
     }
 }
@@ -97,18 +98,67 @@ func supportsInputText(_ text: String, role: String, editable: Bool) -> Bool {
 // The only write path is literal value replacement. There is deliberately no
 // key or clipboard fallback, including when a control rejects or normalizes text.
 func replaceInputText(_ text: String, role: String, editable: Bool,
+                      cancelled: () -> Bool = { false },
+                      now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+                      wait: () -> Void = { Thread.sleep(forTimeInterval: 0.025) },
                       write: (String) -> Bool, read: () -> String?) -> InputResult {
     guard supportsInputText(text, role: role, editable: editable) else {
         return InputResult(status: "not-issued", reason: .unsupportedTextTarget)
     }
-    guard write(text), let actual = read(), actual.utf16.elementsEqual(text.utf16) else {
-        return InputResult(status: "uncertain", reason: .textWriteUnverified)
+    guard !cancelled() else { return InputResult(status: "not-issued", reason: .cancelled) }
+    guard write(text) else { return InputResult(status: "uncertain", reason: .textWriteFailed) }
+    // Web-backed controls can expose the new value asynchronously. Read only:
+    // never repeat a write or normalize a control's changed text into success.
+    let longReplacement = text.utf16.count > 4096
+    let deadline = now() + (longReplacement ? 5 : 0.3)
+    let maximumReads = longReplacement ? 201 : 13
+    var reason = InputFailureReason.textReadUnavailable
+    for attempt in 0..<maximumReads {
+        guard !cancelled() else { return InputResult(status: "uncertain", reason: .cancelled) }
+        guard attempt == 0 || now() < deadline else { break }
+        let actual = read()
+        guard !cancelled() else { return InputResult(status: "uncertain", reason: .cancelled) }
+        if let actual {
+            if actual.utf16.elementsEqual(text.utf16) { return InputResult(status: "verified") }
+            reason = .textValueMismatch
+        } else { reason = .textReadUnavailable }
+        guard attempt + 1 < maximumReads, now() < deadline else { break }
+        wait()
     }
-    return InputResult(status: "verified")
+    return InputResult(status: "uncertain", reason: reason)
+}
+
+// Read only ancestry metadata, before exposing a value. Deep web composers can
+// have more than 32 wrappers; retain bounds and reject incomplete or cyclic paths.
+func validateInputAncestry<Node>(_ element: Node, deadline: TimeInterval,
+                                now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+                                same: (Node, Node) -> Bool,
+                                describe: (Node) throws -> (role: String, subrole: String),
+                                parent: (Node) throws -> Node) throws {
+    var current = element, visited: [Node] = []
+    for _ in 0..<64 {
+        guard now() < deadline, !visited.contains(where: { same($0, current) }) else { throw InputError.unavailable }
+        visited.append(current)
+        let metadata = try describe(current)
+        guard now() < deadline, !metadata.role.isEmpty else { throw InputError.unavailable }
+        guard metadata.subrole != "AXSecureTextField" else { throw InputFailureReason.secureField }
+        if metadata.role == "AXApplication" { return }
+        current = try parent(current)
+    }
+    throw InputError.unavailable
+}
+
+struct FocusedTextTail { let text: String; let start: Int; let totalLength: Int }
+
+func focusedTextTail(_ value: String) -> FocusedTextTail {
+    let total = value.utf16.count
+    var units = Array(value.utf16.suffix(65536))
+    if let first = units.first, (0xDC00...0xDFFF).contains(first) { units.removeFirst() }
+    return FocusedTextTail(text: String(decoding: units, as: UTF16.self), start: total - units.count, totalLength: total)
 }
 
 func parseInputCommand(_ data: Data, execute: Bool) throws -> InputCommand {
-    guard data.count <= 65536,
+    guard data.count <= 1_048_576,
           let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
           Set(object.keys) == ["target", "action", "fingerprint"],
           let target = object["target"] as? [String: Any], Set(target.keys) == ["windowId", "bounds", "point"],

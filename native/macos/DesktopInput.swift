@@ -85,19 +85,10 @@ private func resolveInput(_ command: InputCommand) throws -> ResolvedInput {
     guard !role.isEmpty else { throw InputError.unavailable }
     let hitWindow = role == kAXWindowRole ? element : try elementAttribute(element, kAXWindowAttribute)
     guard CFEqual(hitWindow, window), (try? attribute(element, kAXEnabledAttribute) as? Bool) != false else { throw InputError.unavailable }
-    // Do not expose protected values or descendants of protected controls.
-    var ancestor = element; var reachedWindow = false
-    for _ in 0..<32 {
-        guard ProcessInfo.processInfo.systemUptime < deadline,
-              try inputString(ancestor, kAXSubroleAttribute, limit: 128) != kAXSecureTextFieldSubrole else { throw InputError.unavailable }
-        if CFEqual(ancestor, window) { reachedWindow = true; break }
-        ancestor = try elementAttribute(ancestor, kAXParentAttribute)
-        AXUIElementSetMessagingTimeout(ancestor, 0.05)
-    }
-    guard reachedWindow else { throw InputError.unavailable }
+    try assertInputUnprotected(element, deadline: deadline)
     let title = try inputString(element, kAXTitleAttribute, limit: 1024)
     let description = try inputString(element, kAXDescriptionAttribute, limit: 1024)
-    let value = try inputString(element, kAXValueAttribute, limit: 4096)
+    let value = try inputString(element, kAXValueAttribute, limit: 65536)
     let elementBounds = try inputBounds(element)
     guard elementBounds.cg.contains(command.target.point.cg) else { throw InputError.unavailable }
     var settable: DarwinBoolean = false
@@ -150,10 +141,6 @@ func drainInputEvents() {
 }
 
 private func dispatchPointerEvents(_ events: [CGEvent], source: CGEventSource, target: ResolvedInput) -> InputResult {
-    pointerCancelled = 0
-    let term = signal(SIGTERM) { _ in pointerCancelled = 1 }
-    let interrupt = signal(SIGINT) { _ in pointerCancelled = 1 }
-    defer { signal(SIGTERM, term); signal(SIGINT, interrupt) }
     return withExtendedLifetime((source, events)) {
         dispatchInputBatches(count: 1, cancelled: { pointerCancelled != 0 }, validate: {
             do { try assertInputFocus(target.application, target.window); return nil }
@@ -163,6 +150,10 @@ private func dispatchPointerEvents(_ events: [CGEvent], source: CGEventSource, t
 }
 
 private func executeInput(_ command: InputCommand) -> InputResult {
+    pointerCancelled = 0
+    let term = signal(SIGTERM) { _ in pointerCancelled = 1 }
+    let interrupt = signal(SIGINT) { _ in pointerCancelled = 1 }
+    defer { signal(SIGTERM, term); signal(SIGINT, interrupt) }
     let resolved: ResolvedInput
     do { resolved = try resolveInput(command) }
     catch { return rejectedInput(error) }
@@ -176,6 +167,7 @@ private func executeInput(_ command: InputCommand) -> InputResult {
     case "move_pointer":
         do { try assertInputFocus(resolved.application, resolved.window) }
         catch { return rejectedInput(error) }
+        guard pointerCancelled == 0 else { return InputResult(status: "not-issued", reason: .cancelled) }
         guard CGWarpMouseCursorPosition(point) == .success else { return InputResult(status: "uncertain", reason: .pointerUnverified) }
         let current = CGEvent(source: nil)?.location
         return current == point ? InputResult(status: "verified") : InputResult(status: "uncertain", reason: .pointerUnverified)
@@ -203,9 +195,10 @@ private func executeInput(_ command: InputCommand) -> InputResult {
             guard CFEqual(focused, resolved.element) else { return InputResult(status: "not-issued", reason: .focusChanged) }
         } catch { return rejectedInput(error) }
         return replaceInputText(action.text!, role: resolved.evidence.role, editable: resolved.evidence.editable,
+            cancelled: { pointerCancelled != 0 },
             write: { AXUIElementSetAttributeValue(resolved.element, kAXValueAttribute as CFString, $0 as CFString) == .success },
             read: {
-                guard let actual = stringAttribute(resolved.element, kAXValueAttribute), actual.utf16.count <= 4096 else { return nil }
+                guard let actual = stringAttribute(resolved.element, kAXValueAttribute), actual.utf16.count <= 65536 else { return nil }
                 return actual
             })
     default: return InputResult(status: "not-issued", reason: .invalidInput)
@@ -214,8 +207,8 @@ private func executeInput(_ command: InputCommand) -> InputResult {
 
 func desktopInput(execute: Bool) throws {
     var data = Data()
-    while data.count <= 65536 {
-        let next = FileHandle.standardInput.readData(ofLength: 65537 - data.count)
+    while data.count <= 1_048_576 {
+        let next = FileHandle.standardInput.readData(ofLength: 1_048_577 - data.count)
         if next.isEmpty { break }; data.append(next)
     }
     let command = try parseInputCommand(data, execute: execute)

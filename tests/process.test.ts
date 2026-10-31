@@ -14,6 +14,17 @@ describe('native command lifecycle', () => {
     expect(output).toBe(value);
   });
 
+  it('opts into bounded larger stdin for literal text without changing the default cap', async () => {
+    const input = JSON.stringify({ text: '日本語\n'.repeat(16_384) });
+    expect(Buffer.byteLength(input)).toBeGreaterThan(65_536);
+    expect(await runCommand(process.execPath, ['-e', 'process.stdin.pipe(process.stdout)'], { input, maxInputBytes: 1024 * 1024 })).toBe(input);
+    for (const maxInputBytes of [0, -1, 1.5, Number.NaN, 1024 * 1024 + 1]) {
+      await expect(runCommand('must-not-spawn', [], { input: '', maxInputBytes })).rejects.toMatchObject({ reason: 'input-limit' });
+    }
+    await expect(runCommand('must-not-spawn', [], { input: 'x'.repeat(1024 * 1024 + 1), maxInputBytes: 1024 * 1024 }))
+      .rejects.toMatchObject({ reason: 'input-limit' });
+  });
+
   it('does not leak stdout or stderr on nonzero exit', async () => {
     const command = runCommand(process.execPath, ['-e', 'process.stdout.write("private-selection");process.stderr.write("private-key");process.exitCode=7']);
     await expect(command).rejects.toThrow('failed (7)');

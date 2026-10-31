@@ -9,6 +9,7 @@ const localFailureCodes = [
   'unknown-window', 'stale-window', 'content-unavailable', 'outside-image',
   'input-target-unavailable', 'input-not-focused', 'unsupported-text-target', 'accessibility-permission-required',
   'ambiguous-target', 'inaccessible', 'capture-failed',
+  'stale-text-source', 'invalid-text-range',
 ] as const;
 type ToolFailureCode = typeof localFailureCodes[number] | DesktopIssue | InputFailureReason;
 

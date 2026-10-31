@@ -1,9 +1,11 @@
 import { z } from 'zod';
 import { frameBoundsSchema } from './visual-types.js';
+import { maxTextLength, isWellFormedText } from './text-types.js';
 
 const point = z.object({ x: z.number().finite(), y: z.number().finite() }).strict();
 // JSON Schema maxLength counts code points; the native protocol bounds UTF-16.
-const inputText = z.string().max(4096).refine((text) => text.length <= 4096, 'Text exceeds 4096 UTF-16 code units.');
+const inputText = z.string().max(maxTextLength)
+  .refine((text) => text.length <= maxTextLength && isWellFormedText(text), 'Invalid or oversized UTF-16 text.');
 // Pointer-targeted input and literal AX replacement; keyboard input has its own focused-target protocol.
 export const desktopInputSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('move_pointer') }).strict(),
@@ -31,7 +33,7 @@ export const inputFailureReasonSchema = z.enum([
   'input-unavailable', 'invalid-input', 'permission-required', 'secure-field',
   'stale-or-ambiguous-target', 'invalid-target', 'accessibility-unavailable',
   'stale-observation', 'focus-changed', 'user-intervention', 'unsupported-text-target',
-  'event-creation-failed', 'cancelled', 'text-write-unverified', 'pointer-unverified',
+  'event-creation-failed', 'cancelled', 'text-write-failed', 'text-read-unavailable', 'text-value-mismatch', 'pointer-unverified',
 ]);
 export type InputFailureReason = z.infer<typeof inputFailureReasonSchema>;
 export const inputResultSchema = z.object({

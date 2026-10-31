@@ -38,17 +38,17 @@ private func keyboardIdle() -> Bool {
         && !(0..<128).contains { CGEventSource.keyState(.hidSystemState, key: CGKeyCode($0)) }
 }
 
-private func assertKeyboardUnprotected(_ element: AXUIElement) throws {
-    var ancestor = element
-    for _ in 0..<32 {
-        AXUIElementSetMessagingTimeout(ancestor, 0.1)
-        guard try keyboardString(ancestor, kAXSubroleAttribute, limit: 128) != kAXSecureTextFieldSubrole else {
-            throw DesktopError("Keyboard input is unavailable in secure text fields.", code: "secure-field")
-        }
-        if try keyboardString(ancestor, kAXRoleAttribute, limit: 128) == kAXApplicationRole { return }
-        ancestor = try elementAttribute(ancestor, kAXParentAttribute)
+func assertInputUnprotected(_ element: AXUIElement, deadline: TimeInterval? = nil) throws {
+    do {
+        try validateInputAncestry(element, deadline: deadline ?? ProcessInfo.processInfo.systemUptime + 1,
+            same: { CFEqual($0, $1) }, describe: { ancestor in
+                AXUIElementSetMessagingTimeout(ancestor, 0.05)
+                return (try keyboardString(ancestor, kAXRoleAttribute, limit: 128),
+                        try keyboardString(ancestor, kAXSubroleAttribute, limit: 128))
+            }, parent: { try elementAttribute($0, kAXParentAttribute) })
+    } catch InputFailureReason.secureField {
+        throw DesktopError("Input is unavailable in secure text fields.", code: "secure-field")
     }
-    throw InputError.unavailable
 }
 
 private func keyboardGeometry(_ element: AXUIElement) -> [Double] {
@@ -106,7 +106,7 @@ private func resolveKeyboard() throws -> KeyboardTarget {
     guard AXUIElementGetPid(element, &pid) == .success,
           !isDesktopHelperProcess(pid), let application = NSRunningApplication(processIdentifier: pid),
           !application.isTerminated else { throw InputError.unavailable }
-    try assertKeyboardUnprotected(element) // Never read the value before checking protection.
+    try assertInputUnprotected(element) // Never read the value before checking protection.
     let role = try keyboardString(element, kAXRoleAttribute, limit: 128)
     guard !role.isEmpty else { throw InputError.unavailable }
     let title = try keyboardString(element, kAXTitleAttribute, limit: 1024)
@@ -141,6 +141,42 @@ private func resolveKeyboard() throws -> KeyboardTarget {
 func inspectKeyboard() throws -> KeyboardEvidence {
     do { return try resolveKeyboard().evidence }
     catch is InputFailureReason { throw InputError.unavailable }
+}
+
+struct FocusedTextCapture: Encodable {
+    let capturedAt: String
+    let application: String; let role: String; let title: String; let description: String; let windowTitle: String
+    let text: String; let start: Int; let totalLength: Int
+}
+
+func readFocusedText() throws -> FocusedTextCapture {
+    try requireAccessibility()
+    let deadline = ProcessInfo.processInfo.systemUptime + 3
+    let element = try keyboardFocus()
+    var pid: pid_t = 0
+    guard AXUIElementGetPid(element, &pid) == .success, !isDesktopHelperProcess(pid),
+          let application = NSRunningApplication(processIdentifier: pid), !application.isTerminated else { throw InputError.unavailable }
+    try assertInputUnprotected(element, deadline: deadline)
+    let role = try keyboardString(element, kAXRoleAttribute, limit: 128)
+    let title = try keyboardString(element, kAXTitleAttribute, limit: 1024)
+    let description = try keyboardString(element, kAXDescriptionAttribute, limit: 1024)
+    let window = try? elementAttribute(element, kAXWindowAttribute)
+    let windowTitle = try window.map { try keyboardString($0, kAXTitleAttribute, limit: 1024) } ?? ""
+    let name = application.localizedName ?? "Application"
+    guard !role.isEmpty, !name.isEmpty, name.utf16.count <= 256 else { throw InputError.unavailable }
+    // A readable string AXValue is the source. No clipboard, selection change,
+    // keyboard event, or truncation of the immutable source before slicing.
+    var raw: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &raw) == .success,
+          let full = raw as? String else { throw InputError.unavailable }
+    let tail = focusedTextTail(full)
+    guard ProcessInfo.processInfo.systemUptime < deadline, !application.isTerminated,
+          CFEqual(try keyboardFocus(), element) else { throw InputError.unavailable }
+    try assertInputUnprotected(element, deadline: deadline)
+    guard CFEqual(try keyboardFocus(), element), ProcessInfo.processInfo.systemUptime < deadline else { throw InputError.unavailable }
+    return FocusedTextCapture(capturedAt: captureTimestamp(), application: name, role: role,
+        title: title, description: description, windowTitle: windowTitle,
+        text: tail.text, start: tail.start, totalLength: tail.totalLength)
 }
 
 func executeKeyboard() throws -> InputResult {
@@ -198,7 +234,7 @@ func executeKeyboard() throws -> InputResult {
             do {
                 let current = try keyboardFocus()
                 guard CFEqual(current, target.element) else { return .focusChanged }
-                try assertKeyboardUnprotected(current)
+                try assertInputUnprotected(current)
             } catch { return inputFailureReason(error) }
             return nil
         }, batch: { index in postInputEvents(batches[index], cancelled: { keyboardCancelled != 0 }) }, drain: drainInputEvents)

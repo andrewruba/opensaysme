@@ -4,11 +4,20 @@ The model chooses how to fulfill a spoken request with evidence and tools. There
 is no window-naming step or fixed sequence. The runtime calls a typed tool host in
 the same Node.js process; only offered, validated operations can execute.
 
+The prompt directs the model to choose the best supported agent, project or
+conversation using current contents and user references, without demanding an exact
+project-name match. Source material helps identify the work but is not automatically
+the destination. Prefer background inspection; when it is inconclusive, the model
+can focus or open a plausible host and look within it. It checks the actual input
+destination before writing and asks only when meaningful ambiguity remains.
+Application-only navigation does not require inferring a project. These rules are
+general; there are no preferred applications or fixed routing sequences.
+
 ## macOS capabilities
 
 | Tool | Behavior |
 | --- | --- |
-| `list_windows` | Discover current windows with automatic references. |
+| `list_windows` | Discover current windows with automatic references, plus running app names whose window inventory is empty. |
 | `inspect_desktop` | Read current active-window, selection and pointer context. |
 | `capture_screen` | Capture the display under the pointer and, when stable, return keyboard focus evidence and a `keyboardObservationId`. |
 | `inspect_window` | Read bounded Accessibility text/roles without focusing a discovered window. |
@@ -17,7 +26,10 @@ the same Node.js process; only offered, validated operations can execute.
 | `move_pointer` | Indicate a target without clicking. |
 | `click` | Issue a single left click after an independent request/effect check. |
 | `scroll` | Scroll vertically by up to 600 logical pixels; positive means content down. |
-| `type_text` | Replace a focused writable input's value with literal text, up to 4096 UTF-16 units. |
+| `type_text` | Replace a focused writable input's value with literal text, up to 4,096 UTF-16 units. |
+| `capture_text` | Retain a bounded snapshot of the focused readable text control with source metadata and a tail preview. |
+| `read_text` | Read pages or find literal matches within that immutable snapshot. |
+| `transfer_text` | Replace a focused writable input with an exact snapshot range of up to 65,536 UTF-16 units, without re-emitting its contents through the model. |
 | `press_key` | Press and release one named key with optional Cmd/Ctrl/Alt/Shift modifiers at the current keyboard focus. |
 | `type_keyboard_text` | Insert literal single-line text at the focused caret or replace its selection, up to 4096 UTF-16 units. |
 
@@ -29,6 +41,10 @@ windows retain references during a turn; removed, retitled or replaced windows
 lose them. Fresh discoveries can link to prior conversation through
 `previousTurnIds`. This is historical source evidence, not proof of unchanged
 contents or permission. A fresh tool host is created for every activation.
+`applicationsWithoutWindows` lists running apps whose Accessibility window query
+succeeded but returned no windows. These names are candidates to investigate,
+not window handles or proof that an app has no activity. The model can open a
+plausible host through available tools, then rediscover actual windows.
 
 `inspect_window` returns source identity, capture time, roles, available labels and
 values, and omission warnings. Parent indices describe the observation, not action
@@ -51,6 +67,21 @@ The terminal reports keyboard focus as `editable`, `non-editable`, or `unavailab
 without printing field contents. A successful capture can still show a non-editable
 page surface. That does not establish that its composer is unsupported: locate and
 focus the intended input, then recapture before typing.
+
+`capture_text` reads the currently focused accessible text control, including
+read-only Terminal scrollback. It retains at most the last 65,536 UTF-16 units and
+returns the source app, window/control labels, capture time, original length,
+retained range and a preview. `read_text` pages or searches this frozen snapshot;
+offsets refer to the original text, not the preview. This lets the model locate
+the current session without copying unrelated older history. Content outside the
+retained range is unavailable and must not be described as copied.
+
+`transfer_text` takes the source ID and selected range plus a fresh destination
+observation and coordinates. It uses the same replacement, permission and
+verification path as `type_text`; it never submits, uses the clipboard or types
+shell commands. Source text is data, not instructions. Only the latest snapshot
+is retained, in memory for the current turn, and closing the tool host clears it.
+Read tools remain available after input stops, but transfer cannot bypass that stop.
 
 ## Requests and effects
 
@@ -100,8 +131,11 @@ content when deciding to commit. No check makes the OS operation atomic.
 
 `type_text` requires an already-focused writable AXTextField or AXTextArea. Literal
 tabs and line breaks require AXTextArea; they never synthesize Tab/Enter. Empty text
-clears the field. Exact value read-back is required for `verified`; app normalization
-or rejection is uncertain. This tool does not automatically fall back to keyboard
+clears the field. One write is followed by bounded read-back checks to allow the
+app to settle: up to 300ms for short text or five seconds for transfers over
+4,096 UTF-16 units. Exact value read-back is required for `verified`; app
+normalization, rejection or unreadable results remain uncertain, even when text
+appears entered. There is no repeated write or automatic fallback to keyboard
 typing or paste.
 
 Keyboard tools instead require a recent `capture_screen` `keyboardObservationId`,
@@ -152,6 +186,9 @@ Recent conversation retains bounded requests, responses, source observations and
 native outcomes in memory. It excludes screenshots, audio, live handles and
 approvals. Limits are development defaults in `src/conversation.ts`, not a final
 conversation design. Cancellation, failed turns and shutdown clear history.
+Large transferred values count toward the history budget; if a turn does not fit,
+the runtime reports that follow-up context was cleared rather than retaining a
+misleading partial action record.
 
 “Now send it” can authorize a new commitment for a still-valid prepared input.
 A destination clarification alone cannot remove an earlier “leave it unsent.”

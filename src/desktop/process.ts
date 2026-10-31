@@ -37,6 +37,7 @@ export interface CommandOptions {
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   input?: string;
+  maxInputBytes?: number;
 }
 
 const shutdown = new AbortController();
@@ -50,7 +51,9 @@ export function runCommand(
   return new Promise((resolve, reject) => {
     const signal = options.signal ? AbortSignal.any([options.signal, shutdown.signal]) : shutdown.signal;
     if (signal.aborted) return reject(new CommandError('cancelled'));
-    if (options.input !== undefined && Buffer.byteLength(options.input) > 65_536) return reject(new CommandError('input-limit'));
+    const maxInputBytes = options.maxInputBytes ?? 65_536;
+    if (!Number.isInteger(maxInputBytes) || maxInputBytes < 1 || maxInputBytes > 1024 * 1024
+      || (options.input !== undefined && Buffer.byteLength(options.input) > maxInputBytes)) return reject(new CommandError('input-limit'));
     let child;
     try {
       child = spawn(file, args, {

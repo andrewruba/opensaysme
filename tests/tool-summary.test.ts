@@ -85,9 +85,9 @@ it.each(inputFailureReasonSchema.options)('preserves the finite native rejection
 });
 
 it('accepts native verification failure codes only on failed input outcomes', () => {
-  const content = [{ type: 'text' as const, text: '{"status":"uncertain","code":"text-write-unverified"}' }];
+  const content = [{ type: 'text' as const, text: '{"status":"uncertain","code":"text-value-mismatch"}' }];
   expect(summarizeTool({ ...event, name: 'press_key', effect: 'input', result: { isError: true, content } }, catalog))
-    .toEqual({ name: 'press_key', effect: 'input', outcome: 'uncertain', code: 'text-write-unverified' });
+    .toEqual({ name: 'press_key', effect: 'input', outcome: 'uncertain', code: 'text-value-mismatch' });
   expect(summarizeTool({ ...event, result: { isError: true, content } }, catalog))
     .toEqual({ name: 'capture_screen', effect: 'read', outcome: 'failed' });
   expect(summarizeTool({ ...event, name: 'press_key', effect: 'input', result: { content } }, catalog))

@@ -22,6 +22,7 @@ import {
   listMacOSWindows,
   inspectMacOSWindow,
   probeMacOS,
+  readMacOSText,
 } from '../src/desktop/platforms/macos.js';
 
 vi.mock('node:fs/promises', () => ({ access: vi.fn().mockResolvedValue(undefined) }));
@@ -229,6 +230,24 @@ test('macOS inventory rejects duplicate, excessive, or invalid native targets', 
   await assert.rejects(listMacOSWindows(), /Enable Accessibility/);
 });
 
+test('macOS inventory preserves bounded app names separately from window targets', async () => {
+  const applicationsWithoutWindows = ['Chat App', '🧙'.repeat(128),
+    ...Array.from({ length: 126 }, (_, index) => `Application ${index}`)];
+  const inventory = { windows: [], warnings: [], applicationsWithoutWindows };
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(inventory));
+  assert.deepEqual(await listMacOSWindows(), inventory);
+  assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.[1], ['--list-windows']);
+});
+
+test('macOS inventory rejects malformed or excessive running application evidence', async () => {
+  for (const applicationsWithoutWindows of [[], [''], ['a'.repeat(257)], ['🧙'.repeat(129)],
+    Array.from({ length: 129 }, (_, index) => `Application ${index}`), ['Chat App', 'Chat App'],
+    [{ application: 'Chat App', windowId: 'fake-window' }], 'Chat App']) {
+    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify({ windows: [], warnings: [], applicationsWithoutWindows }));
+    await assert.rejects(listMacOSWindows(), /invalid/);
+  }
+});
+
 test('macOS inspection and focus pass cancellation and never launch after abort', async () => {
   const id = `mac:123:1700000000000:${'a'.repeat(64)}`;
   const signal = new AbortController().signal;
@@ -274,7 +293,7 @@ test('input adapters preserve finite failure reasons and reject private or contr
     }
     for (const result of [
       { status: 'not-issued', reason: 'private window title' },
-      { status: 'uncertain', reason: 'text-write-unverified', message: 'private typed text' },
+      { status: 'uncertain', reason: 'text-value-mismatch', message: 'private typed text' },
       { status: 'issued', reason: 'focus-changed' },
       { status: 'verified', reason: 'pointer-unverified' },
     ]) {
@@ -293,11 +312,12 @@ test('mouse/keyboard adapters send typed payloads over stdin and validate native
   vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(evidence));
   assert.deepEqual(await macOSInput.inspect(target, action, signal), evidence);
   assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.slice(1), [['--inspect-input'], {
-    input: JSON.stringify({ target, action, fingerprint: null }), timeoutMs: 3000, signal,
+    input: JSON.stringify({ target, action, fingerprint: null }), maxInputBytes: 1024 * 1024, timeoutMs: 3000, signal,
   }]);
   vi.mocked(runCommand).mockResolvedValueOnce('{"status":"not-issued"}');
   assert.deepEqual(await macOSInput.execute(target, action, evidence.fingerprint, signal), { status: 'not-issued' });
   assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.[1], ['--execute-input']);
+  assert.equal(vi.mocked(runCommand).mock.lastCall?.[2]?.timeoutMs, 3000);
   assert.equal(JSON.parse(vi.mocked(runCommand).mock.lastCall![2]!.input!).action.text, action.text);
   assert.equal(vi.mocked(runCommand).mock.lastCall![1].some((argument) => argument.includes('private input')), false);
   const calls = vi.mocked(runCommand).mock.calls.length;
@@ -307,6 +327,42 @@ test('mouse/keyboard adapters send typed payloads over stdin and validate native
   assert.equal(vi.mocked(runCommand).mock.calls.length, calls);
   vi.mocked(runCommand).mockResolvedValueOnce('{"status":"success","private":"data"}');
   await assert.rejects(macOSInput.execute(target, action, evidence.fingerprint, signal), /invalid response/);
+});
+
+test('focused text reads validate immutable UTF-16 suffixes without changing focus or exposing failures', async () => {
+  const signal = new AbortController().signal;
+  const text = '日本語 👋\n'.repeat(6000);
+  const captured = { capturedAt: '2026-10-31T16:00:00Z', application: 'Terminal', windowTitle: 'project — shell',
+    role: 'AXTextArea', title: '', description: 'shell', text, start: 1000, totalLength: 1000 + text.length };
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(captured));
+  assert.deepEqual(await readMacOSText(signal), captured);
+  assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.slice(1), [['--read-focused-text'], { timeoutMs: 4000, signal }]);
+  const adapter = await desktopAdapter('darwin');
+  assert.equal(adapter.readText, readMacOSText);
+  for (const invalid of [{ ...captured, totalLength: 1 }, { ...captured, text: 'x'.repeat(65_537), totalLength: 66_537 },
+    { ...captured, text: '\ud800', totalLength: 1001 }, { ...captured, extra: 'private captured details' }]) {
+    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(invalid));
+    await assert.rejects(readMacOSText(signal), { message: 'The macOS desktop helper returned an invalid response.' });
+  }
+  vi.mocked(runCommand).mockResolvedValueOnce('{"error":"secure-field"}');
+  await assert.rejects(readMacOSText(signal), { code: 'secure-field' });
+  const calls = vi.mocked(runCommand).mock.calls.length;
+  await assert.rejects(readMacOSText(AbortSignal.abort()));
+  assert.equal(vi.mocked(runCommand).mock.calls.length, calls);
+});
+
+test('native literal input accepts 65536 UTF-16 units over the larger private stdin transport', async () => {
+  const target = { windowId: inspectionId, bounds: windowFrame.bounds, point: { x: -1100, y: 0 } };
+  const action = { kind: 'type_text' as const, text: '日'.repeat(65_536) };
+  const signal = new AbortController().signal;
+  vi.mocked(runCommand).mockResolvedValueOnce('{"status":"verified"}');
+  assert.deepEqual(await macOSInput.execute(target, action, 'a'.repeat(64), signal), { status: 'verified' });
+  assert.equal(vi.mocked(runCommand).mock.lastCall?.[2]?.maxInputBytes, 1024 * 1024);
+  assert.equal(vi.mocked(runCommand).mock.lastCall?.[2]?.timeoutMs, 8000);
+  assert.equal(JSON.parse(vi.mocked(runCommand).mock.lastCall![2]!.input!).action.text, action.text);
+  const calls = vi.mocked(runCommand).mock.calls.length;
+  await assert.rejects(macOSInput.execute(target, { ...action, text: action.text + 'x' }, 'a'.repeat(64), signal));
+  assert.equal(vi.mocked(runCommand).mock.calls.length, calls);
 });
 
 test('window capture keeps its source and coordinate metadata and propagates cancellation', async () => {

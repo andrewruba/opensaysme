@@ -19,7 +19,7 @@ const descriptions = {
   move_pointer: 'Move the pointer to indicate a target without clicking.',
   click: 'Issue one left click on a visible, accessible target. A click may edit or submit.',
   scroll: 'Scroll vertically at the target; positive deltaY scrolls content down, negative up, in logical pixels (at most 600).',
-  type_text: 'Replace the entire value of the focused writable Accessibility input with literal text (at most 4096 UTF-16 code units). Tabs and line breaks require AXTextArea; ordinary single-line text also supports AXTextField. Preserves exact text, including indentation and line endings, without keyboard events or clipboard use. This is not append. Empty text clears the field. Some applications autosave; entering text does not authorize sending. Unsupported targets fail without a typing or paste fallback.',
+  type_text: 'Replace the entire value of the focused writable Accessibility input with model-provided literal text (at most 4096 UTF-16 code units). When transfer_text is offered, use it for larger captured source text to preserve it exactly without rewriting it. Tabs and line breaks require AXTextArea; ordinary single-line text also supports AXTextField. Preserves exact text, including indentation and line endings, without keyboard events or clipboard use. This is not append. Empty text clears the field. Some applications autosave; entering text does not authorize sending. Unsupported targets fail without a typing or paste fallback.',
 };
 
 export interface InputSession { stopped: boolean; revision: number }
@@ -40,6 +40,10 @@ export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestSc
   const definitions: ToolDefinition[] = desktopInputSchema.options.map((schema) => {
     const kind = schema.shape.kind.value;
     const parameters = Object.fromEntries(Object.entries(schema.shape).filter(([name]) => name !== 'kind'));
+    // Model-authored text stays small; transfer_text invokes this same checked
+    // runner with a larger host-retained literal, never model-rewritten content.
+    if ('text' in schema.shape) parameters.text = schema.shape.text.max(4096)
+      .refine((text) => text.length <= 4096, 'Text exceeds 4096 UTF-16 code units.');
     return { name: kind, effect: 'input', timeoutMs: 20_000, input: z.object({ ...position, ...parameters }).strict(),
       description: `${descriptions[kind]} Requires a recent capture_window observationId and x/y in that image's pixels, not screen coordinates. Target window must already be focused and unobscured. You must stay within the original request; clicks receive a separate permission check. Other input uses your request interpretation with native target checks. Tools cannot grant permission. Every issued action invalidates observations; capture again to inspect the outcome. Stop after a submission or uncertain outcome. macOS only.`,
       run: async (args, signal): Promise<ToolResult> => {

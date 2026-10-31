@@ -25,7 +25,10 @@ hotkey/microphone test and credential-storage commands have been removed.
 - `--list-windows` discovers accessible windows without raising them. Results are
   bounded and include warnings about inaccessible or ambiguous sources.
   Apps can return an empty window list even while running; unenumerated windows
-  cannot currently be targeted safely with these window IDs.
+  cannot currently be targeted safely with these window IDs. A successful empty
+  query adds the app name to `applicationsWithoutWindows` (up to 128 unique names
+  of 256 UTF-16 units). These are discovery clues, never synthetic window handles;
+  failed queries do not establish an empty inventory.
 - `--focus <id>` raises a matched window and verifies focus.
 - `--context` reads current window, selection and pointer context without changing
   focus or using the clipboard.
@@ -68,11 +71,13 @@ returns a distinct failure rather than substitute pixels.
 
 ## Input
 
-`--inspect-input` and `--execute-input` accept strict bounded JSON over stdin.
+`--inspect-input` and `--execute-input` accept strict JSON up to 1 MiB over stdin.
 Text and target evidence do not appear in arguments or temporary files. Inspection
 requires a focused, visible window, matching screenshot geometry and a native hit
-on the intended AX control. Target ancestry is checked for protected fields;
-unreadable protection evidence rejects the action.
+on the intended AX control. Before reading values, pointer and keyboard input
+check up to 64 ancestors through AXApplication for protected fields. The walk
+has a deadline and rejects cycles, incomplete ancestry and unreadable protection
+evidence. This accommodates deep web composers without traversing sibling values.
 
 A fingerprint covers the actual control's role, labels, value, identifier, bounds,
 focus/editability, window identity/geometry, pointer and HID counters. Execute
@@ -83,9 +88,16 @@ This narrower check does not freeze other submission fields during a model call.
 
 Literal text entry requires the intended control already focused and its AX value
 settable. AXTextField supports single-line text; AXTextArea also supports literal
-tab/LF/CR, with at most 4,096 UTF-16 units. It replaces the whole value, generates
-no key events and uses no clipboard. Exact read-back reports `verified`; a changed,
-normalized or unreadable result is `uncertain`. There is no fallback typing/paste.
+tab/LF/CR, with at most 65,536 UTF-16 units for captured-text transfers. The model's
+literal `type_text` tool remains limited to 4,096 units. Native target evidence
+retains the full value through the same 65,536-unit limit. Replacement writes
+once, generates no key events and uses no clipboard. Readback may settle for up
+to 300ms, or five seconds for text over 4,096 units, with cancellation checked
+between reads. Only exact UTF-16 equality
+reports `verified`; changed, normalized or unreadable results remain `uncertain`.
+The finite reasons `text-write-failed`, `text-read-unavailable` and
+`text-value-mismatch` distinguish setter failure from failed verification.
+There is no retry write or fallback typing/paste.
 Other control characters and DEL are rejected.
 
 Pointer movement uses `CGWarpMouseCursorPosition`. Click and scroll use
@@ -119,7 +131,8 @@ this path reads at most 16 parents and 512 direct siblings per parent, without
 reading sibling values or traversing descendants. If the path or window bounds
 are unavailable, the control's own bounds remain required. Other controls retain
 their own bounds.
-Returned values are bounded and marked when truncated.
+Keyboard typing and returned value previews remain limited to 4,096 UTF-16 units;
+previews are marked when truncated.
 Held keys/buttons, changed focus and protected fields reject dispatch. Typing needs
 a text field or combo box even without a writable AX value; text areas must expose
 a writable AX value or selected-text attribute, excluding terminal output.
@@ -132,6 +145,18 @@ Longer typing checks cancellation and focus between chunks. After posting any
 events, the helper keeps the event source and events alive for one 100ms drain
 before exiting, with cancellation unblocked. Partial typing is `uncertain`, never
 retried automatically.
+
+`--read-focused-text` captures a readable string AXValue from the current system
+focus, including noneditable Terminal output. It returns `capturedAt`,
+`application`, `role`, `title`, `description`, `windowTitle`, `text`, `start` and
+`totalLength`. Labels are bounded to 256 units for application, 128 for role and
+1,024 for the three titles/descriptions. After checking protected ancestry, it
+reads one immutable value and retains its last 65,536 UTF-16 units, moving the
+start past a split surrogate pair. Offsets refer to that snapshot:
+`start + text.length == totalLength`. Focus identity and protection are rechecked
+before returning. Unknown/protected ancestry, absent/nonstring values, changed
+focus or the three-second deadline reject the read. The operation does not type,
+change selection, read the clipboard or move focus.
 
 The helper verifies mechanics and target evidence. Request interpretation belongs
 to the acting model; the TypeScript host checks consequential keys/shortcuts and

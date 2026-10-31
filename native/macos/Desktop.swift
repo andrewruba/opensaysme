@@ -25,6 +25,7 @@ struct Window: Encodable {
 struct WindowInventory: Encodable {
     let windows: [Window]
     let warnings: [String]
+    let applicationsWithoutWindows: [String]?
 }
 
 struct Snapshot: Encodable {
@@ -103,6 +104,8 @@ func targetID(_ application: NSRunningApplication, _ window: AXUIElement) throws
 func listWindows() throws -> WindowInventory {
     try requireAccessibility()
     var found: [Window] = []
+    var applicationsWithoutWindows: [String] = []
+    var applicationNamesOmitted = false
     var omitted = false
     var limited = false
     let deadline = Date().addingTimeInterval(3)
@@ -113,6 +116,17 @@ func listWindows() throws -> WindowInventory {
         AXUIElementSetMessagingTimeout(app, 0.15)
         guard let windows = try? attribute(app, kAXWindowsAttribute) as? [AXUIElement] else {
             omitted = true
+            continue
+        }
+        if windows.isEmpty {
+            // An empty AX list does not establish that the app has no activity.
+            // Names are discovery evidence only; never synthesize window targets.
+            if let name = application.localizedName, !name.isEmpty, name.utf16.count <= 256 {
+                if !applicationsWithoutWindows.contains(name) {
+                    if applicationsWithoutWindows.count < 128 { applicationsWithoutWindows.append(name) }
+                    else { applicationNamesOmitted = true }
+                }
+            } else { applicationNamesOmitted = true }
             continue
         }
         var candidates: [Window] = []
@@ -133,7 +147,9 @@ func listWindows() throws -> WindowInventory {
     var warnings: [String] = []
     if omitted { warnings.append("Some inaccessible or ambiguous windows were omitted.") }
     if limited { warnings.append("Window discovery reached its time or 128-window limit; some windows may be missing.") }
-    return WindowInventory(windows: found, warnings: warnings)
+    if applicationNamesOmitted { warnings.append("Some running application names were unavailable or exceeded discovery limits.") }
+    return WindowInventory(windows: found, warnings: warnings,
+        applicationsWithoutWindows: applicationsWithoutWindows.isEmpty ? nil : applicationsWithoutWindows)
 }
 
 func focusedElement(_ app: AXUIElement) throws -> AXUIElement {
@@ -540,6 +556,7 @@ struct DesktopMain {
             case ["--inspect-input"]: try desktopInput(execute: false)
             case ["--execute-input"]: try desktopInput(execute: true)
             case ["--inspect-keyboard"]: try output(inspectKeyboard())
+            case ["--read-focused-text"]: try output(readFocusedText())
             case ["--execute-keyboard"]: try output(executeKeyboard())
             case let args where args.count == 2 && args[0] == "--inspect-window":
                 try output(inspectWindow(args[1]))
