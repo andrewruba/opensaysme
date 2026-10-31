@@ -30,8 +30,6 @@ jobs:
           - runner: macos-15-intel
             arch: x64
             node: '26'
-    env:
-      OPENSAYSME_CONFIG_DIR: ${{ runner.temp }}/opensaysme-ci-config
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,6 +50,8 @@ jobs:
           test "$(node bin/opensaysme.mjs --version)" = "$(node -p 'require("./package.json").version')"
           node bin/opensaysme.mjs --help
       - name: Read-only doctor smoke test
+        env:
+          OPENSAYSME_CONFIG_DIR: ${{ runner.temp }}/opensaysme-ci-config
         run: node bin/opensaysme.mjs doctor --json
 
   # Require this stable check in branch protection, independent of matrix labels.
