@@ -22,7 +22,7 @@ process.once('SIGTERM', stopAll);
 
 const json = (value: unknown) => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 const safeText = (value: string) => JSON.stringify(value).slice(1, -1);
-const quickStart = `Quick start from the repository (macOS 14+, Node.js 22.20+, Xcode Command Line Tools):
+const quickStart = `Quick start from the repository (macOS 14+, Node.js 26.13+, Xcode Command Line Tools):
   npm ci
   npm run install:cli
   osm setup
