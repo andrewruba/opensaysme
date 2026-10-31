@@ -24,6 +24,8 @@ hotkey/microphone test and credential-storage commands have been removed.
   text and rejects secure fields.
 - `--list-windows` discovers accessible windows without raising them. Results are
   bounded and include warnings about inaccessible or ambiguous sources.
+  Apps can return an empty window list even while running; unenumerated windows
+  cannot currently be targeted safely with these window IDs.
 - `--focus <id>` raises a matched window and verifies focus.
 - `--context` reads current window, selection and pointer context without changing
   focus or using the clipboard.
@@ -34,9 +36,10 @@ date and rejects PID reuse. IDs are temporary: title changes and app restarts
 invalidate them; identical candidates remain ambiguous.
 
 `--inspect-window <id>` reads a bounded AX tree without focusing the window. It
-rechecks source identity before and after. Limits are 128 elements, eight child
-levels, 16,384 UTF-16 text units overall and 2,048 per attribute, with short message
-timeouts. Secure subtrees and failed protection checks are omitted before reading
+rechecks source identity before and after. Limits are 128 elements, 16,384 UTF-16
+text units overall and 2,048 per attribute, with short message timeouts. Nested
+native containers do not impose a separate depth cutoff before web content.
+Secure subtrees and failed protection checks are omitted before reading
 values. Truncated or unavailable content yields warnings. Node indices describe
 that observation; they are not reusable action handles. Calling the helper directly
 prints the observed content, which can be private.
@@ -86,10 +89,17 @@ normalized or unreadable result is `uncertain`. There is no fallback typing/past
 Other control characters and DEL are rejected.
 
 Pointer movement uses `CGWarpMouseCursorPosition`. Click and scroll use
-`CGEvent.postToPid` with the validated target application.
-Down/up pairs briefly defer SIGTERM while queuing release; the parent has a bounded
-SIGKILL fallback. Pointer position or text can be locally verified, while other
+the HID event stream after rechecking the validated application's foreground
+window, so WindowServer routes the event to the control. Direct process posting
+can produce AppKit mouse events with no target window. Complete click pairs defer
+SIGTERM/SIGINT until release, then retain their event source and events through one
+100ms delivery drain with cancellation unblocked; scrolling uses the same lifecycle.
+The parent has a bounded SIGKILL fallback. Pointer position or text can be locally verified, while other
 input reports only `issued`. Failures after possible dispatch are uncertain.
+Rejected or uncertain input includes a finite `reason` when known, distinguishing
+stale evidence, changed focus, held user input, unsupported targets, event creation
+failures and unverified writes. Diagnostics never include captured values or raw
+exception messages. A reason does not change whether an action may have occurred.
 
 `--inspect-keyboard` reads the system's focused AX element, including accessory
 interfaces such as Spotlight. The CLI initializes AppKit on its physical main

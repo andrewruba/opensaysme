@@ -49,7 +49,19 @@ struct WindowContentTests {
         let deep = collectWindowContent(root: 0, deadline: 10, now: { 0 }, same: ==,
             read: { _, attribute in attribute == kAXRoleAttribute ? "AXGroup" : nil },
             children: { node, _ in [node + 1] })
-        precondition(deep.nodes.count == 9 && deep.warnings.contains { $0.contains("limited") })
+        precondition(deep.nodes.count == 128 && deep.warnings.contains { $0.contains("limited") })
+        // The captured ChatGPT window had seven wrappers before AXWebArea at
+        // depth eight. Inspect its contents instead of stopping at the page.
+        let embeddedPage = collectWindowContent(root: 0, deadline: 10, now: { 0 }, same: ==,
+            read: { node, attribute in
+                if attribute == kAXRoleAttribute {
+                    return node == 0 ? "AXWindow" : node == 8 ? "AXWebArea" : node == 12 ? "AXTextArea" : "AXGroup"
+                }
+                if node == 12 && attribute == kAXDescriptionAttribute { return "Message" }
+                return nil
+            }, children: { node, _ in node < 12 ? [node + 1] : [] })
+        precondition(embeddedPage.nodes.last?.role == "AXTextArea" && embeddedPage.nodes.last?.description == "Message")
+        precondition(embeddedPage.nodes.last?.parent == 11 && !embeddedPage.warnings.contains { $0.contains("limited") })
         let cycle = collectWindowContent(root: 0, deadline: 10, now: { 0 }, same: ==,
             read: { _, attribute in attribute == kAXRoleAttribute ? "AXGroup" : nil }, children: { _, _ in [0] })
         precondition(cycle.nodes.count == 1 && cycle.warnings.contains { $0.contains("repeated") })

@@ -150,16 +150,3 @@ func keyboardFingerprint(_ target: KeyboardFingerprintState) throws -> String {
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
     return SHA256.hash(data: try encoder.encode(state)).map { String(format: "%02x", $0) }.joined()
 }
-
-// Each batch must release every key before returning, even if cancelled during
-// a down event. Drain once after posting, including a partially completed action.
-func dispatchKeyboardBatches(count: Int, ready: () -> Bool, batch: (Int) -> Void,
-                             drain: () -> Void) -> InputResult {
-    var issued = 0
-    defer { if issued > 0 { drain() } }
-    for index in 0..<count {
-        guard ready() else { return InputResult(status: issued == 0 ? "not-issued" : "uncertain") }
-        batch(index); issued += 1
-    }
-    return InputResult(status: issued == 0 ? "not-issued" : "issued")
-}

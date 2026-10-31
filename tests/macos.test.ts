@@ -5,6 +5,7 @@ import { CommandError, runCommand } from '../src/desktop/process.js';
 import { DesktopError } from '../src/desktop/errors.js';
 import { desktopAdapter } from '../src/desktop/index.js';
 import { recordHotkey } from '../src/desktop/hotkey-process.js';
+import { inputFailureReasonSchema } from '../src/desktop/input-types.js';
 
 import {
   focusMacOS,
@@ -256,6 +257,32 @@ const windowFrame = {
   bounds: { x: -1200, y: -100, width: 800, height: 600 },
   image: { mimeType: 'image/jpeg', width: 1600, height: 1200, data: '/9j/AA==' }, warnings: [],
 };
+
+test('input adapters preserve finite failure reasons and reject private or contradictory diagnostics', async () => {
+  const signal = new AbortController().signal;
+  const target = { windowId: inspectionId, bounds: windowFrame.bounds, point: { x: -1100, y: 0 } };
+  const execute = [
+    () => macOSInput.execute(target, { kind: 'click' }, 'a'.repeat(64), signal),
+    () => macOSKeyboard.execute({ kind: 'press_key', key: 'Tab', modifiers: [] }, 'a'.repeat(64), signal),
+  ];
+  for (const call of execute) {
+    for (const status of ['not-issued', 'uncertain']) {
+      for (const reason of inputFailureReasonSchema.options) {
+        vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify({ status, reason }));
+        assert.deepEqual(await call(), { status, reason });
+      }
+    }
+    for (const result of [
+      { status: 'not-issued', reason: 'private window title' },
+      { status: 'uncertain', reason: 'text-write-unverified', message: 'private typed text' },
+      { status: 'issued', reason: 'focus-changed' },
+      { status: 'verified', reason: 'pointer-unverified' },
+    ]) {
+      vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(result));
+      await assert.rejects(call(), { message: 'The macOS desktop helper returned an invalid response.' });
+    }
+  }
+});
 
 test('mouse/keyboard adapters send typed payloads over stdin and validate native evidence and outcomes', async () => {
   const target = { windowId: inspectionId, bounds: windowFrame.bounds, point: { x: -1100, y: 0 } };

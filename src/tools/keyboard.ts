@@ -10,6 +10,8 @@ import type { InputSession, RequestScope } from './input.js';
 import type { ToolDefinition, ToolResult } from './types.js';
 import { activationHotkeySchema, defaultActivationHotkey } from '../hotkey.js';
 
+const noneditableFocusGuidance = 'The current focus does not support text entry; this does not establish that the requested input is unavailable. Locate the intended input in fresh window evidence, then focus it with a supported click or keyboard navigation and capture_screen again. Do not type into this surface or guess a target.';
+
 export function createKeyboardTools(adapter: KeyboardAdapter, captureFrame: (signal: AbortSignal) => Promise<ScreenFrameCapture>,
   scope: RequestScope | undefined, session: InputSession) {
   const request = scope?.request ?? '';
@@ -53,7 +55,7 @@ export function createKeyboardTools(adapter: KeyboardAdapter, captureFrame: (sig
         ...(focus ? { keyboardObservationId: observation!.id, keyboardFocus: {
           application: focus.application, role: focus.role, title: focus.title, description: focus.description, value: focus.value,
           valueTruncated: focus.valueTruncated, editable: focus.editable,
-        } } : { keyboardUnavailable, keyboardIssue }) }) },
+        }, ...(!focus.editable && !session.stopped ? { keyboardGuidance: noneditableFocusGuidance } : {}) } : { keyboardUnavailable, keyboardIssue }) }) },
       { type: 'image', mimeType: image.mimeType, data: image.data },
     ] };
   };
@@ -91,7 +93,7 @@ export function createKeyboardTools(adapter: KeyboardAdapter, captureFrame: (sig
         if (target.fingerprint !== seen!.target.fingerprint) {
           invalidate(); return toolError('stale-observation', 'Keyboard focus or user input changed. Capture again before acting.');
         }
-        if (proposed.kind === 'type_keyboard_text' && !target.editable) return toolError('unsupported-text-target', 'Keyboard text requires a focused editable control.');
+        if (proposed.kind === 'type_keyboard_text' && !target.editable) return toolError('unsupported-text-target', noneditableFocusGuidance);
         let effect: 'navigate' | 'edit' | 'submit' | undefined = proposed.kind === 'type_keyboard_text' ? 'edit'
           : proposed.modifiers.length === 0 && ['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(proposed.key) ? 'navigate' : undefined;
         let permission: { mode: string; requestQuote?: string } = { mode: 'actor-request' };
@@ -127,8 +129,11 @@ export function createKeyboardTools(adapter: KeyboardAdapter, captureFrame: (sig
         signal.throwIfAborted(); recorded.status = result.status;
         session.stopped = result.status !== 'not-issued' && (result.status === 'uncertain' || effect === 'submit');
         return { isError: ['uncertain', 'not-issued'].includes(result.status), content: [{ type: 'text', text: JSON.stringify({
-          action: proposed.kind, effect, status: result.status, permission, inputStopped: session.stopped,
-          message: 'Capture fresh screen evidence to verify the outcome. Issued keys do not prove completion.',
+          action: proposed.kind, effect, status: result.status, ...(result.reason ? { code: result.reason } : {}),
+          permission, inputStopped: session.stopped,
+          message: result.status === 'not-issued' ? 'Native checks rejected input before execution. Use the failure code and fresh screen/focus evidence to resolve the target before retrying.'
+            : result.status === 'uncertain' ? 'Input may have taken effect. Input stopped; inspect without retrying.'
+            : 'Capture fresh screen evidence to verify the outcome. Issued keys do not prove completion.',
         }) }] };
       },
     };

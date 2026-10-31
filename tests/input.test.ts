@@ -36,6 +36,18 @@ function fixture(request = 'Fill this form', decision: Partial<PermissionDecisio
 afterEach(() => vi.useRealTimers());
 
 describe('request-scoped desktop input', () => {
+  it.each(['not-issued', 'uncertain'] as const)('returns the native reason for a %s click without changing retry boundaries', async (status) => {
+    const f = fixture();
+    f.adapter.execute.mockResolvedValue({ status, reason: 'focus-changed' });
+    expect(value(await f.call('click', {}))).toMatchObject({ status, code: 'focus-changed', inputStopped: status === 'uncertain' });
+    if (status === 'uncertain') {
+      f.args.observationId = f.inputs.observe(frame);
+      expect(value(await f.call('click', {})).code).toBe('input-stopped');
+      expect(f.adapter.execute).toHaveBeenCalledOnce();
+    }
+    f.inputs.close(); f.host.close();
+  });
+
   it.each([
     ['move_pointer', {}, 'point'], ['scroll', { deltaY: 100 }, 'navigate'],
     ['type_text', { text: 'Requested draft' }, 'edit'],

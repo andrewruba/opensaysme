@@ -27,9 +27,18 @@ export const inputEvidenceSchema = z.object({
   bounds: frameBoundsSchema, focused: z.boolean(), editable: z.boolean(),
 }).strict();
 export type InputEvidence = z.infer<typeof inputEvidenceSchema>;
+export const inputFailureReasonSchema = z.enum([
+  'input-unavailable', 'invalid-input', 'permission-required', 'secure-field',
+  'stale-or-ambiguous-target', 'invalid-target', 'accessibility-unavailable',
+  'stale-observation', 'focus-changed', 'user-intervention', 'unsupported-text-target',
+  'event-creation-failed', 'cancelled', 'text-write-unverified', 'pointer-unverified',
+]);
+export type InputFailureReason = z.infer<typeof inputFailureReasonSchema>;
 export const inputResultSchema = z.object({
   status: z.enum(['issued', 'verified', 'not-issued', 'uncertain']),
-}).strict();
+  reason: inputFailureReasonSchema.optional(),
+}).strict().refine(({ status, reason }) => reason === undefined || ['not-issued', 'uncertain'].includes(status),
+  'Successful input cannot carry a failure reason.');
 export type InputResult = z.infer<typeof inputResultSchema>;
 export interface DesktopInputAdapter {
   inspect(target: InputTarget, action: DesktopInput, signal: AbortSignal): Promise<InputEvidence>;

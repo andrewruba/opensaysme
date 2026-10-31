@@ -47,6 +47,10 @@ under the pointer may differ from the display containing keyboard focus; inspect
 both the image and focus evidence before acting.
 Keyboard inspection failures include a recovery code and appear as desktop
 warnings even when the screenshot succeeds.
+The terminal reports keyboard focus as `editable`, `non-editable`, or `unavailable`
+without printing field contents. A successful capture can still show a non-editable
+page surface. That does not establish that its composer is unsupported: locate and
+focus the intended input, then recapture before typing.
 
 ## Requests and effects
 
@@ -131,6 +135,9 @@ report `issued`, which does not prove application success. A denied or
 clarify-required action, uncertain outcome, or issued submission stops both input
 paths and window focusing for the turn; read tools remain available. Recapturing
 does not resume stopped input. `not-issued` permits a fresh observation and retry.
+Rejected native actions include a finite failure code when known, such as
+`focus-changed`, `user-intervention`, or `stale-observation`; the same code reaches
+the model and terminal. An `uncertain` result still stops input regardless of its code.
 Escape/cancellation stops pending work and releases keys, shortcut modifiers and buttons,
 but cannot undo effects already issued. Keyboard typing checks cancellation and
 focus between event pairs; partial typing is uncertain and is not retried automatically.

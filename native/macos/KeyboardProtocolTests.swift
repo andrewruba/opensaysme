@@ -155,25 +155,34 @@ struct KeyboardProtocolTests {
         let plain = keyboardShortcutStrokes(key: 36, modifiers: [])
         precondition(plain == [KeyboardStroke(key: 36, down: true, flags: []), KeyboardStroke(key: 36, down: false, flags: [])])
         var cancelled = false, edges: [String] = [], drains = 0
-        let partial = dispatchKeyboardBatches(count: 3, ready: { !cancelled }, batch: { _ in
+        let partial = dispatchInputBatches(count: 3, cancelled: { cancelled }, validate: { nil }, batch: { _ in
             edges.append("down"); cancelled = true; edges.append("up")
+            return true
         }, drain: { drains += 1; precondition(edges.last == "up") })
-        precondition(edges == ["down", "up"] && partial.status == "uncertain" && drains == 1, "Cancellation must release and drain the current text batch, then stop")
+        precondition(edges == ["down", "up"] && partial.status == "uncertain" && partial.reason == .cancelled && drains == 1, "Cancellation must release and drain the current text batch, then report uncertain cancellation")
         cancelled = false; drains = 0
         var posted: [KeyboardStroke] = []
-        let cancelledShortcut = dispatchKeyboardBatches(count: 2, ready: { !cancelled }, batch: { _ in
+        let cancelledShortcut = dispatchInputBatches(count: 2, cancelled: { cancelled }, validate: { nil }, batch: { _ in
             for stroke in shortcut { posted.append(stroke); cancelled = true }
+            return true
         }, drain: { drains += 1; precondition(posted.last?.flags == []) })
         precondition(posted == shortcut && drains == 1 && cancelledShortcut.status == "uncertain", "Cancellation must release all shortcut modifiers before draining and stopping")
-        let none = dispatchKeyboardBatches(count: 3, ready: { false }, batch: { _ in preconditionFailure("Cancelled dispatch") },
-            drain: { preconditionFailure("No events to drain") })
-        precondition(none.status == "not-issued")
+        for reason in [InputFailureReason.cancelled, .focusChanged, .userIntervention, .secureField] {
+            let none = dispatchInputBatches(count: 3, cancelled: { false }, validate: { reason }, batch: { _ in preconditionFailure("Rejected dispatch") },
+                drain: { preconditionFailure("No events to drain") })
+            precondition(none.status == "not-issued" && none.reason == reason, "Pre-dispatch failures must retain their cause without issuing input")
+            var posted = 0
+            let interrupted = dispatchInputBatches(count: 3, cancelled: { false }, validate: { posted == 0 ? nil : reason },
+                batch: { _ in posted += 1; return true }, drain: {})
+            precondition(interrupted.status == "uncertain" && interrupted.reason == reason && posted == 1,
+                "The same failure after a posted batch is uncertain and must not retry")
+        }
         var completed = 0
         drains = 0
-        let complete = dispatchKeyboardBatches(count: 205, ready: { true }, batch: { _ in completed += 1 },
+        let complete = dispatchInputBatches(count: 205, cancelled: { false }, validate: { nil }, batch: { _ in completed += 1; return true },
             drain: { drains += 1; precondition(completed == 205) })
-        precondition(complete.status == "issued" && completed == 205 && drains == 1, "Long text must drain once after all chunks, not once per chunk")
-        precondition(dispatchKeyboardBatches(count: 0, ready: { true }, batch: { _ in preconditionFailure("Empty dispatch") },
+        precondition(complete.status == "issued" && complete.reason == nil && completed == 205 && drains == 1, "Long text must drain once after all chunks, not once per chunk")
+        precondition(dispatchInputBatches(count: 0, cancelled: { false }, validate: { nil }, batch: { _ in preconditionFailure("Empty dispatch") },
             drain: { preconditionFailure("Empty dispatch drain") }).status == "not-issued")
         print("Keyboard checks passed (shortcuts, literal text, focus evidence and cancellation boundaries). No desktop input issued.")
     }

@@ -548,16 +548,20 @@ describe('desktop tool reasoning loop', () => {
     expect(host.call).toHaveBeenCalledTimes(2);
   });
 
-  it('sends actual screenshot tool results as image input associated with the call', async () => {
+  it.each([true, false])('sends screenshot tool results and editable:%s focus evidence together to the model', async (editable) => {
     const f = fixture(vi.fn<typeof fetch>().mockResolvedValueOnce(callResponse(callItem('capture_screen'))).mockResolvedValueOnce(response('I can see the editor.')));
     const host = toolHost(); f.input.tools = host;
-    host.call.mockResolvedValueOnce({ content: [{ type: 'text', text: 'Current display, captured after the request.' },
+    const focus = JSON.stringify({ keyboardObservationId: 'keyboard-1', keyboardFocus: {
+      application: 'Agent', role: editable ? 'AXTextArea' : 'AXWebArea', title: 'Conversation',
+      description: '', value: '', valueTruncated: false, editable,
+    } });
+    host.call.mockResolvedValueOnce({ content: [{ type: 'text', text: focus },
       { type: 'image', mimeType: 'image/jpeg', data: '/9j/2Q==' }] });
     const requests: PreparedReasoningRequest[] = []; f.input.onRequest = (request) => requests.push(request);
     await f.reason(f.input);
     const wire = JSON.parse(String(f.fetcher.mock.calls[1]![1]!.body));
     expect(wire.input.at(-1)).toMatchObject({ type: 'function_call_output', call_id: 'call-1', output: [
-      { type: 'input_text' }, { type: 'input_text', text: 'Current display, captured after the request.' },
+      { type: 'input_text' }, { type: 'input_text', text: focus },
       { type: 'input_image', image_url: 'data:image/jpeg;base64,/9j/2Q==', detail: 'high' },
     ] });
     expect(requests[1]!.input.at(-1)).toEqual(wire.input.at(-1));

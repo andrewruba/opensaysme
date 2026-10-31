@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { formatToolSummary, summarizeTool } from '../src/tool-summary.js';
+import { inputFailureReasonSchema } from '../src/desktop/input-types.js';
 import type { ToolDescriptor, ToolEvent } from '../src/tools/types.js';
 
 const catalog: ToolDescriptor[] = [
@@ -8,14 +9,14 @@ const catalog: ToolDescriptor[] = [
 ];
 const event: ToolEvent = { callId: 'private-call-id', name: 'capture_screen', effect: 'read', phase: 'completed',
   arguments: { private: 'private arguments' }, result: { desktopIssue: 'accessibility-unavailable', content: [
-    { type: 'text', text: JSON.stringify({ keyboardUnavailable: 'private diagnostic', value: 'private captured value' }) },
+    { type: 'text', text: JSON.stringify({ keyboardIssue: 'accessibility-unavailable', keyboardUnavailable: 'private diagnostic', value: 'private captured value' }) },
     { type: 'image', mimeType: 'image/jpeg', data: 'private image data' },
   ] } };
 
 it('renders partial read failures as safe finite metadata without copied context or arguments', () => {
   const result = summarizeTool(event, catalog);
-  expect(result).toEqual({ name: 'capture_screen', effect: 'read', outcome: 'partial', desktopIssue: 'accessibility-unavailable' });
-  expect(formatToolSummary(result!)).toBe('Tool: capture_screen — partial (accessibility-unavailable)');
+  expect(result).toEqual({ name: 'capture_screen', effect: 'read', outcome: 'partial', desktopIssue: 'accessibility-unavailable', keyboardFocus: 'unavailable' });
+  expect(formatToolSummary(result!)).toBe('Tool: capture_screen — partial (accessibility-unavailable, keyboard: unavailable)');
   expect(JSON.stringify(result)).not.toContain('private');
 });
 
@@ -26,7 +27,7 @@ it.each(['issued', 'verified', 'not-issued', 'uncertain'] as const)('preserves t
   expect(result).toEqual({ name: 'press_key', effect: 'input', outcome: status });
 });
 
-it.each(['stale-observation', 'invalid-arguments', 'reserved-shortcut', 'permission-unavailable', 'outside-request'])(
+it.each(['stale-observation', 'invalid-arguments', 'reserved-shortcut', 'permission-unavailable', 'outside-request', 'unsupported-text-target'])(
 'identifies a %s failure without copying the action or guard explanation', (code) => {
   const summary = summarizeTool({ ...event, name: 'press_key', effect: 'input', result: {
     isError: true, content: [{ type: 'text', text: JSON.stringify({ code,
@@ -35,6 +36,73 @@ it.each(['stale-observation', 'invalid-arguments', 'reserved-shortcut', 'permiss
   expect(summary).toEqual({ name: 'press_key', effect: 'input', outcome: 'failed', code });
   expect(formatToolSummary(summary!)).toBe(`Tool: press_key — failed (${code})`);
   expect(JSON.stringify(summary)).not.toContain('private');
+});
+
+it.each([[true, 'editable'], [false, 'non-editable']] as const)(
+  'reports editable=%s keyboard readiness without copying focused control details', (editable, readiness) => {
+    const summary = summarizeTool({ ...event, result: { content: [{ type: 'text', text: JSON.stringify({
+      keyboardObservationId: 'private observation', keyboardFocus: {
+        editable, application: 'private application', title: 'private title', description: 'private description', value: 'private text',
+      },
+    }) }] } }, catalog);
+    expect(summary).toEqual({ name: 'capture_screen', effect: 'read', outcome: 'ok', keyboardFocus: readiness });
+    expect(formatToolSummary(summary!)).toBe(`Tool: capture_screen — ok (keyboard: ${readiness})`);
+    expect(JSON.stringify(summary)).not.toContain('private');
+  });
+
+it('does not infer keyboard readiness from malformed, missing, nested or unrelated metadata', () => {
+  for (const metadata of [
+    { keyboardFocus: { editable: 'private text' } }, { keyboardFocus: { editable: 1 } },
+    { keyboardFocus: 'editable' }, { keyboardFocus: [{ editable: true }] }, { editable: true },
+    { value: { keyboardFocus: { editable: true } } }, { keyboardIssue: 'private issue' },
+    { keyboardUnavailable: 'private diagnostic' }, {},
+  ]) {
+    expect(summarizeTool({ ...event, result: { content: [{ type: 'text', text: JSON.stringify(metadata) }] } }, catalog))
+      .toEqual({ name: 'capture_screen', effect: 'read', outcome: 'ok' });
+  }
+  const result = { content: [{ type: 'text' as const, text: '{"keyboardFocus":{"editable":true}}' }] };
+  expect(summarizeTool({ ...event, result: { ...result, isError: true } }, catalog))
+    .toEqual({ name: 'capture_screen', effect: 'read', outcome: 'failed' });
+  expect(summarizeTool({ ...event, name: 'press_key', effect: 'input', result }, catalog))
+    .toEqual({ name: 'press_key', effect: 'input', outcome: 'ok' });
+});
+
+it('does not report editable focus when a known focus issue contradicts it', () => {
+  const summary = summarizeTool({ ...event, result: { desktopIssue: 'focus-changed', content: [{ type: 'text',
+    text: '{"keyboardFocus":{"editable":true},"keyboardIssue":"focus-changed"}',
+  }] } }, catalog);
+  expect(summary).toEqual({ name: 'capture_screen', effect: 'read', outcome: 'partial', desktopIssue: 'focus-changed', keyboardFocus: 'unavailable' });
+});
+
+it.each(inputFailureReasonSchema.options)('preserves the finite native rejection reason %s without captured details', (code) => {
+  const summary = summarizeTool({ ...event, name: 'press_key', effect: 'input', result: {
+    isError: true, content: [{ type: 'text', text: JSON.stringify({ status: 'not-issued', code,
+      message: 'private native details', target: { value: 'private captured value' } }) }],
+  } }, catalog);
+  expect(summary).toEqual({ name: 'press_key', effect: 'input', outcome: 'not-issued', code });
+  expect(formatToolSummary(summary!)).toBe(`Tool: press_key — not-issued (${code})`);
+  expect(JSON.stringify(summary)).not.toContain('private');
+});
+
+it('accepts native verification failure codes only on failed input outcomes', () => {
+  const content = [{ type: 'text' as const, text: '{"status":"uncertain","code":"text-write-unverified"}' }];
+  expect(summarizeTool({ ...event, name: 'press_key', effect: 'input', result: { isError: true, content } }, catalog))
+    .toEqual({ name: 'press_key', effect: 'input', outcome: 'uncertain', code: 'text-write-unverified' });
+  expect(summarizeTool({ ...event, result: { isError: true, content } }, catalog))
+    .toEqual({ name: 'capture_screen', effect: 'read', outcome: 'failed' });
+  expect(summarizeTool({ ...event, name: 'press_key', effect: 'input', result: { content } }, catalog))
+    .toEqual({ name: 'press_key', effect: 'input', outcome: 'uncertain' });
+  for (const metadata of [
+    { status: 'issued', code: 'event-creation-failed' }, { code: 'event-creation-failed' },
+    { status: 'not-issued', code: 'private native reason' }, { status: 'not-issued', code: ['event-creation-failed'] },
+    { status: 'not-issued', reason: 'event-creation-failed' },
+  ]) {
+    const summary = summarizeTool({ ...event, name: 'press_key', effect: 'input', result: {
+      isError: true, content: [{ type: 'text', text: JSON.stringify(metadata) }],
+    } }, catalog);
+    expect(summary?.code).toBeUndefined();
+    expect(JSON.stringify(summary)).not.toContain('private');
+  }
 });
 
 it('prints shared desktop/tool error codes once and retains distinct local failure context', () => {

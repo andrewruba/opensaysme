@@ -46,14 +46,14 @@ struct InputProtocolTests {
                 let result = replaceInputText(text, role: role, editable: editable,
                     write: { _ in preconditionFailure("Unsupported target reached a text write") },
                     read: { preconditionFailure("Unsupported target reached verification") })
-                precondition(result.status == "not-issued")
+                precondition(result.status == "not-issued" && result.reason == .unsupportedTextTarget)
             }
         }
         for text in [multiline, "", "Literal $(text) 🌱"] {
             var writes: [String] = []
             let result = replaceInputText(text, role: "AXTextArea", editable: true,
                 write: { writes.append($0); return true }, read: { writes.last })
-            precondition(result.status == "verified" && writes.count == 1 && writes[0].utf16.elementsEqual(text.utf16))
+            precondition(result.status == "verified" && result.reason == nil && writes.count == 1 && writes[0].utf16.elementsEqual(text.utf16))
         }
         precondition(replaceInputText("single line", role: "AXTextField", editable: true,
             write: { $0 == "single line" }, read: { "single line" }).status == "verified")
@@ -61,7 +61,7 @@ struct InputProtocolTests {
             var writes = 0
             let result = replaceInputText(multiline, role: "AXTextArea", editable: true,
                 write: { _ in writes += 1; return true }, read: { actual })
-            precondition(result.status == "uncertain" && writes == 1, "A mismatched write must not be verified or retried")
+            precondition(result.status == "uncertain" && result.reason == .textWriteUnverified && writes == 1, "A mismatched write must report unverified replacement without retrying")
         }
         precondition(replaceInputText("", role: "AXTextArea", editable: true,
             write: { _ in true }, read: { nil }).status == "uncertain")
@@ -72,6 +72,43 @@ struct InputProtocolTests {
         precondition("e\u{301}" == "é")
         precondition(replaceInputText("e\u{301}", role: "AXTextArea", editable: true,
             write: { _ in true }, read: { "é" }).status == "uncertain")
+        let failedWrite = replaceInputText("private typed value", role: "AXTextArea", editable: true,
+            write: { _ in false }, read: { preconditionFailure("A failed write cannot verify success") })
+        let encodedFailure = try JSONSerialization.jsonObject(with: JSONEncoder().encode(failedWrite)) as! [String: String]
+        precondition(encodedFailure == ["status": "uncertain", "reason": "text-write-unverified"],
+            "Diagnostics must contain only status and a finite reason, never typed or captured text")
+
+        // Pointer actions use one complete batch. Cancellation during a mouse
+        // down must not skip its up event or the final delivery drain.
+        for batch in [["mouse-down", "mouse-up"], ["scroll"]] {
+            var events: [String] = [], cancelled = false
+            let result = dispatchInputBatches(count: 1, cancelled: { cancelled }, validate: { nil }, batch: { _ in
+                for event in batch { events.append(event); cancelled = true }
+                return true
+            }, drain: { precondition(events == batch); events.append("drain") })
+            precondition(result.status == "issued" && events == batch + ["drain"],
+                "A posted pointer batch must complete and drain exactly once before returning")
+        }
+        let rejected = dispatchInputBatches(count: 1, cancelled: { false }, validate: { .focusChanged },
+            batch: { _ in preconditionFailure("Rejected pointer input was posted") },
+            drain: { preconditionFailure("No posted events to drain") })
+        precondition(rejected.status == "not-issued" && rejected.reason == .focusChanged)
+        for failurePoint in ["validation", "protected-posting"] {
+            for alreadyPosted in 0...1 {
+                var cancelled = false, posted = 0, drains = 0
+                let result = dispatchInputBatches(count: 2, cancelled: { cancelled }, validate: {
+                    if failurePoint == "validation" && posted == alreadyPosted { cancelled = true }
+                    return nil
+                }, batch: { _ in
+                    precondition(!cancelled, "Cancellation during validation must stop before the posting boundary")
+                    if failurePoint == "protected-posting" && posted == alreadyPosted { return false }
+                    posted += 1; return true
+                }, drain: { drains += 1 })
+                precondition(posted == alreadyPosted && drains == alreadyPosted && result.reason == .cancelled)
+                precondition(result.status == (alreadyPosted == 0 ? "not-issued" : "uncertain"),
+                    "Cancellation before any event and after a posted batch must retain different outcomes")
+            }
+        }
         var outside = target; outside["point"] = ["x": -400, "y": 0]
         reject(try data(["kind": "click"], targetOverride: outside))
         var invalid = target; invalid["bounds"] = ["x": 0, "y": 0, "width": 0, "height": 10]

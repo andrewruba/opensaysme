@@ -26,7 +26,41 @@ struct InputEvidence: Encodable {
     let role: String; let title: String; let description: String; let value: String
     let bounds: InputBounds; let focused: Bool; let editable: Bool
 }
-struct InputResult: Encodable { let status: String }
+// Finite diagnostics only: never return captured values or exception messages.
+enum InputFailureReason: String, Encodable, CaseIterable, Error {
+    case inputUnavailable = "input-unavailable", invalidInput = "invalid-input"
+    case permissionRequired = "permission-required", secureField = "secure-field"
+    case staleTarget = "stale-or-ambiguous-target", invalidTarget = "invalid-target"
+    case accessibilityUnavailable = "accessibility-unavailable"
+    case staleObservation = "stale-observation", focusChanged = "focus-changed"
+    case userIntervention = "user-intervention", unsupportedTextTarget = "unsupported-text-target"
+    case eventCreationFailed = "event-creation-failed", cancelled
+    case textWriteUnverified = "text-write-unverified", pointerUnverified = "pointer-unverified"
+}
+struct InputResult: Encodable {
+    let status: String
+    let reason: InputFailureReason?
+    init(status: String, reason: InputFailureReason? = nil) {
+        self.status = status; self.reason = reason
+    }
+}
+
+// A batch releases every pressed button/key before returning. Drain exactly once
+// after posting, including when later validation stops a partial keyboard action.
+func dispatchInputBatches(count: Int, cancelled: () -> Bool, validate: () -> InputFailureReason?, batch: (Int) -> Bool,
+                          drain: () -> Void) -> InputResult {
+    var issued = 0
+    defer { if issued > 0 { drain() } }
+    for index in 0..<count {
+        if cancelled() { return InputResult(status: issued == 0 ? "not-issued" : "uncertain", reason: .cancelled) }
+        if let reason = validate() { return InputResult(status: issued == 0 ? "not-issued" : "uncertain", reason: reason) }
+        // Validation can block on Accessibility IPC while cancellation arrives.
+        if cancelled() { return InputResult(status: issued == 0 ? "not-issued" : "uncertain", reason: .cancelled) }
+        guard batch(index) else { return InputResult(status: issued == 0 ? "not-issued" : "uncertain", reason: .cancelled) }
+        issued += 1
+    }
+    return issued == 0 ? InputResult(status: "not-issued", reason: .invalidInput) : InputResult(status: "issued")
+}
 
 // Revalidate the actual target and user intervention, not unrelated live content
 // elsewhere in the window. Other form fields are contextual evidence for the
@@ -64,9 +98,11 @@ func supportsInputText(_ text: String, role: String, editable: Bool) -> Bool {
 // key or clipboard fallback, including when a control rejects or normalizes text.
 func replaceInputText(_ text: String, role: String, editable: Bool,
                       write: (String) -> Bool, read: () -> String?) -> InputResult {
-    guard supportsInputText(text, role: role, editable: editable) else { return InputResult(status: "not-issued") }
+    guard supportsInputText(text, role: role, editable: editable) else {
+        return InputResult(status: "not-issued", reason: .unsupportedTextTarget)
+    }
     guard write(text), let actual = read(), actual.utf16.elementsEqual(text.utf16) else {
-        return InputResult(status: "uncertain")
+        return InputResult(status: "uncertain", reason: .textWriteUnverified)
     }
     return InputResult(status: "verified")
 }

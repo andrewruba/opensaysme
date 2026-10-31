@@ -76,11 +76,51 @@ function desktopFixture(decision: Partial<PermissionDecision> = {}) {
     captureContext: async () => ({ platform: 'darwin', capturedAt: frame.capturedAt, activeWindow: window, warnings: [] }),
   }, f.scope);
   cleanups.push(() => host.close());
-  return { host, pointer, keyboard: f.adapter, authorize: f.authorize,
+  return { host, pointer, keyboard: f.adapter, state: f.state, authorize: f.authorize,
     call: async (name: string, args = {}) => value(await host.call(name, args, signal())) };
 }
 
 describe('request-scoped keyboard input', () => {
+  it('distinguishes a focused page from its composer and permits typing after focus is resolved', async () => {
+    const f = desktopFixture();
+    f.state.target = { ...target, role: 'AXWebArea', title: 'Conversation', editable: false };
+    await f.call('list_windows');
+    const window = await f.call('capture_window', { windowId: 'window-1' });
+    expect(await f.call('click', { observationId: window.observationId, x: 10, y: 10 })).toMatchObject({ status: 'issued' });
+    const page = await f.call('capture_screen');
+    expect(page.keyboardFocus).toMatchObject({ role: 'AXWebArea', editable: false });
+    expect(page.keyboardGuidance).toContain('Locate the intended input');
+    expect(await f.call('type_keyboard_text', { keyboardObservationId: page.keyboardObservationId, text: 'Draft' }))
+      .toMatchObject({ code: 'unsupported-text-target' });
+    expect(f.keyboard.execute).not.toHaveBeenCalled();
+    // Scripted navigation models resolving focus; it does not predict model decisions.
+    expect(await f.call('press_key', { keyboardObservationId: page.keyboardObservationId, key: 'Tab', modifiers: [] }))
+      .toMatchObject({ status: 'issued', inputStopped: false });
+    f.state.target = { ...target, fingerprint: 'c'.repeat(64), role: 'AXTextArea', title: 'Message' };
+    const composer = await f.call('capture_screen');
+    expect(composer.keyboardFocus.editable).toBe(true);
+    expect(composer).not.toHaveProperty('keyboardGuidance');
+    expect(await f.call('type_keyboard_text', { keyboardObservationId: composer.keyboardObservationId, text: 'Draft' }))
+      .toMatchObject({ status: 'issued', effect: 'edit', inputStopped: false });
+    expect(f.keyboard.execute.mock.calls.map(([action]) => action)).toEqual([
+      { kind: 'press_key', key: 'Tab', modifiers: [] }, { kind: 'type_keyboard_text', text: 'Draft' },
+    ]);
+  });
+
+  it.each(['not-issued', 'uncertain'] as const)('returns the native reason for %s keyboard input and preserves its stop boundary', async (status) => {
+    const f = fixture();
+    f.adapter.execute.mockResolvedValue({ status, reason: 'focus-changed' });
+    const capture = await f.capture();
+    expect(value(await f.call(capture.keyboardObservationId, { kind: 'type_keyboard_text', text: 'Draft' })))
+      .toMatchObject({ status, code: 'focus-changed', inputStopped: status === 'uncertain' });
+    expect(f.session.stopped).toBe(status === 'uncertain');
+    if (status === 'uncertain') {
+      const next = await f.capture();
+      expect(value(await f.call(next.keyboardObservationId, { kind: 'type_keyboard_text', text: 'Draft' })).code).toBe('input-stopped');
+      expect(f.adapter.execute).toHaveBeenCalledOnce();
+    }
+  });
+
   it('executes a scripted app-and-site navigation using refreshed screen focus, without window coordinates', async () => {
     // This is a deterministic tool integration test, not a claim about model choices.
     const request = 'Open chess on Chrome.';

@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { z } from 'zod';
 import { screenFrameCaptureSchema, type ScreenFrameCapture } from './desktop/visual-types.js';
+import { desktopIssueSchema } from './desktop/errors.js';
 import type { DebugSession, DebugTurnInput, PreparedReasoningRequest } from './diagnostics.js';
 import type { ToolEvent } from './tools/types.js';
 
@@ -19,6 +20,7 @@ const alignmentSchema = z.object({
 const requestSchema = z.object({
   model: z.string().min(1).max(256), instructions: z.string().max(65_536), store: z.literal(false),
   max_output_tokens: z.number().int().positive().max(32_768),
+  reasoning: z.object({ effort: z.literal('low') }).optional(),
   tools: z.array(z.object({ type: z.literal('function'), name: identifier, description: z.string().max(4096),
     parameters: z.record(z.string(), z.unknown()), strict: z.literal(true) })).max(32).optional(),
   tool_choice: z.enum(['auto', 'none']).optional(), parallel_tool_calls: z.literal(false).optional(),
@@ -28,7 +30,7 @@ const requestSchema = z.object({
 const toolEventSchema = z.object({
   callId: z.string().min(1).max(512), name: identifier, arguments: z.record(z.string(), z.unknown()),
   effect: z.enum(['read', 'focus', 'input']), phase: z.enum(['started', 'completed']), durationMs: time.optional(),
-  result: z.object({ isError: z.boolean().optional(), content: z.array(z.union([
+  result: z.object({ isError: z.boolean().optional(), desktopIssue: desktopIssueSchema.optional(), content: z.array(z.union([
     z.object({ type: z.literal('text'), text: z.string().max(512 * 1024) }),
     z.object({ type: z.literal('image'), mimeType: z.literal('image/jpeg'), data: z.string().max(1_400_000) }),
   ])).max(8) }).optional(),
@@ -45,6 +47,8 @@ const eventFields = new Set(['state', 'phase', 'code', 'message', 'status', 'pro
   'kind', 'phraseId', 'startMs', 'endMs', 'characters', 'trailCopies', 'requestId', 'capability', 'platform', 'session',
   'speechModel', 'reasoningModel', 'speechKeyPresent', 'reasoningKeyPresent', 'phrases', 'step', 'tool', 'callId', 'effect']);
 const pendingLimit = 32 * 1024 * 1024;
+// The input-enabled actor can make 24 tool calls plus a final response request.
+const toolCallLimit = 24;
 const audioFields = new Set(['sampleRate', 'samples', 'durationMs', 'firstCapturedAtMs', 'lastCapturedAtMs', 'firstReceivedAtMs', 'maxDeliveryLagMs', 'timing']);
 type File = { name: string; data: Buffer | string };
 type Job = { bytes: number; run: () => Promise<void> };
@@ -196,7 +200,7 @@ function session(directory: string, options: { secrets?: string[]; onWarning?: (
   let draining: Promise<void> | undefined, closing: Promise<void> | undefined;
   const warning = () => {
     if (warned) return; warned = true;
-    try { options.onWarning?.('Debug export is incomplete. Check disk space, permissions, and debug files; voice continues.'); } catch { /* A diagnostic cannot fail voice. */ }
+    try { options.onWarning?.('Debug export is incomplete. Some records could not be saved or exceeded export limits; voice continues.'); } catch { /* A diagnostic cannot fail voice. */ }
   };
   const disable = () => { disabled = true; queue.splice(0).forEach((job) => { pendingBytes -= job.bytes; }); warning(); };
   const startDrain = () => {
@@ -272,7 +276,7 @@ function session(directory: string, options: { secrets?: string[]; onWarning?: (
       return [...images, { name: 'context.json', data: json(metadata) }];
     }),
     request: (turnId, request: PreparedReasoningRequest, step = 1) => record(turnId, `request-${step}`, () => {
-      z.number().int().min(1).max(6).parse(step);
+      z.number().int().min(1).max(toolCallLimit + 1).parse(step);
       const { metadata, images } = snapshotToolData(requestSchema.parse(request), `request-${step}`);
       return [...images, { name: step === 1 ? 'request.json' : `request-${step}.json`, data: json(metadata) }];
     }),
@@ -284,7 +288,7 @@ function session(directory: string, options: { secrets?: string[]; onWarning?: (
         const turnCalls = calls.get(turnId) ?? new Map<string, number>();
         calls.set(turnId, turnCalls);
         const number = turnCalls.get(parsed.callId) ?? turnCalls.size + 1;
-        if (number > 5) throw new Error('Debug tool count exceeded.');
+        if (number > toolCallLimit) throw new Error('Debug tool count exceeded.');
         turnCalls.set(parsed.callId, number);
         const name = `tool-${number}-${parsed.phase}`;
         record(turnId, name, () => {

@@ -100,7 +100,7 @@ private func keyboardValue(_ element: AXUIElement) throws -> (text: String, dige
 
 private func resolveKeyboard() throws -> KeyboardTarget {
     try requireAccessibility()
-    guard keyboardIdle() else { throw InputError.unavailable }
+    guard keyboardIdle() else { throw InputFailureReason.userIntervention }
     let element = try keyboardFocus()
     var pid: pid_t = 0
     guard AXUIElementGetPid(element, &pid) == .success,
@@ -129,7 +129,8 @@ private func resolveKeyboard() throws -> KeyboardTarget {
         windowBounds: window.map(keyboardGeometry) ?? [],
         bounds: keyboardGeometry(element), controlPath: controlPath, selection: keyboardSelection(element),
         interaction: events.map { CGEventSource.counterForEventType(.hidSystemState, eventType: $0) }, editable: editable))
-    guard keyboardIdle(), CFEqual(try keyboardFocus(), element) else { throw InputError.unavailable }
+    guard keyboardIdle() else { throw InputFailureReason.userIntervention }
+    guard CFEqual(try keyboardFocus(), element) else { throw InputFailureReason.focusChanged }
     let name = application.localizedName ?? "Application"
     guard name.utf16.count <= 1024 else { throw InputError.unavailable }
     return KeyboardTarget(application: application, element: element,
@@ -137,23 +138,9 @@ private func resolveKeyboard() throws -> KeyboardTarget {
             description: description, value: value.text, editable: editable, valueTruncated: value.truncated))
 }
 
-func inspectKeyboard() throws -> KeyboardEvidence { try resolveKeyboard().evidence }
-
-private func postKeyboardBatch(_ events: [CGEvent]) {
-    // Block cancellation until the main key and all modifiers are released. A
-    // pending signal is delivered on restoration, before the next batch.
-    var blocked = sigset_t(); var previous = sigset_t()
-    sigemptyset(&blocked); sigaddset(&blocked, SIGTERM); sigaddset(&blocked, SIGINT)
-    sigprocmask(SIG_BLOCK, &blocked, &previous)
-    defer { sigprocmask(SIG_SETMASK, &previous, nil) }
-    for event in events { event.post(tap: .cghidEventTap) }
-}
-
-private func drainKeyboardEvents() {
-    // An immediately exiting one-shot helper can lose its queued HID events.
-    // Keep source/events alive once per action, with cancellation unblocked.
-    var remaining = timespec(tv_sec: 0, tv_nsec: 100_000_000), interrupted = timespec()
-    while nanosleep(&remaining, &interrupted) != 0 && errno == EINTR { remaining = interrupted }
+func inspectKeyboard() throws -> KeyboardEvidence {
+    do { return try resolveKeyboard().evidence }
+    catch is InputFailureReason { throw InputError.unavailable }
 }
 
 func executeKeyboard() throws -> InputResult {
@@ -167,41 +154,53 @@ func executeKeyboard() throws -> InputResult {
     let term = signal(SIGTERM) { _ in keyboardCancelled = 1 }
     let interrupt = signal(SIGINT) { _ in keyboardCancelled = 1 }
     defer { signal(SIGTERM, term); signal(SIGINT, interrupt) }
-    guard let target = try? resolveKeyboard(), target.evidence.fingerprint == command.fingerprint else {
-        return InputResult(status: "not-issued")
+    let target: KeyboardTarget
+    do { target = try resolveKeyboard() }
+    catch { return rejectedInput(error) }
+    guard target.evidence.fingerprint == command.fingerprint else {
+        return InputResult(status: "not-issued", reason: .staleObservation)
     }
     let action = command.action
-    guard let source = CGEventSource(stateID: .privateState) else { return InputResult(status: "not-issued") }
+    guard let source = CGEventSource(stateID: .privateState) else { return InputResult(status: "not-issued", reason: .eventCreationFailed) }
     var batches: [[CGEvent]] = []
     if action.kind == "press_key" {
         var events: [CGEvent] = []
         for stroke in keyboardShortcutStrokes(key: keyboardKeyCodes[action.key!]!, modifiers: action.modifiers!) {
             guard let event = CGEvent(keyboardEventSource: source, virtualKey: stroke.key, keyDown: stroke.down) else {
-                return InputResult(status: "not-issued")
+                return InputResult(status: "not-issued", reason: .eventCreationFailed)
             }
             event.flags = stroke.flags; events.append(event)
         }
         batches.append(events)
     } else {
-        guard target.evidence.editable else { return InputResult(status: "not-issued") }
+        guard target.evidence.editable else { return InputResult(status: "not-issued", reason: .unsupportedTextTarget) }
         for units in keyboardTextChunks(action.text!) {
             guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-                  let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else { return InputResult(status: "not-issued") }
+                  let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
+                return InputResult(status: "not-issued", reason: .eventCreationFailed)
+            }
             down.flags = []; up.flags = []
             down.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
             up.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
             batches.append([down, up])
         }
     }
-    guard let current = try? resolveKeyboard(), current.evidence.fingerprint == command.fingerprint else {
-        return InputResult(status: "not-issued")
+    let current: KeyboardTarget
+    do { current = try resolveKeyboard() }
+    catch { return rejectedInput(error) }
+    guard current.evidence.fingerprint == command.fingerprint else {
+        return InputResult(status: "not-issued", reason: .staleObservation)
     }
     return withExtendedLifetime((source, batches)) {
-        dispatchKeyboardBatches(count: batches.count, ready: {
-            guard keyboardCancelled == 0, keyboardIdle(), !target.application.isTerminated,
-                  let current = try? keyboardFocus(), CFEqual(current, target.element),
-                  (try? assertKeyboardUnprotected(current)) != nil else { return false }
-            return true
-        }, batch: { index in postKeyboardBatch(batches[index]) }, drain: drainKeyboardEvents)
+        dispatchInputBatches(count: batches.count, cancelled: { keyboardCancelled != 0 }, validate: {
+            guard keyboardIdle() else { return .userIntervention }
+            guard !target.application.isTerminated else { return .inputUnavailable }
+            do {
+                let current = try keyboardFocus()
+                guard CFEqual(current, target.element) else { return .focusChanged }
+                try assertKeyboardUnprotected(current)
+            } catch { return inputFailureReason(error) }
+            return nil
+        }, batch: { index in postInputEvents(batches[index], cancelled: { keyboardCancelled != 0 }) }, drain: drainInputEvents)
     }
 }

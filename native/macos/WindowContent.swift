@@ -33,7 +33,7 @@ func collectWindowContent<Element>(
     read: (Element, String) throws -> String?,
     children: (Element, Int) throws -> [Element]
 ) -> WindowContent {
-    var pending: [(Element, Int?, Int)] = [(root, nil, 0)]
+    var pending: [(Element, Int?)] = [(root, nil)]
     var visited: [Element] = []
     var nodes: [WindowContentNode] = []
     var remaining = 16_384
@@ -49,7 +49,7 @@ func collectWindowContent<Element>(
         remaining -= value.utf16.count
         return value.isEmpty ? nil : value
     }
-    while let (element, parent, depth) = pending.popLast() {
+    while let (element, parent) = pending.popLast() {
         if now() >= deadline || visited.count >= 128 || remaining <= 128 { limited = true; break }
         if visited.contains(where: { same($0, element) }) { omitted = true; continue }
         visited.append(element)
@@ -64,17 +64,16 @@ func collectWindowContent<Element>(
             let index = nodes.count
             nodes.append(WindowContentNode(parent: parent, role: boundedRole, title: title, description: description, value: value))
             let capacity = max(0, 128 - visited.count - pending.count)
-            let descendants = try children(element, depth < 8 ? capacity + 1 : 1)
-            if depth >= 8 {
-                if !descendants.isEmpty { limited = true }
-                continue
-            }
+            // Native wrappers can put a web view eight levels below its window.
+            // The node/time budgets already bound deep chains without cutting
+            // off the actual page before inspecting a single control.
+            let descendants = try children(element, capacity + 1)
             if descendants.count > capacity { limited = true }
-            for child in descendants.prefix(capacity).reversed() { pending.append((child, index, depth + 1)) }
+            for child in descendants.prefix(capacity).reversed() { pending.append((child, index)) }
         } catch { omitted = true }
     }
     var warnings = ["Accessibility content is a non-atomic observation and may omit hidden or virtualized content."]
-    if limited { warnings.append("Content was limited by time, depth, node count, or text size; missing content does not establish absence.") }
+    if limited { warnings.append("Content was limited by time, node count, or text size; missing content does not establish absence.") }
     if omitted { warnings.append("Some inaccessible, changed, or repeated elements were omitted.") }
     if protected { warnings.append("Secure text fields and their descendants were omitted.") }
     return WindowContent(nodes: nodes, warnings: warnings)

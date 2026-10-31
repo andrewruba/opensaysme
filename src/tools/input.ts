@@ -122,7 +122,7 @@ export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestSc
         if (result.status === 'not-issued') session.stopped = false;
         else if (result.status !== 'uncertain' && effect !== 'submit') session.stopped = false;
         return { isError: ['not-issued', 'uncertain'].includes(result.status), content: [{ type: 'text', text: JSON.stringify({
-          action: action.kind, effect, status: result.status, permission,
+          action: action.kind, effect, status: result.status, ...(result.reason ? { code: result.reason } : {}), permission,
           message: result.status === 'not-issued' ? 'Native checks rejected input before execution. Recheck the target, focus and permissions with fresh evidence.'
             : 'Input may change the UI. Capture fresh evidence to verify the intended outcome. Issued events are not proof of submission success.',
           inputStopped: session.stopped,

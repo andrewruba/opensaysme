@@ -3,11 +3,24 @@ import ApplicationServices
 import Carbon
 import Foundation
 
+private var pointerCancelled: sig_atomic_t = 0
+
 private struct ResolvedInput {
     let application: NSRunningApplication
     let window: AXUIElement
     let element: AXUIElement
     let evidence: InputEvidence
+}
+
+func inputFailureReason(_ error: Error) -> InputFailureReason {
+    if let reason = error as? InputFailureReason { return reason }
+    if let error = error as? InputError { return InputFailureReason(rawValue: error.rawValue) ?? .inputUnavailable }
+    if let error = error as? DesktopError { return InputFailureReason(rawValue: error.code) ?? .inputUnavailable }
+    return .inputUnavailable
+}
+
+func rejectedInput(_ error: Error) -> InputResult {
+    InputResult(status: "not-issued", reason: inputFailureReason(error))
 }
 
 private func inputBounds(_ element: AXUIElement) throws -> InputBounds {
@@ -39,13 +52,18 @@ private func inputString(_ element: AXUIElement, _ attributeName: String, limit:
 private func assertInputFocus(_ application: NSRunningApplication, _ window: AXUIElement) throws {
     guard !application.isHidden, NSWorkspace.shared.frontmostApplication?.processIdentifier == application.processIdentifier,
           (try attribute(window, kAXMinimizedAttribute) as? Bool) == false,
-          CFEqual(try elementAttribute(applicationElement(application), kAXFocusedWindowAttribute), window) else { throw InputError.unavailable }
+          CFEqual(try elementAttribute(applicationElement(application), kAXFocusedWindowAttribute), window) else { throw InputFailureReason.focusChanged }
     let modifiers: CGEventFlags = [.maskShift, .maskControl, .maskAlternate, .maskCommand, .maskSecondaryFn]
     guard CGEventSource.flagsState(.hidSystemState).intersection(modifiers).isEmpty,
           !CGEventSource.buttonState(.hidSystemState, button: .left),
           !CGEventSource.buttonState(.hidSystemState, button: .right),
           !CGEventSource.buttonState(.hidSystemState, button: .center),
-          !(0..<128).contains(where: { CGEventSource.keyState(.hidSystemState, key: CGKeyCode($0)) }) else { throw InputError.unavailable }
+          !(0..<128).contains(where: { CGEventSource.keyState(.hidSystemState, key: CGKeyCode($0)) }) else { throw InputFailureReason.userIntervention }
+    // AX calls above can block, and an inactive app can retain AXFocusedWindow.
+    // Recheck the current foreground owner after that work before HID dispatch.
+    guard !application.isHidden, NSWorkspace.shared.frontmostApplication?.processIdentifier == application.processIdentifier else {
+        throw InputFailureReason.focusChanged
+    }
 }
 
 private func resolveInput(_ command: InputCommand) throws -> ResolvedInput {
@@ -56,7 +74,7 @@ private func resolveInput(_ command: InputCommand) throws -> ResolvedInput {
     // Capture and AX geometry can differ by rounding, but not by a moved window.
     guard abs(bounds.x - command.target.bounds.x) <= 1, abs(bounds.y - command.target.bounds.y) <= 1,
           abs(bounds.width - command.target.bounds.width) <= 1, abs(bounds.height - command.target.bounds.height) <= 1,
-          bounds.cg.contains(command.target.point.cg) else { throw InputError.unavailable }
+          bounds.cg.contains(command.target.point.cg) else { throw InputFailureReason.staleObservation }
     let system = AXUIElementCreateSystemWide()
     AXUIElementSetMessagingTimeout(system, 0.1)
     var hit: AXUIElement?
@@ -87,7 +105,7 @@ private func resolveInput(_ command: InputCommand) throws -> ResolvedInput {
         && AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success && settable.boolValue
     let focused = (try? focusedElement(applicationElement(application))).map { CFEqual($0, element) } ?? false
     if command.action.kind == "type_text" {
-        guard focused else { throw InputError.unavailable }
+        guard focused else { throw InputFailureReason.focusChanged }
         guard let text = command.action.text, supportsInputText(text, role: role, editable: editable) else {
             throw DesktopError("The input does not support literal text replacement.", code: "unsupported-text-target")
         }
@@ -108,53 +126,90 @@ private func resolveInput(_ command: InputCommand) throws -> ResolvedInput {
             bounds: elementBounds, focused: focused, editable: editable))
 }
 
-// Ignore SIGTERM process-wide only while queuing a down/up pair. This one-shot
-// helper exits immediately afterward; SIGKILL remains the parent's bounded fallback.
-private func postPair(_ down: CGEvent, _ up: CGEvent, pid: pid_t) {
-    let previous = signal(SIGTERM, SIG_IGN)
-    defer { signal(SIGTERM, previous) }
-    down.flags = []; up.flags = []
-    down.postToPid(pid); up.postToPid(pid)
+// A complete click, shortcut or text chunk releases all input before cancellation
+// is delivered. HID posting lets WindowServer route coordinates to real windows;
+// postToPid can deliver AppKit mouse events with windowNumber 0 and no control hit.
+func postInputEvents(_ events: [CGEvent], cancelled: () -> Bool) -> Bool {
+    var blocked = sigset_t(); var previous = sigset_t()
+    sigemptyset(&blocked); sigaddset(&blocked, SIGTERM); sigaddset(&blocked, SIGINT)
+    sigprocmask(SIG_BLOCK, &blocked, &previous)
+    defer { sigprocmask(SIG_SETMASK, &previous, nil) }
+    // Cancellation can arrive after validation but before entering this section.
+    // A newly blocked signal may be pending rather than reflected in the handler flag.
+    var pending = sigset_t(); sigpending(&pending)
+    guard !cancelled(), sigismember(&pending, SIGTERM) != 1, sigismember(&pending, SIGINT) != 1 else { return false }
+    for event in events { event.post(tap: .cghidEventTap) }
+    return true
+}
+
+func drainInputEvents() {
+    // An immediately exiting one-shot helper can lose queued events. Callers keep
+    // the event source and events alive through this single, unblocked drain.
+    var remaining = timespec(tv_sec: 0, tv_nsec: 100_000_000), interrupted = timespec()
+    while nanosleep(&remaining, &interrupted) != 0 && errno == EINTR { remaining = interrupted }
+}
+
+private func dispatchPointerEvents(_ events: [CGEvent], source: CGEventSource, target: ResolvedInput) -> InputResult {
+    pointerCancelled = 0
+    let term = signal(SIGTERM) { _ in pointerCancelled = 1 }
+    let interrupt = signal(SIGINT) { _ in pointerCancelled = 1 }
+    defer { signal(SIGTERM, term); signal(SIGINT, interrupt) }
+    return withExtendedLifetime((source, events)) {
+        dispatchInputBatches(count: 1, cancelled: { pointerCancelled != 0 }, validate: {
+            do { try assertInputFocus(target.application, target.window); return nil }
+            catch { return inputFailureReason(error) }
+        }, batch: { _ in postInputEvents(events, cancelled: { pointerCancelled != 0 }) }, drain: drainInputEvents)
+    }
 }
 
 private func executeInput(_ command: InputCommand) -> InputResult {
-    guard let resolved = try? resolveInput(command), resolved.evidence.fingerprint == command.fingerprint else {
-        return InputResult(status: "not-issued")
+    let resolved: ResolvedInput
+    do { resolved = try resolveInput(command) }
+    catch { return rejectedInput(error) }
+    guard resolved.evidence.fingerprint == command.fingerprint else {
+        return InputResult(status: "not-issued", reason: .staleObservation)
     }
     let action = command.action, point = command.target.point.cg
-    let pid = resolved.application.processIdentifier
-    // All events are created before the final focus check. AX text writes target the
-    // exact element; keyboard/mouse events go to the validated process, never globally.
-    let source = CGEventSource(stateID: .privateState)
+    // Create events before the final foreground check. AX writes still address the
+    // exact element; pointer events use WindowServer routing after target validation.
     switch action.kind {
     case "move_pointer":
-        guard (try? assertInputFocus(resolved.application, resolved.window)) != nil else { return InputResult(status: "not-issued") }
-        guard CGWarpMouseCursorPosition(point) == .success else { return InputResult(status: "uncertain") }
+        do { try assertInputFocus(resolved.application, resolved.window) }
+        catch { return rejectedInput(error) }
+        guard CGWarpMouseCursorPosition(point) == .success else { return InputResult(status: "uncertain", reason: .pointerUnverified) }
         let current = CGEvent(source: nil)?.location
-        return InputResult(status: current == point ? "verified" : "uncertain")
+        return current == point ? InputResult(status: "verified") : InputResult(status: "uncertain", reason: .pointerUnverified)
     case "click":
-        guard let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
-              let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left),
-              (try? assertInputFocus(resolved.application, resolved.window)) != nil else { return InputResult(status: "not-issued") }
+        guard let source = CGEventSource(stateID: .privateState),
+              let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
+              let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) else {
+            return InputResult(status: "not-issued", reason: .eventCreationFailed)
+        }
+        down.flags = []; up.flags = []
         down.setIntegerValueField(.mouseEventClickState, value: 1); up.setIntegerValueField(.mouseEventClickState, value: 1)
-        postPair(down, up, pid: pid)
+        return dispatchPointerEvents([down, up], source: source, target: resolved)
     case "scroll":
-        guard let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 1,
-                                  wheel1: Int32(-action.deltaY!), wheel2: 0, wheel3: 0),
-              (try? assertInputFocus(resolved.application, resolved.window)) != nil else { return InputResult(status: "not-issued") }
-        event.location = point; event.flags = []; event.postToPid(pid)
+        guard let source = CGEventSource(stateID: .privateState),
+              let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 1,
+                                  wheel1: Int32(-action.deltaY!), wheel2: 0, wheel3: 0) else {
+            return InputResult(status: "not-issued", reason: .eventCreationFailed)
+        }
+        event.location = point; event.flags = []
+        return dispatchPointerEvents([event], source: source, target: resolved)
     case "type_text":
-        guard (try? assertInputFocus(resolved.application, resolved.window)) != nil,
-              let focused = try? focusedElement(applicationElement(resolved.application)), CFEqual(focused, resolved.element) else { return InputResult(status: "not-issued") }
+        do {
+            try assertInputFocus(resolved.application, resolved.window)
+            let focused = try focusedElement(applicationElement(resolved.application))
+            guard CFEqual(focused, resolved.element) else { return InputResult(status: "not-issued", reason: .focusChanged) }
+        } catch { return rejectedInput(error) }
         return replaceInputText(action.text!, role: resolved.evidence.role, editable: resolved.evidence.editable,
             write: { AXUIElementSetAttributeValue(resolved.element, kAXValueAttribute as CFString, $0 as CFString) == .success },
             read: {
                 guard let actual = stringAttribute(resolved.element, kAXValueAttribute), actual.utf16.count <= 4096 else { return nil }
                 return actual
             })
-    default: return InputResult(status: "not-issued")
+    default: return InputResult(status: "not-issued", reason: .invalidInput)
     }
-    return InputResult(status: "issued")
 }
 
 func desktopInput(execute: Bool) throws {
@@ -165,5 +220,8 @@ func desktopInput(execute: Bool) throws {
     }
     let command = try parseInputCommand(data, execute: execute)
     if execute { try output(executeInput(command)) }
-    else { try output(resolveInput(command).evidence) }
+    else {
+        do { try output(resolveInput(command).evidence) }
+        catch is InputFailureReason { throw InputError.unavailable }
+    }
 }

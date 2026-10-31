@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createDebugSession } from '../src/debug-session.js';
+import { defaultReasoningModel, openAIReasoning } from '../src/reasoning/openai.js';
 import type { DebugTurnInput, PreparedReasoningRequest } from '../src/diagnostics.js';
+import type { ToolHost } from '../src/tools/types.js';
 
 const io = vi.hoisted(() => ({ beforeWrite: undefined as undefined | ((path: string) => Promise<void>),
   afterWrite: undefined as undefined | ((path: string) => void), beforeMkdtemp: undefined as undefined | (() => Promise<void>) }));
@@ -91,6 +93,57 @@ it('saves each tool exchange and replay request with image files and no opaque r
   ] });
   expect(await readFile(join(dir, 'images/request-2-image-1.jpg'))).toEqual(clean);
   expect(await readdir(dir)).toEqual(expect.arrayContaining(['request.json', 'request-2.json', 'tool-1-started.json', 'tool-1-completed.json']));
+});
+
+it('exports the full input-enabled actor loop, including late screenshots and the final response request', async () => {
+  const onWarning = vi.fn(), debug = await createDebugSession(await root(), { secrets: [key], onWarning });
+  const captured = input(); debug.input('turn', captured);
+  let calls = 0;
+  const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
+    const wire = JSON.parse(String(init!.body));
+    return Response.json({ status: 'completed', output: wire.tool_choice === 'none' ? [{
+      type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Finished inspecting.' }],
+    }] : [{ type: 'function_call', call_id: `call-${++calls}`, name: 'capture_screen', arguments: '{}' }] });
+  });
+  const host: ToolHost = {
+    list: () => [
+      { name: 'capture_screen', effect: 'read', description: 'Capture current display.', inputSchema: { type: 'object', properties: {} } },
+      { name: 'type_keyboard_text', effect: 'input', description: 'Type requested text.', inputSchema: { type: 'object', properties: {} } },
+    ],
+    call: async () => ({ desktopIssue: 'focus-changed', content: [
+      { type: 'text', text: JSON.stringify({ keyboardIssue: 'focus-changed', keyboardUnavailable: 'Focus changed.' }) },
+      { type: 'image', mimeType: 'image/jpeg', data: clean.toString('base64') },
+    ] }),
+    close: () => {},
+  };
+  const reason = openAIReasoning({ apiKey: key, model: defaultReasoningModel }, fetcher);
+  const response = await reason({ ...captured, visual: captured.visual!, tools: host, signal: new AbortController().signal,
+    onRequest: (request, step) => debug.request('turn', request, step), onTool: (event) => debug.tool!('turn', event) });
+  debug.result('turn', { status: 'completed', response }); await debug.close();
+  expect(calls).toBe(24);
+  expect(fetcher).toHaveBeenCalledTimes(calls + 1);
+  expect(onWarning).not.toHaveBeenCalled();
+  const dir = debug.turnDirectory('turn');
+  for (let number = 1; number <= calls; number++) {
+    const completed = JSON.parse(await readFile(join(dir, `tool-${number}-completed.json`), 'utf8'));
+    expect(completed).toMatchObject({ callId: `call-${number}`, result: { desktopIssue: 'focus-changed' } });
+    expect(await readFile(join(dir, `images/tool-${number}-completed-image-1.jpg`))).toEqual(clean);
+    expect(JSON.parse(await readFile(join(dir, `tool-${number}-started.json`), 'utf8')).phase).toBe('started');
+  }
+  for (let step = 1; step <= calls + 1; step++) {
+    const saved = JSON.parse(await readFile(join(dir, step === 1 ? 'request.json' : `request-${step}.json`), 'utf8'));
+    expect(saved.reasoning).toEqual({ effort: 'low' });
+    if (step === calls + 1) {
+      expect(saved.tool_choice).toBe('none');
+      const outputs = saved.input.filter((item: { type?: string }) => item.type === 'function_call_output');
+      expect(outputs).toHaveLength(calls);
+      for (const output of outputs) {
+        const image = output.output.find((part: { type: string }) => part.type === 'input_image');
+        expect(await readFile(join(dir, image.image_url))).toEqual(clean);
+      }
+    }
+  }
+  expect(JSON.parse(await readFile(join(dir, 'result.json'), 'utf8'))).toEqual({ status: 'completed', response: 'Finished inspecting.' });
 });
 
 it('exports exact images, full input/request/result, and a timestamped redacted event log', async () => {
