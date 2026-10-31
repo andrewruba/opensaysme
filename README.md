@@ -114,6 +114,12 @@ stays in memory by default. Recent conversation clears on cancellation, failed t
 and exit. Transcripts and responses also appear in terminal output and may remain
 in scrollback or redirects.
 
+With `--debug`, saved files contain sensitive context and remain until you delete
+them. Keys and raw audio are excluded. This repository ignores `.opensaysme-debug/`;
+custom paths are not automatically ignored. Do not commit captured desktop content.
+
+## Troubleshooting
+
 For troubleshooting, opt in to saving context, screenshots, model inputs, responses
 and diagnostics:
 
@@ -122,47 +128,11 @@ osm --debug                 # save under .opensaysme-debug/ in the current direc
 osm --debug ./my-captures    # choose a directory
 ```
 
-These files contain sensitive context and remain until you delete them. Keys and
-raw audio are excluded. This repository ignores `.opensaysme-debug/`; custom paths
-are not automatically ignored. Do not commit captured desktop content.
-
-## Updating and troubleshooting
-
-- After changing TypeScript, run `npm run build`; after Swift changes, also run
-  `npm run build:native`. Moving the checkout or switching Node versions requires
-  running `npm run install:cli` again.
-- If `osm` is not found, run `npm prefix --global` and add its `bin` directory to
-  PATH. Use a user-managed Node installation if the global directory is not writable.
-- If a permission grant does not take effect, fully quit and reopen the launching
-  terminal. Moving or rebuilding the unsigned helper can require renewed grants.
-  Export your key again if it is no longer set in the new shell.
-- If the activation shortcut is unavailable, choose another with `osm hotkey`.
-- To remove both CLI names, run `npm uninstall --global opensaysme`. Saved
-  configuration remains in place.
-
-Input requires accessible targets; text entry replaces a focused writable field,
-and multiline input requires a text area. Purely visual input targets and arbitrary
-keyboard shortcuts are unsupported. App-specific input behavior, multiple displays
-and cancellation races still need real-use validation. See the
-[tool contract](docs/tools.md) for supported actions and their boundaries.
-Only macOS 14+ is supported; installation is from source.
-
-## Contributing
-
-`npm run dev` runs the TypeScript source in voice mode; use
-`npm run dev -- <arguments>` for other commands. Rebuild the native helper after
-Swift changes.
+## Uninstall
 
 ```sh
-npm run typecheck
-npm run lint
-npm test
-npm run check          # typecheck, lint, unit tests, TypeScript build
-sh native/macos/test.sh
-npm run build:native
+osm uninstall
 ```
 
-Routine tests use mocked providers and synthetic native inputs; they need no API
-keys, paid requests, screen capture or desktop input. CI runs on macOS. See
-[AGENTS.md](AGENTS.md) for contribution conventions and the
-[native helper documentation](native/macos/README.md) when changing OS access.
+Removes both `osm` and `opensaysme` commands. Your repository folder, saved settings
+and debug captures stay on disk.

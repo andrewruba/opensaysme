@@ -24,6 +24,7 @@ it('shows a runnable quick start and shortcut help without configuration, keys o
   const env = { ...process.env, OPENSAYSME_CONFIG_DIR: directory, OPENAI_API_KEY: '' };
   const { stdout, stderr } = await execute(process.execPath, [...args, '--help'], { env });
   expect(stdout).toContain('setup');
+  expect(stdout).toContain('uninstall');
   expect(stdout).toContain('doctor');
   expect(stdout).toContain('desktop');
   expect(stdout).toContain('tools');
@@ -47,6 +48,9 @@ it('shows a runnable quick start and shortcut help without configuration, keys o
   expect(help.stdout).not.toContain('[shortcut]');
   expect(help.stdout).not.toContain('--hotkey');
   expect(help.stdout).not.toContain('Save directly');
+  const uninstallHelp = await execute(process.execPath, [...args, 'uninstall', '--help'], { env });
+  expect(uninstallHelp.stdout).toContain('Remove the installed osm and opensaysme commands');
+  expect(uninstallHelp.stdout).toContain('Keeps your repository folder, saved settings and debug captures.');
   expect(await readdir(directory)).toEqual([]);
 });
 

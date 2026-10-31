@@ -9,6 +9,7 @@ import { cancelDesktopCommands } from './desktop/process.js';
 import { capabilityNames, type DesktopReport } from './desktop/types.js';
 import { setup } from './setup.js';
 import { setupHotkey } from './setup-hotkey.js';
+import { uninstall } from './uninstall.js';
 import { runVoice } from './voice.js';
 import { createDesktopTools } from './tools/desktop.js';
 
@@ -113,6 +114,13 @@ Using voice:
 program.command('setup').description('Configure environment-key references and explain macOS access; retain settings unless --replace')
   .option('--replace', 'Replace existing configuration after interactive setup')
   .action((options: { replace?: boolean }) => setup(stop.signal, Boolean(options.replace)));
+program.command('uninstall').description('Remove the installed osm and opensaysme commands')
+  .addHelpText('after', '\nKeeps your repository folder, saved settings and debug captures.')
+  .action(async () => {
+    const removed = await uninstall(stop.signal);
+    console.log(removed.length ? 'OpenSaysMe commands uninstalled.' : 'No installed OpenSaysMe commands found.');
+    console.log('Your repository folder, saved settings and debug captures were kept.');
+  });
 program.command('hotkey').description('Record a pressed activation shortcut; Escape and Ctrl+C stay fixed')
   .option('--show', 'Show the saved shortcut without prompting or changing it')
   .addHelpText('after', `\n${hotkeyHelp}\nDefault: ${defaultActivationHotkey}. Letter/digit keys use US physical key positions.
