@@ -18,7 +18,7 @@ async function configured(model = 'gpt-live-transcribe', activationHotkey?: stri
   return { ...process.env, OPENSAYSME_CONFIG_DIR: directory, OPENSAYSME_TEST_MISSING_KEY: '' };
 }
 
-it('shows a runnable quick start and shortcut help without configuration, keys or desktop access', async () => {
+it('shows a runnable quick start without configuration, keys or desktop access', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'opensaysme-cli-help-'));
   directories.push(directory);
   const env = { ...process.env, OPENSAYSME_CONFIG_DIR: directory, OPENAI_API_KEY: '' };
@@ -41,6 +41,13 @@ it('shows a runnable quick start and shortcut help without configuration, keys o
   expect(stdout).not.toContain('osm hotkey "');
   expect(stdout).toContain('Escape cancels');
   expect(stderr).toBe('');
+  expect(await readdir(directory)).toEqual([]);
+});
+
+it('shows shortcut help without configuration, keys or desktop access', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'opensaysme-cli-help-'));
+  directories.push(directory);
+  const env = { ...process.env, OPENSAYSME_CONFIG_DIR: directory, OPENAI_API_KEY: '' };
   const help = await execute(process.execPath, [...args, 'hotkey', '--help'], { env });
   expect(help.stdout).toContain('Escape and Ctrl+C are reserved');
   expect(help.stdout).toContain('press and release');
@@ -48,9 +55,18 @@ it('shows a runnable quick start and shortcut help without configuration, keys o
   expect(help.stdout).not.toContain('[shortcut]');
   expect(help.stdout).not.toContain('--hotkey');
   expect(help.stdout).not.toContain('Save directly');
+  expect(help.stderr).toBe('');
+  expect(await readdir(directory)).toEqual([]);
+});
+
+it('shows uninstall help without configuration, keys or desktop access', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'opensaysme-cli-help-'));
+  directories.push(directory);
+  const env = { ...process.env, OPENSAYSME_CONFIG_DIR: directory, OPENAI_API_KEY: '' };
   const uninstallHelp = await execute(process.execPath, [...args, 'uninstall', '--help'], { env });
   expect(uninstallHelp.stdout).toContain('Remove the installed osm and opensaysme commands');
   expect(uninstallHelp.stdout).toContain('Keeps your repository folder, saved settings and debug captures.');
+  expect(uninstallHelp.stderr).toBe('');
   expect(await readdir(directory)).toEqual([]);
 });
 

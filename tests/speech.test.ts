@@ -45,7 +45,7 @@ describe('phrase segmentation', () => {
       const segmenter = new PhraseSegmenter();
       const parts = [];
       for (let offset = 0; offset < input.length; offset += chunkBytes) parts.push(...segmenter.append(input.subarray(offset, offset + chunkBytes)));
-      expect(Buffer.concat(parts.map((part) => part.pcm))).toEqual(input);
+      expect(Buffer.concat(parts.map((part) => part.pcm)).equals(input)).toBe(true);
       return [...parts.flatMap((part) => part.interval ? [part.interval] : []), segmenter.finish()];
     };
     expect(segment(634)).toEqual(segment(input.length));
