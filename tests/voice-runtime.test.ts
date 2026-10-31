@@ -10,6 +10,7 @@ import type { ToolHost } from '../src/tools/types.js';
 import { conversationLifetimeMs, RecentConversation, type ConversationEvidence, type ConversationTurn } from '../src/conversation.js';
 import type { VoiceRuntimeOptions } from '../src/runtime.js';
 import { DesktopError, desktopMessages } from '../src/desktop/errors.js';
+import { openWorkContext } from '../src/work-context.js';
 
 const context: DesktopContext = { platform: 'test', capturedAt: '2026-10-28T00:00:00.000Z',
   activeWindow: { id: 'one', application: 'Editor' }, selectedText: 'original selection',
@@ -46,22 +47,25 @@ const runtimes: VoiceRuntime[] = [];
 afterEach(() => { for (const runtime of runtimes.splice(0)) runtime.close(); vi.useRealTimers(); });
 function fixture(capture: (signal: AbortSignal) => Promise<DesktopContext> = async () => ({ ...structuredClone(context), capturedAt: new Date().toISOString() }),
   interpret: ReasoningFactory = reason, captureFrame: () => Promise<ScreenFrameCapture> = async () => { throw new Error('no screen'); },
-  debug?: DebugSession, createTools?: VoiceRuntimeOptions['createTools']) {
+  debug?: DebugSession, createTools?: VoiceRuntimeOptions['createTools'],
+  work: Pick<VoiceRuntimeOptions, 'workContext' | 'observeWindow'> = {}) {
   let clock = 0;
   const commands: NativeVoiceCommand[] = [];
   const outputs: VoiceOutput[] = [];
   const sessions: Array<{ options: TranscriptionOptions; ready: ReturnType<typeof deferred<void>>;
-    final: ReturnType<typeof deferred<string>>; audio: Buffer[]; commit: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }> = [];
+    final: ReturnType<typeof deferred<string>>; audio: Buffer[]; commit: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn>;
+    updateKeywords: ReturnType<typeof vi.fn> }> = [];
   const runtime = new VoiceRuntime({
     input: { ready: Promise.resolve(), done: new Promise(() => {}), send: (command) => commands.push(command), close: async () => {} },
     apiKey: 'fixture-key', model: 'fixture-model', captureContext: capture,
-    captureFrame, reason: interpret, debug, createTools,
+    captureFrame, reason: interpret, debug, createTools, ...work,
     now: () => clock, emit: (output) => outputs.push(output),
     transcribe: (options): TranscriptionSession => {
       const ready = deferred<void>(); const final = deferred<string>();
       const audio: Buffer[] = []; const commit = vi.fn(); const close = vi.fn();
-      sessions.push({ options, ready, final, audio, commit, close });
-      return { ready: ready.promise, finished: final.promise, append: (chunk) => audio.push(Buffer.from(chunk)), commit, close };
+      const updateKeywords = vi.fn();
+      sessions.push({ options, ready, final, audio, commit, close, updateKeywords });
+      return { ready: ready.promise, finished: final.promise, append: (chunk) => audio.push(Buffer.from(chunk)), commit, close, updateKeywords };
     },
   });
   runtimes.push(runtime);
@@ -77,6 +81,61 @@ async function complete(f: ReturnType<typeof fixture>, transcript: string) {
   f.sessions[index]!.final.resolve(transcript); await flush();
   return id;
 }
+
+describe('recent work references', () => {
+  it('observes only idle window metadata and shares names without carrying task authority', async () => {
+    vi.useFakeTimers();
+    const store = await openWorkContext();
+    const observeWindow = vi.fn(async () => ({ platform: 'test',
+      window: { id: 'private-native-id', application: 'Workspace', title: 'Maple — Review' }, selectedText: 'private selection' }));
+    const capture = vi.fn(async () => ({ ...structuredClone(context), capturedAt: new Date().toISOString(),
+      activeWindow: { id: 'other-id', application: 'Editor', title: 'Willow — Notes' } }));
+    const captureFrame = vi.fn(async () => { throw new Error('no image'); });
+    const reason = vi.fn<ReasoningFactory>(async () => 'Inspected the requested work.');
+    const f = fixture(capture, reason, captureFrame, undefined, undefined, { workContext: store, observeWindow });
+    f.runtime.handle({ type: 'ready' }); await flush();
+    expect(observeWindow).toHaveBeenCalledOnce();
+    expect(capture).not.toHaveBeenCalled(); expect(captureFrame).not.toHaveBeenCalled();
+    expect(store.recent()[0]).toEqual({ application: 'Workspace', title: 'Maple — Review', observedAt: new Date().toISOString() });
+    f.runtime.toggle(); await flush();
+    expect(f.sessions[0]!.options.keywords).toEqual(['Workspace', 'Maple', 'Review']);
+    expect(f.sessions[0]!.updateKeywords).toHaveBeenCalledWith(['Editor', 'Willow', 'Notes', 'Workspace', 'Maple', 'Review']);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(observeWindow).toHaveBeenCalledOnce();
+    f.runtime.cancel(); f.runtime.handle({ type: 'audio-stopped', turnId: f.id() });
+    expect(store.recent()).toHaveLength(2);
+    await complete(f, 'Find the Maple work.');
+    const input = reason.mock.calls[0]![0];
+    expect(input.conversation).toEqual([]);
+    expect(input.workContext).toEqual(store.recent());
+    expect(JSON.stringify(input.workContext)).not.toMatch(/private|other-id|original selection|request|action/);
+    f.runtime.close();
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(observeWindow).toHaveBeenCalledOnce();
+    await store.close();
+  });
+
+  it('discards an idle observation arriving after activation and cancels collection on close', async () => {
+    vi.useFakeTimers();
+    const store = await openWorkContext();
+    const pending = deferred<{ platform: string; window: { id: string; application: string; title: string } }>();
+    const observeWindow = vi.fn<NonNullable<VoiceRuntimeOptions['observeWindow']>>(() => pending.promise);
+    const capture = deferred<DesktopContext>();
+    const f = fixture(() => capture.promise, reason, undefined, undefined, undefined, { workContext: store, observeWindow });
+    f.runtime.handle({ type: 'ready' });
+    f.runtime.toggle();
+    expect(observeWindow.mock.calls[0]![0].aborted).toBe(true);
+    pending.resolve({ platform: 'test', window: { id: 'stale', application: 'Wrong', title: 'Old work' } }); await flush();
+    expect(store.recent()).toEqual([]);
+    f.runtime.close();
+    capture.resolve({ ...structuredClone(context), capturedAt: new Date().toISOString() }); await flush();
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(store.recent()).toEqual([]);
+    expect(f.sessions[0]!.updateKeywords).not.toHaveBeenCalled();
+    expect(observeWindow).toHaveBeenCalledOnce();
+    await store.close();
+  });
+});
 
 it('surfaces deduplicated desktop recovery warnings without stopping the request', async () => {
   const host: ToolHost = { list: () => [], call: vi.fn(), close: vi.fn() };

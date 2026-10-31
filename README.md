@@ -23,6 +23,10 @@ carry context across activations. A small panel shows status and readable,
 scrollable answers without taking focus. Responses stay open until you close them
 or start another request; they also remain in the terminal.
 
+Recent app and window names help it recognize your work across restarts and give
+speech recognition vocabulary hints. Spoken names can also be matched to observed
+names by pronunciation and context, without fixed app or project aliases.
+
 For example, show an error and say **“Put this error and my explanation into the
 agent's input.”** Then say **“Now send it.”** Preparation should leave the input
 unsent; the follow-up authorizes sending. “Point to that setting” should only point.
@@ -86,6 +90,18 @@ uses direct text replacement in supported inputs.
 For longer context, it can read accessible text such as Terminal scrollback and
 transfer the requested section directly into an agent's input, preserving line
 breaks. Each capture retains up to 65,536 UTF-16 units; sending remains separate.
+
+While idle, `osm` saves up to 12 recent app/window names in `work-context.json`
+beside your configuration. Names are used for up to eight hours; expired entries
+are removed when context is next accessed. This history contains names and
+timestamps; screenshots, document text, transcripts and permissions are excluded.
+The names are shared with the model as historical clues and speech vocabulary.
+Current targets are still rediscovered before action.
+
+```sh
+osm context                 # show remembered app/window names
+osm context --clear         # stop voice mode first, then forget saved names
+```
 
 ```sh
 osm hotkey                   # press a key combination at the capture prompt

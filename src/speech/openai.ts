@@ -1,6 +1,7 @@
 import WebSocket from 'ws';
 import { z } from 'zod';
 import { PhraseSegmenter, type PhraseInterval } from './phrases.js';
+import { transcriptionKeywords } from './keywords.js';
 import type { TranscriptionOptions, TranscriptionSession } from './types.js';
 import type { DiagnosticEvent } from '../diagnostics.js';
 
@@ -46,6 +47,8 @@ export function createTranscriptionSession(options: TranscriptionOptions, connec
   let ended = false;
   let configured = false;
   let stopping = false;
+  let keywords = transcriptionKeywords(options.keywords ?? []);
+  let sentKeywords: string[] | undefined;
   let totalBytes = 0;
   let pendingBytes = 0;
   let deltaBytes = 0;
@@ -85,6 +88,7 @@ export function createTranscriptionSession(options: TranscriptionOptions, connec
     awaitingAck.length = 0;
     items.clear();
     lastPartial = '';
+    keywords = []; sentKeywords = undefined;
     if (socket && socket.readyState !== WebSocket.CLOSED) {
       report('connection-terminating');
       socket.terminate();
@@ -112,6 +116,21 @@ export function createTranscriptionSession(options: TranscriptionOptions, connec
   function sendAudio(pcm: Buffer, segment: Segment) {
     segment.sentAudio = true;
     send({ type: 'input_audio_buffer.append', audio: pcm.toString('base64') });
+  }
+  function configureSession() {
+    const includeKeywords = keywords.length > 0 || sentKeywords !== undefined;
+    sentKeywords = [...keywords];
+    send({
+      type: 'session.update',
+      session: { type: 'transcription', audio: { input: {
+        format: { type: 'audio/pcm', rate: 24_000 },
+        transcription: { model: options.model, delay: 'low', ...(includeKeywords ? { keywords } : {}) },
+        turn_detection: null,
+      } } },
+    });
+  }
+  function keywordsChanged() {
+    return !sentKeywords || keywords.length !== sentKeywords.length || keywords.some((value, index) => value !== sentKeywords![index]);
   }
   function appendAudio(pcm: Buffer, segment: Segment) {
     if (configured) sendAudio(pcm, segment);
@@ -203,14 +222,7 @@ export function createTranscriptionSession(options: TranscriptionOptions, connec
     socket.on('open', () => {
       if (ended) return;
       report('connection-opened');
-      send({
-        type: 'session.update',
-        session: { type: 'transcription', audio: { input: {
-          format: { type: 'audio/pcm', rate: 24_000 },
-          transcription: { model: options.model, delay: 'low' },
-          turn_detection: null,
-        } } },
-      });
+      configureSession();
     });
     socket.on('message', (raw) => {
       if (ended) return;
@@ -228,6 +240,9 @@ export function createTranscriptionSession(options: TranscriptionOptions, connec
             configured = true;
             report('session-ready', { model: options.model, sampleRate: 24_000 });
             clearTimeout(connectionDeadline);
+            // Context can arrive during startup. Apply the latest vocabulary
+            // before queued audio, without another acknowledgement wait.
+            if (keywordsChanged()) configureSession();
             for (const entry of pending) {
               if (ended) break;
               if ('pcm' in entry) { sendAudio(entry.pcm, entry.segment); entry.pcm.fill(0); }
@@ -286,6 +301,12 @@ export function createTranscriptionSession(options: TranscriptionOptions, connec
 
   return {
     ready, finished,
+    updateKeywords(values) {
+      if (ended || stopping) return;
+      keywords = transcriptionKeywords(values);
+      // Before open/initial acknowledgement, keep only the newest context.
+      if (configured && keywordsChanged()) configureSession();
+    },
     append(pcm) {
       if (ended) return;
       if (stopping) { fail('Audio arrived after the speech turn was committed.'); return; }

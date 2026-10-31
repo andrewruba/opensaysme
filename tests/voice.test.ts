@@ -3,7 +3,10 @@ import { runVoice } from '../src/voice.js';
 import type { DebugSession } from '../src/diagnostics.js';
 import type { NativeVoiceEvent } from '../src/desktop/voice-types.js';
 
-const mocks = vi.hoisted(() => ({ adapter: vi.fn(), start: vi.fn(), debug: vi.fn(), feedback: vi.fn() }));
+const mocks = vi.hoisted(() => ({ adapter: vi.fn(), start: vi.fn(), debug: vi.fn(), feedback: vi.fn(),
+  context: { recent: vi.fn(() => []), observe: vi.fn(), close: vi.fn(async () => {}) } }));
+vi.mock('../src/work-context.js', () => ({ workContextPath: () => '/fixture/work-context.json',
+  openWorkContext: async () => mocks.context }));
 vi.mock('../src/desktop/index.js', () => ({ desktopAdapter: mocks.adapter }));
 vi.mock('../src/desktop/voice-process.js', () => ({ startVoiceHelper: mocks.start }));
 vi.mock('../src/debug-session.js', () => ({ createDebugSession: mocks.debug }));
@@ -39,6 +42,7 @@ it.each(['ctrl-c', 'abort'])('restores an initially idle terminal and closes the
     expect(pause).toHaveBeenCalledOnce();
     expect(close).toHaveBeenCalledOnce();
     expect(mocks.debug).not.toHaveBeenCalled();
+    expect(mocks.context.close).toHaveBeenCalledOnce();
   } finally {
     for (const [key, original] of originals) {
       if (original) Object.defineProperty(process.stdin, key, original);

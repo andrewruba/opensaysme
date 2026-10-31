@@ -13,6 +13,7 @@ import { createDesktopTools } from './tools/desktop.js';
 import { openAIActionAuthorizer } from './reasoning/action-authorization.js';
 import { createFeedback } from './feedback.js';
 import { defaultActivationHotkey } from './hotkey.js';
+import { openWorkContext, workContextPath, type WorkContextStore } from './work-context.js';
 import { feedbackUnavailable, startFeedbackHelper, type FeedbackCommand, type FeedbackSink } from './desktop/feedback-process.js';
 
 export async function runVoice(config: Config, signal: AbortSignal, emit: (output: VoiceOutput) => void,
@@ -21,6 +22,7 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
   const reasoningKey = process.env[config.reasoning.apiKeyEnv];
   const activationHotkey = config.activationHotkey ?? defaultActivationHotkey;
   let debug: DebugSession | undefined;
+  let workContext: WorkContextStore | undefined;
   let feedback: ReturnType<typeof createFeedback> | undefined;
   let feedbackClosed = false;
   const publish = (event: VoiceOutput) => { feedback?.handle(event); emit(event); };
@@ -47,6 +49,8 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
     const reason = openAIReasoning({ apiKey: reasoningKey, model: config.reasoning.model });
     const authorize = openAIActionAuthorizer({ apiKey: reasoningKey, model: config.reasoning.model });
     const adapter = await desktopAdapter();
+    workContext = await openWorkContext({ path: workContextPath(), onWarning: (message) => emit({ type: 'warning', message }) });
+    if (signal.aborted) return;
     if (adapter.feedbackHelper) {
       let sink: FeedbackSink | undefined;
       let pending: FeedbackCommand | undefined;
@@ -76,6 +80,7 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
     if (signal.aborted) return;
     const input = startVoiceHelper(spec, (event) => runtime.handle(event));
     const runtime = new VoiceRuntime({ input, transcribe: openAITranscription, captureContext: adapter.captureContext,
+      workContext, observeWindow: (observationSignal) => adapter.inspect(false, observationSignal),
       captureFrame: adapter.captureFrame, reason, createTools: (request, referenceContext, conversation) => createDesktopTools(adapter, { request, referenceContext, conversation, authorize, activationHotkey }),
       deadlines: { reasoning: adapter.input || adapter.keyboard ? 95_000 : 50_000 },
       debug, apiKey, model: config.speech.model, emit: publish });
@@ -120,6 +125,7 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
   } finally {
     feedbackClosed = true;
     await feedback?.close();
+    await workContext?.close();
     if (debug) {
       cancelDesktopCommands();
       debug.event({ component: 'session', event: 'stopped' });

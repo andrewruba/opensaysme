@@ -16,6 +16,9 @@ A strong match permits proceeding without surveying every app; ask only when
 meaningful ambiguity remains.
 Application-only navigation does not require inferring a project. These rules are
 general; there are no preferred applications or fixed routing sequences.
+Transcribed proper names can be matched to observed names using pronunciation,
+spelling and task context. The transcript and permission quotes remain verbatim;
+resolving a name cannot change the requested action or its restrictions.
 
 ## macOS capabilities
 
@@ -109,7 +112,11 @@ current image/control and relevant history, has no tools, and returns a strict
 allow/deny/clarify decision. Approval must quote current user speech and match the
 effect. Unknown, malformed or unavailable decisions do not execute. Unmodified
 Enter can have a navigation effect when current evidence shows it opens the
-requested app from Spotlight or site from a browser address bar. Otherwise Enter,
+requested app from a launcher or site from a browser address bar. Opening a
+plausible host to locate the requested work is also navigation: it does not
+require identifying the final project before the host can be inspected. Commands,
+scripts and installers are execution, regardless of where they are launched.
+Otherwise Enter,
 including modified Enter, requires a submit effect; it cannot be classified as
 draft editing. Opening a site does not authorize submitting its forms. Results
 identify this path as `independent-check`.
@@ -185,6 +192,26 @@ tools are available, or five calls within 45 seconds otherwise. These are runtim
 bounds, not a required interaction sequence.
 
 ## Follow-ups and feedback
+
+`workContext` supplies recent app/window labels and observation times separately
+from the conversation. While voice mode is idle, the runtime samples only active
+window metadata; it pauses that observer while a turn is running. Activation
+context also updates the labels. Agent tool exploration is not added as a history
+of user choices. Up to 12 references are saved in a private `work-context.json`
+beside configuration and used for up to eight hours. Expired entries are removed
+when context is next accessed. The file contains no native handles, field values,
+transcripts, action records or permissions. These are historical clues, not a
+selected destination or a task to resume. Live evidence and current speech win
+when they conflict. `osm context` displays the saved labels; stop voice mode before
+`osm context --clear` so a running instance cannot recreate the file.
+
+Known names also provide bounded `keywords` to the speech session. Current
+activation context can update them over the existing connection without delaying
+microphone startup or adding a model call. Only app names and short window-title
+segments are used, never selections or document text. This uses the provider's
+[transcription context support](https://developers.openai.com/api/docs/guides/realtime-transcription#add-transcription-context);
+accuracy still depends on the audio and available context. There is no hardcoded
+name substitution or transcript rewrite.
 
 Recent conversation retains bounded requests, responses, source observations and
 native outcomes in memory. It excludes screenshots, audio, live handles and

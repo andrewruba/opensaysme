@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import type { DesktopContext, NativeVoiceEvent } from './desktop/voice-types.js';
+import { desktopContextSchema, type DesktopContext, type NativeVoiceEvent } from './desktop/voice-types.js';
+import { desktopSnapshotSchema, type DesktopSnapshot } from './desktop/types.js';
+import type { WorkContextStore } from './work-context.js';
+import { transcriptionKeywords } from './speech/keywords.js';
 import type { ScreenFrameCapture } from './desktop/visual-types.js';
 import { AttentionCollector, attentionSummary } from './attention.js';
 import { RecentConversation, type ConversationTurn } from './conversation.js';
@@ -64,6 +67,8 @@ export interface VoiceRuntimeOptions {
   captureContext: (signal: AbortSignal) => Promise<DesktopContext>;
   captureFrame: (signal: AbortSignal) => Promise<ScreenFrameCapture>;
   reason: ReasoningFactory;
+  workContext?: WorkContextStore;
+  observeWindow?: (signal: AbortSignal) => Promise<DesktopSnapshot>;
   createTools?: (request: string, referenceContext: ReturnType<AttentionCollector['freeze']>['contexts'],
     conversation: ConversationTurn[]) => ToolHost;
   debug?: DebugSession;
@@ -87,6 +92,8 @@ export class VoiceRuntime {
   private closed = false;
   private readonly now: () => number;
   private readonly conversation: RecentConversation;
+  private workTimer?: NodeJS.Timeout;
+  private workObservation?: AbortController;
   private rejectFatal!: (error: Error) => void;
   readonly fatal: Promise<never>;
   constructor(private readonly options: VoiceRuntimeOptions) {
@@ -99,6 +106,24 @@ export class VoiceRuntime {
     this.state = state;
     this.diagnostic('runtime', 'state', this.turn, { state });
     this.options.emit({ type: 'state', state, ...(this.turn ? { turnId: this.turn.id } : {}) });
+  }
+  private keywords(): string[] {
+    return transcriptionKeywords((this.options.workContext?.recent() ?? []).flatMap(({ application, title }) =>
+      [application, ...(title?.split(/\s+[—–|·◂›-]\s+/u) ?? [])]));
+  }
+  private async observeWork() {
+    if (this.closed || this.turn || this.state !== 'ready' || this.workObservation
+      || !this.options.workContext || !this.options.observeWindow) return;
+    const controller = new AbortController();
+    this.workObservation = controller;
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(2_000)]);
+    try {
+      const snapshot = desktopSnapshotSchema.parse(await this.options.observeWindow(signal));
+      if (!signal.aborted && !this.closed && !this.turn && this.state === 'ready') {
+        this.options.workContext.observe(snapshot.window);
+      }
+    } catch { /* Optional label history never blocks activation or requests permissions. */ }
+    finally { if (this.workObservation === controller) this.workObservation = undefined; }
   }
   private reportDesktopIssue(turn: Turn, issue: DesktopIssue) {
     if (this.turn !== turn || turn.abort.signal.aborted || this.closed || turn.desktopIssues.has(issue)) return;
@@ -154,7 +179,15 @@ export class VoiceRuntime {
 
   handle(event: NativeVoiceEvent): void {
     if (this.closed) return;
-    if (event.type === 'ready') { this.diagnostic('desktop', 'helper-ready'); this.publishState('ready'); return; }
+    if (event.type === 'ready') {
+      this.diagnostic('desktop', 'helper-ready'); this.publishState('ready');
+      if (!this.closed && this.options.workContext && this.options.observeWindow && !this.workTimer) {
+        this.workTimer = setInterval(() => { void this.observeWork(); }, 3_000);
+        this.workTimer.unref();
+        void this.observeWork();
+      }
+      return;
+    }
     if (event.type === 'toggle') { this.toggle(); return; }
     if (event.type === 'cancel') { this.cancel(); return; }
     const turn = this.turn;
@@ -213,6 +246,7 @@ export class VoiceRuntime {
   }
 
   private start() {
+    this.workObservation?.abort();
     const turn: Turn = { id: randomUUID(), activated: this.now(), abort: new AbortController(), metrics: {}, partial: '', timers: new Set(), desktopIssues: new Set(), toolResults: [] };
     this.turn = turn;
     this.diagnostic('runtime', 'turn-started', turn);
@@ -225,7 +259,14 @@ export class VoiceRuntime {
       // Begin all three together; desktop access never gates listening.
       this.options.input.send({ type: 'start', turnId: turn.id });
       turn.attention = new AttentionCollector({
-        captureContext: (signal) => this.capture(turn, 'context', signal, this.options.captureContext),
+        captureContext: (signal) => this.capture(turn, 'context', signal, async (captureSignal) => {
+          const context = desktopContextSchema.parse(await this.options.captureContext(captureSignal));
+          if (!captureSignal.aborted && this.turn === turn && !turn.abort.signal.aborted && !this.closed) {
+            this.options.workContext?.observe(context.activeWindow);
+            turn.session?.updateKeywords?.(this.keywords());
+          }
+          return context;
+        }),
         captureFrame: (signal) => this.capture(turn, 'frame', signal, this.options.captureFrame),
         now: () => this.elapsed(turn.activated), epochStart: Date.now() - this.elapsed(turn.activated),
         signal: turn.abort.signal, captureTimeoutMs: this.options.deadlines?.context,
@@ -233,6 +274,7 @@ export class VoiceRuntime {
       });
       turn.session = this.options.transcribe({
         apiKey: this.options.apiKey, model: this.options.model, signal: turn.abort.signal,
+        keywords: this.keywords(),
         onDiagnostic: this.options.debug ? (event) => this.diagnostic(event.component, event.event, turn, event.data) : undefined,
         onPartial: (text) => {
           if (this.turn !== turn || turn.abort.signal.aborted || text === turn.partial) return;
@@ -288,7 +330,7 @@ export class VoiceRuntime {
     const toolCatalog = turn.tools?.list() ?? [];
     const reasoningStarted = this.now();
     const response = await this.options.reason({ transcript, history, visual, signal: turn.abort.signal,
-      tools: turn.tools, conversation: turn.conversation,
+      tools: turn.tools, conversation: turn.conversation, workContext: this.options.workContext?.recent() ?? [],
       onTool: turn.tools ? (event) => {
         if (this.turn !== turn || turn.abort.signal.aborted || this.closed) return;
         if (event.phase === 'completed') {
@@ -379,6 +421,8 @@ export class VoiceRuntime {
     this.conversation.clear();
     if (this.closed) return;
     this.closed = true;
+    clearInterval(this.workTimer);
+    this.workObservation?.abort();
     const turn = this.turn;
     if (!turn) return;
     this.debugResult(turn, { status: 'interrupted' });

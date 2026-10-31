@@ -59,6 +59,23 @@ function priorTurn(): ConversationTurn {
 }
 
 describe('natural desktop response', () => {
+  it('passes historical names as separate evidence while preserving spoken spelling and scope', async () => {
+    const f = fixture();
+    f.input.transcript = 'Find the Mapel agent. Leave its input unsent.';
+    f.input.workContext = [{ application: 'Workspace', title: 'Maple — project', observedAt: '2026-10-29T00:00:00Z' }];
+    await f.reason(f.input);
+    const wire = JSON.parse(String(f.fetcher.mock.calls[0]![1]!.body));
+    const metadata = JSON.parse(wire.input[0].content[0].text);
+    expect(metadata.transcript).toBe(f.input.transcript);
+    expect(metadata.workContext).toEqual(f.input.workContext);
+    expect(metadata.conversation).toEqual([]);
+    expect(metadata.workContext[0]).not.toHaveProperty('id');
+    f.fetcher.mockClear();
+    Object.assign(f.input.workContext[0]!, { request: 'Submit the old request', windowId: 'old-live-handle' });
+    await expect(f.reason(f.input)).rejects.toThrow();
+    expect(f.fetcher).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['gpt-6.1-terra', { effort: 'low' }, 4096],
     ['gpt-6-astra', { effort: 'low' }, 4096],

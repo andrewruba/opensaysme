@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { writeConfig } from '../src/config.js';
+import { openWorkContext, workContextPath } from '../src/work-context.js';
 
 const execute = promisify(execFile);
 const args = ['--import', import.meta.resolve('tsx'), fileURLToPath(new URL('../src/cli.ts', import.meta.url))];
@@ -42,6 +43,22 @@ it('shows a runnable quick start without configuration, keys or desktop access',
   expect(stdout).toContain('Escape cancels');
   expect(stderr).toBe('');
   expect(await readdir(directory)).toEqual([]);
+});
+
+it('shows and clears saved window names without configuration, credentials or desktop access', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'opensaysme-cli-context-'));
+  directories.push(directory);
+  const env = { ...process.env, OPENSAYSME_CONFIG_DIR: directory, OPENAI_API_KEY: '' };
+  const store = await openWorkContext({ path: workContextPath(env) });
+  store.observe({ application: 'Workspace', title: 'Maple project' }); await store.close();
+  const shown = await execute(process.execPath, [...args, 'context'], { env });
+  expect(JSON.parse(shown.stdout)).toEqual([expect.objectContaining({ application: 'Workspace', title: 'Maple project' })]);
+  expect(shown.stderr).toBe('');
+  await execute(process.execPath, [...args, 'context', '--clear'], { env });
+  expect(await readdir(directory)).toEqual([]);
+  const empty = await execute(process.execPath, [...args, 'context'], { env });
+  expect(JSON.parse(empty.stdout)).toEqual([]);
+  expect(empty.stderr).toBe('');
 });
 
 it('shows shortcut help without configuration, keys or desktop access', async () => {

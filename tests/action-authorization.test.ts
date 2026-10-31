@@ -102,28 +102,36 @@ it('accepts a valid independent decision without asking the user for another con
   expect(fetcher).toHaveBeenCalledOnce();
 });
 
-it('reviews a system keyboard shortcut using current focus and screen evidence without a pointer target', async () => {
+it('preserves spoken names and restrictions alongside current evidence for exploratory app opening', async () => {
   const keyboard: KeyboardReview = {
-    request: 'Open chess on Chrome.', referenceContext: [], completed: [],
-    action: { kind: 'press_key', key: 'Space', modifiers: ['Cmd'] },
-    target: { fingerprint: 'b'.repeat(64), application: 'Terminal', role: 'AXTextArea',
-      title: '', description: '', value: '', valueTruncated: false, editable: true },
+    request: 'Find the coding agent for Aster Work; do not send anything yet.',
+    referenceContext: [{ id: 'context-1', atMs: 0, receivedAtMs: 0, context: {
+      platform: 'test', capturedAt: review.frame.capturedAt,
+      activeWindow: { id: 'source-window', application: 'Editor', title: 'AsterWork — task notes' }, warnings: [],
+    } }], completed: [],
+    action: { kind: 'press_key', key: 'Enter', modifiers: [] },
+    target: { fingerprint: 'b'.repeat(64), application: 'System Launcher', role: 'AXTextField',
+      title: '', description: '', value: 'Agent Workspace', valueTruncated: false, editable: true },
     frame: { capturedAt: review.frame.capturedAt, image: review.frame.image, warnings: [],
       display: { id: 'display-1', bounds: review.frame.bounds } },
   };
-  const allowed = { decision: 'allow', effect: 'navigate', requestQuote: keyboard.request,
-    reason: 'Open the launcher to find the requested browser.' };
+  // Check transport and quote enforcement, not whether a real model resolves the name or allows this action.
+  const allowed = { decision: 'allow', effect: 'navigate', requestQuote: 'Find the coding agent for Aster Work',
+    reason: 'Scripted navigation decision.' };
   const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
     const body = JSON.parse(String(init?.body));
+    expect(JSON.parse(body.input[0].content[0].text)).toEqual({ original_request: keyboard.request });
     const evidence = JSON.parse(body.input[0].content[1].text).untrusted_evidence;
     expect(evidence).toMatchObject({ action: keyboard.action, target: keyboard.target,
-      frame: { display: keyboard.frame.display } });
+      reference_context: keyboard.referenceContext, frame: { display: keyboard.frame.display } });
     expect(evidence).not.toHaveProperty('point');
     expect(body.instructions).toContain('target is the current keyboard focus');
     return response(allowed);
   });
   const result = await openAIActionAuthorizer({ apiKey: 'test-key', model: 'test' }, fetcher)(keyboard, new AbortController().signal);
   expect(permitsKeyboard(keyboard.request, keyboard.action, result)).toBe(true);
+  expect(permitsKeyboard(keyboard.request, keyboard.action, { ...result, requestQuote: 'Find the coding agent for AsterWork' })).toBe(false);
+  expect(fetcher).toHaveBeenCalledOnce();
 });
 
 it('accepts ordinary Enter navigation but never treats modified Enter or draft line breaks as navigation', () => {

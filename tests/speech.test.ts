@@ -19,13 +19,14 @@ const resolvedSession = { type: 'transcription', audio: { input: {
 } } };
 const cleanups: Array<() => void> = [];
 afterEach(() => { cleanups.splice(0).forEach((fn) => fn()); vi.useRealTimers(); });
-function fixture(onDiagnostic?: DiagnosticSink) {
+function fixture(onDiagnostic?: DiagnosticSink, options: { keywords?: string[]; autoOpen?: boolean } = {}) {
   const socket = new Socket(); const controller = new AbortController(); const partials: string[] = [];
   const phrases: TranscriptionPhrase[] = [];
   const session = createTranscriptionSession({ apiKey: 'fixture-private-key', model: 'gpt-live-transcribe',
-    signal: controller.signal, onPartial: (text) => partials.push(text), onPhrase: (phrase) => phrases.push(phrase), onDiagnostic }, () => socket as unknown as WebSocket);
+    signal: controller.signal, keywords: options.keywords,
+    onPartial: (text) => partials.push(text), onPhrase: (phrase) => phrases.push(phrase), onDiagnostic }, () => socket as unknown as WebSocket);
   cleanups.push(() => session.close());
-  socket.emit('open');
+  if (options.autoOpen !== false) socket.emit('open');
   const ready = () => socket.receive({ type: 'session.updated', session: resolvedSession });
   return { socket, controller, partials, phrases, session, ready };
 }
@@ -70,6 +71,76 @@ describe('phrase segmentation', () => {
 });
 
 describe('streaming transcription protocol', () => {
+  const configuredKeywords = (event: Record<string, unknown>) => (event.session as typeof resolvedSession & {
+    audio: { input: { transcription: { keywords?: string[] } } };
+  }).audio.input.transcription.keywords;
+
+  it('sends bounded names as keyword data without a prompt or extra startup wait', async () => {
+    const diagnostics = vi.fn<DiagnosticSink>();
+    const f = fixture(diagnostics, { keywords: [' Secret Project ', 'secret project', '<invalid>', 'x'.repeat(97)] });
+    expect(configuredKeywords(f.socket.sent[0]!)).toEqual(['Secret Project']);
+    expect(JSON.stringify(f.socket.sent)).not.toContain('prompt');
+    f.session.append(pcm(100)); f.ready(); await f.session.ready;
+    expect(f.socket.sent.map((event) => event.type)).toEqual(['session.update', 'input_audio_buffer.append']);
+    expect(JSON.stringify(diagnostics.mock.calls)).not.toContain('Secret Project');
+  });
+
+  it('coalesces pre-open vocabulary changes into the initial session configuration', async () => {
+    const f = fixture(undefined, { keywords: ['old'], autoOpen: false });
+    f.session.updateKeywords!(['first']); f.session.updateKeywords!(['latest']); f.session.append(pcm(100));
+    expect(f.socket.sent).toEqual([]);
+    f.socket.emit('open');
+    expect(configuredKeywords(f.socket.sent[0]!)).toEqual(['latest']);
+    f.ready(); await f.session.ready;
+    expect(f.socket.sent.map((event) => event.type)).toEqual(['session.update', 'input_audio_buffer.append']);
+  });
+
+  it('coalesces context before initial acknowledgement and flushes queued audio exactly once', async () => {
+    const f = fixture(undefined, { keywords: ['initial'] });
+    f.session.updateKeywords!(['first']); f.session.updateKeywords!(['latest']);
+    f.session.append(phraseAudio()); f.session.append(pcm(100)); f.session.commit();
+    expect(f.socket.sent).toHaveLength(1);
+    f.ready(); await f.session.ready;
+    expect(configuredKeywords(f.socket.sent[1]!)).toEqual(['latest']);
+    expect(f.socket.sent.map((event) => event.type)).toEqual([
+      'session.update', 'session.update', 'input_audio_buffer.append', 'input_audio_buffer.commit',
+      'input_audio_buffer.append', 'input_audio_buffer.commit',
+    ]);
+    const sent = structuredClone(f.socket.sent);
+    f.ready(); expect(f.socket.sent).toEqual(sent);
+    f.socket.receive(commitAck('first')); f.socket.receive(completion('first', 'unmodified'));
+    f.socket.receive(commitAck('second', 'first')); f.socket.receive(completion('second', 'words'));
+    await expect(f.session.finished).resolves.toBe('unmodified words');
+  });
+
+  it('updates and clears hints while audio keeps flowing without another acknowledgement', async () => {
+    const f = fixture(undefined, { keywords: ['first'] }); f.ready(); await f.session.ready;
+    f.session.updateKeywords!(['second', 'second']); f.session.updateKeywords!(['second']);
+    f.session.append(pcm(100));
+    f.session.updateKeywords!([]); f.session.append(pcm(100)); f.session.commit();
+    expect(f.socket.sent.map((event) => event.type)).toEqual([
+      'session.update', 'session.update', 'input_audio_buffer.append', 'session.update',
+      'input_audio_buffer.append', 'input_audio_buffer.commit',
+    ]);
+    expect(configuredKeywords(f.socket.sent[1]!)).toEqual(['second']);
+    expect(configuredKeywords(f.socket.sent[3]!)).toEqual([]);
+    f.ready();
+    f.socket.receive(commitAck('one')); f.socket.receive(completion('one', 'what was spoken'));
+    await expect(f.session.finished).resolves.toBe('what was spoken');
+  });
+
+  it('does not send vocabulary updates after stop, cancellation or completion', async () => {
+    const f = fixture(); f.ready(); f.session.append(pcm(100)); f.session.commit();
+    const sent = structuredClone(f.socket.sent);
+    f.session.updateKeywords!(['too late']); expect(f.socket.sent).toEqual(sent);
+    f.socket.receive(commitAck('one')); f.socket.receive(completion('one', 'done'));
+    await f.session.finished; f.session.updateKeywords!(['also late']); expect(f.socket.sent).toEqual(sent);
+    const cancelled = fixture(undefined, { autoOpen: false }); cancelled.controller.abort();
+    cancelled.session.updateKeywords!(['ignored']); cancelled.socket.emit('open'); cancelled.ready();
+    await expect(cancelled.session.finished).rejects.toThrow('cancelled');
+    expect(cancelled.socket.sent).toEqual([]);
+  });
+
   it('records connection and phrase timing diagnostics without audio, keys, or transcript text', async () => {
     const diagnostic = vi.fn<DiagnosticSink>();
     const f = fixture(diagnostic); f.ready(); await f.session.ready;

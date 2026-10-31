@@ -13,6 +13,7 @@ import { uninstall } from './uninstall.js';
 import { runVoice } from './voice.js';
 import { createDesktopTools } from './tools/desktop.js';
 import { formatToolSummary } from './tool-summary.js';
+import { clearWorkContext, openWorkContext, workContextPath } from './work-context.js';
 
 const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
 const stop = new AbortController();
@@ -74,6 +75,8 @@ Using voice:
   Try: "Explain this error" or "Put this error into the agent's input; leave it unsent."
   Escape cancels pending work (in the CLI terminal when idle); Ctrl+C quits.
   Activated audio and screen/context go to your configured providers; charges apply.
+  Recent app/window names are remembered locally across restarts; osm context shows them.
+  Stop voice mode, then run osm context --clear to forget those names.
 `)
   .showHelpAfterError()
   .action(async (options: { debug?: true | string }) => {
@@ -90,6 +93,7 @@ Using voice:
     process.stderr.write('Activated audio streams to OpenAI. Screen/context and cursor history are captured while recording.\n');
     process.stderr.write('After stopping, your agent can inspect windows, point, click, scroll, type and use keyboard shortcuts within your request.\n');
     process.stderr.write('Selected frames, context, and requested tool results go to your reasoning provider.\n');
+    process.stderr.write('While idle, app/window names are saved locally and used as context and speech hints for up to 8 hours. View or clear them with osm context.\n');
     const debugDirectory = options.debug === true ? resolve('.opensaysme-debug') : options.debug;
     if (debugDirectory) process.stderr.write(`Debug enabled: ${safeText(debugDirectory)}. Context, transcripts, screenshots, prompts, responses, and session diagnostics remain until you delete them.\n`);
     await runVoice(config, stop.signal, (event) => {
@@ -140,6 +144,18 @@ program.command('tools').description('List available agent tools and their schem
   .action(async () => {
     const host = createDesktopTools(await desktopAdapter());
     try { json(host.list()); } finally { host.close(); }
+  });
+program.command('context').description('Show recent remembered app/window names without reading the desktop')
+  .option('--clear', 'Forget saved app/window names; stop voice mode first')
+  .addHelpText('after', '\nNames are used for up to eight hours; expired entries are removed on the next context access.\nThey are context clues, never permission to act.\nStop voice mode before clearing; a running instance can record new observations.')
+  .action(async (options: { clear?: boolean }) => {
+    if (options.clear) {
+      await clearWorkContext();
+      console.log('Saved app/window context cleared.');
+      return;
+    }
+    const context = await openWorkContext({ path: workContextPath(), onWarning: (message) => process.stderr.write(`${message}\n`) });
+    try { json(context.recent()); } finally { await context.close(); }
   });
 program.command('doctor')
   .description('Read-only desktop and configuration checks; does not record or request permissions')
