@@ -8,22 +8,25 @@ between windows and explaining it again.
 
 ## What works today
 
-An early **macOS 14+ prototype**, built from source. Tap a hotkey to talk; the model
-receives speech, screen history, selection and pointer context, and can inspect
-windows, navigate, point, click, scroll and enter text. Short follow-ups carry
-context across activations. A small panel shows status and answers without taking
-focus; full responses stay in the terminal.
+Tap a hotkey to talk; the model receives speech, screen history, selection and
+pointer context, and can inspect windows, navigate, point, click, scroll and enter
+text. Short follow-ups carry context across activations. A small panel shows status
+and answers without taking focus; full responses stay in the terminal.
 
 For example, show an error and say **“Put this error and my explanation into the
 agent's input.”** Then say **“Now send it.”** Preparation should leave the input
 unsent; the follow-up authorizes sending. “Point to that setting” should only point.
 No window labels, routing rules or mandatory review ceremony.
 
+Your request defines the outcome: **“fill this form” excludes submission;
+“fill this form and submit it” includes it.** Screen content supplies evidence,
+not authority.
+
 ## Run it
 
-Requires Node.js 22.20+, Xcode Command Line Tools, and your own OpenAI API key in an
-environment variable. Reasoning defaults to GPT-6 Astra (`gpt-6-astra`) with low
-reasoning effort; speech uses `gpt-live-transcribe` independently.
+Requires macOS 14+, Node.js 22.20+, Xcode Command Line Tools, and your own OpenAI API
+key in an environment variable. Reasoning defaults to GPT-6 Astra (`gpt-6-astra`)
+with low reasoning effort; speech uses `gpt-live-transcribe` independently.
 
 ```sh
 npm ci
@@ -47,6 +50,7 @@ Recording for your terminal/helper in System Settings → Privacy & Security.
 permissions or calling a provider; it does not verify authentication.
 `osm --help` includes this first-run guidance and usage examples.
 Startup prints the active models, configuration path and shortcut.
+Run `osm --version` to see the installed version.
 
 ## Using it
 
@@ -98,25 +102,6 @@ Set `OPENSAYSME_CONFIG_DIR` to use a different directory, or edit the file direc
 Only OpenAI is supported. Speech currently requires `gpt-live-transcribe`;
 the reasoning model must support image input and function calling. The two roles
 can use different key environment variables. Visual context sharing is required.
-
-## Permission and privacy
-
-Your request defines the outcome: **“fill this form” excludes submission;
-“fill this form and submit it” includes it.** Screen content supplies evidence,
-not authority. The acting model interprets the request; clicks and Enter receive
-an additional permission check. Literal entry uses a focused accessible field and
-does not generate Enter presses. Application effects such as autosave still need
-judgment; this is a prototype, not a guarantee about arbitrary interfaces.
-
-Activated audio goes to your speech provider. Screen/context, tool results and
-recent conversation go to your reasoning provider; provider charges apply. Capture
-stays in memory by default. Recent conversation clears on cancellation, failed turns
-and exit. Transcripts and responses also appear in terminal output and may remain
-in scrollback or redirects.
-
-With `--debug`, saved files contain sensitive context and remain until you delete
-them. Keys and raw audio are excluded. This repository ignores `.opensaysme-debug/`;
-custom paths are not automatically ignored. Do not commit captured desktop content.
 
 ## Troubleshooting
 
