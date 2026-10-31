@@ -42,10 +42,9 @@ an in-process tool host, and desktop probes. See
 - Follow the user's priorities. Add abstractions when a concrete
   capability or integration needs them; avoid speculative frameworks and unrelated
   features.
-- Use the tool for real work and record brief observations before choosing the next
-  change. Keep the manual scenarios as examples of success, not a formal release
-  matrix. Add automated regressions for observed failures; do not build a paid live
-  evaluation harness or optimize an unmeasured bottleneck.
+- Use the tool for real work and fix observed friction. Add automated regressions
+  for observed failures; do not build a paid live evaluation harness or optimize
+  an unmeasured bottleneck.
 
 ## Implementation practices
 

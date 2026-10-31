@@ -2,8 +2,7 @@
 
 OpenSaysMe is a macOS 14+ source-built prototype. The immediate goal is to use
 speech and desktop context to get useful work into an existing agent, then improve
-whatever makes that interaction awkward. Keep brief observations in
-[field notes](field-notes.md).
+whatever makes that interaction awkward.
 
 ## Setup
 
@@ -144,8 +143,8 @@ undo input already issued. The feedback panel passes mouse input through, never
 takes keyboard focus, and leaves full responses in the terminal.
 
 Start with a real task such as preparing an error and explanation in your agent's
-input. Follow with “now send it.” The [manual scenarios](field-notes.md#manual-scenarios)
-describe what useful behavior means; run them when they help investigate the current work.
+input. Follow with “now send it.” Preparation should leave the input unsent;
+the follow-up authorizes sending.
 No automated live-provider harness or formal baseline report is required.
 
 ## Context and action behavior
