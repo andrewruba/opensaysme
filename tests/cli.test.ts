@@ -4,10 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { writeConfig } from '../src/config.js';
 import { openWorkContext, workContextPath } from '../src/work-context.js';
 
+// These tests launch real Node+tsx processes, sometimes several per case.
+// Shared Intel macOS runners need more startup headroom than unit tests.
+vi.setConfig({ testTimeout: 15_000 });
 const execute = promisify(execFile);
 const args = ['--import', import.meta.resolve('tsx'), fileURLToPath(new URL('../src/cli.ts', import.meta.url))];
 const directories: string[] = [];
@@ -45,8 +48,7 @@ it('shows a runnable quick start without configuration, keys or desktop access',
   expect(await readdir(directory)).toEqual([]);
 });
 
-// Three real CLI launches need startup headroom on shared Intel macOS runners.
-it('shows and clears saved window names without configuration, credentials or desktop access', { timeout: 15_000 }, async () => {
+it('shows and clears saved window names without configuration, credentials or desktop access', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'opensaysme-cli-context-'));
   directories.push(directory);
   const env = { ...process.env, OPENSAYSME_CONFIG_DIR: directory, OPENAI_API_KEY: '' };

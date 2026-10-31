@@ -306,7 +306,8 @@ describe('natural desktop response', () => {
     await expect(network.reason(network.input)).rejects.toThrow('Could not obtain a valid reasoning response');
   });
 
-  it('bounds total image payload and metadata before making a paid request', async () => {
+  // Validate the full oversized payload, with CPU headroom on shared CI runners.
+  it('bounds total image payload and metadata before making a paid request', { timeout: 15_000 }, async () => {
     const largeImages = fixture();
     largeImages.input.history.frames = Array.from({ length: 12 }, (_, index) => ({
       ...largeImages.input.history.frames[0]!, id: `frame-${index}`, image: {
