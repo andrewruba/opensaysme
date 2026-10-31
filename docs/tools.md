@@ -71,6 +71,13 @@ platform coverage is deferred until after v1. Shared input tools do not depend o
 dedicated agent integration. See the
 [product backlog](../BACKLOG.md) for delivery order and acceptance trials.
 
+The macOS feedback panel is local runtime UI, not an agent tool. During focus/input
+calls, it displays target labels resolved from the host's stored window or current
+input-observation evidence. Unknown, expired or consumed references provide no
+target label. Labels do not grant permission or prove success. Helper-owned windows
+are excluded from discovery, targeting and ScreenCaptureKit display captures by
+executable identity, so panel text is not deliberately fed back as desktop context.
+
 ## Input and execution permissions
 
 The request defines the authorized outcome. “Fill this form” permits filling it

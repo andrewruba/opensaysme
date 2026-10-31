@@ -11,12 +11,17 @@ import type { DebugSession } from './diagnostics.js';
 import { capabilityNames } from './desktop/types.js';
 import { createDesktopTools } from './tools/desktop.js';
 import { openAIActionAuthorizer } from './reasoning/action-authorization.js';
+import { createFeedback } from './feedback.js';
+import { feedbackUnavailable, startFeedbackHelper, type FeedbackCommand, type FeedbackSink } from './desktop/feedback-process.js';
 
 export async function runVoice(config: Config, signal: AbortSignal, emit: (output: VoiceOutput) => void,
   options: { debugDirectory?: string } = {}): Promise<void> {
   const apiKey = process.env[config.speech.apiKeyEnv];
   const reasoningKey = process.env[config.reasoning.apiKeyEnv];
   let debug: DebugSession | undefined;
+  let feedback: ReturnType<typeof createFeedback> | undefined;
+  let feedbackClosed = false;
+  const publish = (event: VoiceOutput) => { feedback?.handle(event); emit(event); };
   if (options.debugDirectory !== undefined && !signal.aborted) {
     try {
       debug = await createDebugSession(options.debugDirectory, {
@@ -40,6 +45,20 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
     const reason = openAIReasoning({ apiKey: reasoningKey, model: config.reasoning.model });
     const authorize = openAIActionAuthorizer({ apiKey: reasoningKey, model: config.reasoning.model });
     const adapter = await desktopAdapter();
+    if (adapter.feedbackHelper) {
+      let sink: FeedbackSink | undefined;
+      let pending: FeedbackCommand | undefined;
+      feedback = createFeedback({
+        send(command) { if (sink) sink.send(command); else pending = command; },
+        async close() { pending = undefined; await sink?.close(); },
+      });
+      // Resolve/start optional UI alongside voice startup; it never delays listening.
+      void Promise.resolve().then(() => adapter.feedbackHelper!()).then((feedbackSpec) => {
+        if (signal.aborted || feedbackClosed) return;
+        sink = startFeedbackHelper(feedbackSpec, () => emit({ type: 'warning', message: feedbackUnavailable }));
+        if (pending) { sink.send(pending); pending = undefined; }
+      }).catch(() => { if (!feedbackClosed) emit({ type: 'warning', message: feedbackUnavailable }); });
+    }
     if (debug) {
       // Read-only checks run alongside startup; neither permission requests nor captures.
       debug.event({ component: 'desktop', event: 'capabilities-check-started' });
@@ -57,10 +76,11 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
     const runtime = new VoiceRuntime({ input, transcribe: openAITranscription, captureContext: adapter.captureContext,
       captureFrame: adapter.captureFrame, reason, createTools: (request, referenceContext, conversation) => createDesktopTools(adapter, { request, referenceContext, conversation, authorize }),
       deadlines: { reasoning: adapter.input ? 95_000 : 50_000 },
-      debug, apiKey, model: config.speech.model, emit });
+      debug, apiKey, model: config.speech.model, emit: publish });
     let resolveStopped!: () => void;
     const stopped = new Promise<void>((resolve) => { resolveStopped = resolve; });
-    const onAbort = () => { debug?.event({ component: 'session', event: 'stop-requested' }); runtime.close(); resolveStopped(); };
+    const onAbort = () => { debug?.event({ component: 'session', event: 'stop-requested' });
+      feedbackClosed = true; void feedback?.close(); runtime.close(); resolveStopped(); };
     signal.addEventListener('abort', onAbort, { once: true });
     const wasRaw = process.stdin.isRaw;
     const wasFlowing = process.stdin.readableFlowing;
@@ -96,6 +116,8 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
     debug?.event({ component: 'session', event: 'failed', data: { code: 'voice-start-or-run-failed' } });
     throw error;
   } finally {
+    feedbackClosed = true;
+    await feedback?.close();
     if (debug) {
       cancelDesktopCommands();
       debug.event({ component: 'session', event: 'stopped' });

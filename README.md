@@ -52,6 +52,8 @@ The voice agent calls desktop tools directly within the local runtime. On macOS 
 
 Recent conversation now carries across activations for follow-ups such as “now submit it,” “click it,” or an answer to a clarification. The runtime keeps up to three completed turns in memory, at most 64 KiB total, with each turn expiring after two minutes. It retains requests, responses, target observations and action outcomes; screenshots, audio and input approvals do not carry over. Each turn still gathers fresh action evidence and checks permission independently. Follow-up interpretation and comparison of changed contents remain model-dependent and need live validation.
 
+On macOS, a small panel shows listening and processing status, the known target while acting, and responses or errors. It passes clicks through and does not take keyboard focus. Responses, including clarification questions, remain for up to a minute or until the next activation; use the hotkey to reply. Long text is shortened in the panel, with the full response retained in the terminal. If the panel is unavailable, voice continues with terminal feedback. Native focus and display behavior still need manual validation.
+
 See the [MVP backlog](BACKLOG.md) for feature status and remaining work.
 
 <!-- demo video goes here -->
@@ -67,7 +69,7 @@ node dist/cli.js setup
 node dist/cli.js       # Requires the API-key environment variable chosen in setup
 ```
 
-Tap Ctrl+Shift+Space to start and stop; Escape cancels pending work and clears recent conversation, but cannot undo input already issued. While idle, press Escape in the CLI terminal to clear conversation; the global Escape shortcut is active only during a turn. Activated audio streams to OpenAI using your key. After stopping, the agent can gather additional evidence and use available desktop actions within your request. Context, recent conversation, tool results, and input authorization checks go to your independently configured reasoning provider. macOS screen capture requires Screen Recording permission, and input also requires Accessibility access.
+Tap Ctrl+Shift+Space to start and stop; Escape cancels pending work, hides the feedback panel, and clears recent conversation, but cannot undo input already issued. While idle, press Escape in the CLI terminal to hide the panel and clear conversation; the global Escape shortcut is active only during a turn. Activated audio streams to OpenAI using your key. After stopping, the agent can gather additional evidence and use available desktop actions within your request. Context, recent conversation, tool results, and input authorization checks go to your independently configured reasoning provider. macOS screen capture requires Screen Recording permission, and input also requires Accessibility access.
 
 Run `npm run dev -- tools` to inspect the catalog without reading the desktop. See [the tool framework](docs/tools.md) for how to add capabilities.
 

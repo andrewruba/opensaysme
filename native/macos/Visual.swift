@@ -129,8 +129,12 @@ private func captureScreenFrame() async throws -> ScreenFrame {
     configuration.height = size.height
     configuration.showsCursor = false
     let capturedAt = captureTimestamp()
+    // Exclude the owned helper application, including a feedback window shown
+    // after this inventory. Window sharingType alone is not a ScreenCaptureKit
+    // exclusion contract. Match executable identity rather than window labels.
+    let helpers = content.applications.filter { isDesktopHelperProcess($0.processID) }
     let image = try await SCScreenshotManager.captureImage(
-        contentFilter: SCContentFilter(display: display, excludingWindows: []), configuration: configuration)
+        contentFilter: SCContentFilter(display: display, excludingApplications: helpers, exceptingWindows: []), configuration: configuration)
     return ScreenFrame(capturedAt: capturedAt,
         display: FrameDisplay(id: String(displayID), bounds: FrameBounds(bounds)),
         image: try encodeFrameImage(image), warnings: [])

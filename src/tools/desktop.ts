@@ -183,6 +183,16 @@ export function createDesktopTools(adapter: Adapter, scope?: RequestScope): Tool
   if (inputs) definitions.push(...inputs.definitions);
   const registry = new ToolRegistry(definitions);
   return { list: () => registry.list(), call: (name, args, signal) => registry.call(name, args, signal),
+    feedbackTarget: (name, args) => {
+      const definition = definitions.find((candidate) => candidate.name === name && candidate.effect !== 'read');
+      const parsed = definition?.input.safeParse(args);
+      if (!parsed?.success) return undefined;
+      const target = definition!.effect === 'focus'
+        ? windows.get(parsed.data.windowId as string)
+        : inputs?.feedbackTarget(parsed.data.observationId as string);
+      return target ? { application: target.application.slice(0, 256),
+        ...(target.title === undefined ? {} : { title: target.title.slice(0, 512) }) } : undefined;
+    },
     conversationEvidence: () => ({ windows: structuredClone([...rememberedWindows.values()]), actions: inputs?.conversationActions() ?? [] }),
     close: () => { registry.close(); inputs?.close(); windows.clear(); rememberedWindows.clear(); conversation.length = 0; } };
 }

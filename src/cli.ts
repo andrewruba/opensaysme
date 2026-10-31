@@ -66,7 +66,7 @@ const program = new Command()
       else if (event.type === 'cancelled') process.stderr.write('Cancelled.\n');
       else if (event.type === 'debug') process.stderr.write(`Debug files: ${safeText(event.directory)}\n`);
       else if (event.type === 'warning') process.stderr.write(`Warning: ${safeText(event.message)}\n`);
-      else process.stderr.write(`Error: ${safeText(event.message)}\n`);
+      else if (event.type === 'error') process.stderr.write(`Error: ${safeText(event.message)}\n`);
     }, { debugDirectory });
     console.log('Stopped.');
   });

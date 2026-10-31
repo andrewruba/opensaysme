@@ -10,11 +10,14 @@ export interface ToolDescriptor {
 export type ToolContent = { type: 'text'; text: string }
   | { type: 'image'; mimeType: 'image/jpeg'; data: string };
 export interface ToolResult { content: ToolContent[]; isError?: boolean }
+export interface ToolFeedbackTarget { application: string; title?: string }
 export interface ToolHost {
   list(): ToolDescriptor[];
   call(name: string, args: unknown, signal: AbortSignal): Promise<ToolResult>;
   /** Historical native evidence only; never reusable tool handles or approvals. */
   conversationEvidence?(): ConversationEvidence;
+  /** Display-only source evidence; resolving a label does not authorize or execute a tool. */
+  feedbackTarget?(name: string, args: Record<string, unknown>): ToolFeedbackTarget | undefined;
   close(): void;
 }
 export interface ToolDefinition {

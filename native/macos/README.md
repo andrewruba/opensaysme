@@ -189,6 +189,29 @@ ID. Sampling also covers microphone startup, stops on the finishing tap or
 cancellation, and stays off during transcription/preview processing. Cursor paths
 carry attention evidence only; the helper does not recognize gesture categories.
 
+`--feedback` is a separate persistent helper for the CLI's small on-screen panel.
+It accepts bounded JSONL `show` messages with `title`, `message` and `detail`, plus
+`hide` and `shutdown`. Limits are 160, 4096 and 512 UTF-16 units respectively;
+unknown fields and malformed/oversized commands close the helper without echoing
+their contents. The only stdout event is `ready`. No keys, credentials, screenshots
+or provider requests enter this process.
+
+The plain-text panel is nonactivating, click-through and absent from the Dock.
+It stays near the top-right of the pointer's display without following every
+pointer movement. Message/detail display is bounded to twelve/three lines; the
+CLI retains the full response. Hiding clears displayed text. EOF, shutdown and
+signals close it; a 120-second native deadline hides stale content even if the
+parent stops updating it. Normal response dismissal is controlled by the CLI.
+
+Discovery and target resolution reject windows owned by the exact helper executable,
+using the kernel-reported process path rather than window titles. Display capture
+explicitly excludes those helper applications from its ScreenCaptureKit filter;
+window capture rejects them. This avoids treating feedback as fresh desktop evidence
+and does not rely solely on the panel's window-sharing setting. Synthetic tests cover
+the strict protocol, executable matching and negative-origin/small-screen placement.
+Panel rendering, focus preservation and capture exclusion still need live macOS
+validation; routine tests display no panel and capture no screen.
+
 Run native identity, conversion and protocol checks without microphone access:
 
 ```sh

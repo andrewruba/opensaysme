@@ -10,6 +10,7 @@ import {
   captureMacOSWindow,
   macOSInput,
   macOSVoiceHelper,
+  macOSFeedbackHelper,
   parseMacOSSnapshot,
   inspectMacOS,
   listMacOSWindows,
@@ -86,6 +87,14 @@ test('voice resolves a built helper without opening the microphone', async () =>
   assert.match(helper.file, /native\/macos\/bin\/opensaysme-desktop$/);
   assert.deepEqual(helper.args, ['--voice']);
   assert.equal(vi.mocked(runCommand).mock.calls.length, previous);
+});
+
+test('feedback resolves the optional native UI without desktop access', async () => {
+  const calls = vi.mocked(runCommand).mock.calls.length;
+  const helper = await macOSFeedbackHelper();
+  assert.match(helper.file, /native\/macos\/bin\/opensaysme-desktop$/);
+  assert.deepEqual(helper.args, ['--feedback']);
+  assert.equal(vi.mocked(runCommand).mock.calls.length, calls);
 });
 
 test('context accepts partial desktop access and passes cancellation to the helper', async () => {

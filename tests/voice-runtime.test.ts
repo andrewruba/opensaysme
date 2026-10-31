@@ -177,6 +177,38 @@ describe('conversational follow-up lifecycle', () => {
 });
 
 describe('live voice turn lifecycle', () => {
+  it('publishes source-backed activity only when a focus or input tool starts', async () => {
+    const target = { application: 'Editor', title: 'Aster agent' };
+    const feedbackTarget = vi.fn<NonNullable<ToolHost['feedbackTarget']>>((name) => name === 'focus_window' ? target : undefined);
+    const host: ToolHost = { list: () => [], call: vi.fn(), feedbackTarget, close: vi.fn() };
+    const f = fixture(undefined, async (input) => {
+      input.onTool!({ callId: 'read', name: 'list_windows', arguments: {}, effect: 'read', phase: 'started' });
+      input.onTool!({ callId: 'focus', name: 'focus_window', arguments: { windowId: 'window-2' }, effect: 'focus', phase: 'started' });
+      input.onTool!({ callId: 'focus', name: 'focus_window', arguments: { windowId: 'window-2' }, effect: 'focus', phase: 'completed' });
+      input.onTool!({ callId: 'input', name: 'click', arguments: { observationId: 'unknown', application: 'Forged' }, effect: 'input', phase: 'started' });
+      return 'Target needs fresh evidence.';
+    }, undefined, undefined, () => host);
+    const turnId = await complete(f, 'Switch to the agent');
+    expect(f.outputs.filter((event) => event.type === 'activity')).toEqual([
+      { type: 'activity', turnId, name: 'focus_window', target },
+      { type: 'activity', turnId, name: 'click' },
+    ]);
+    expect(feedbackTarget).toHaveBeenCalledTimes(2);
+    expect(host.call).not.toHaveBeenCalled();
+    for (const [index, output] of f.outputs.entries()) {
+      if (output.type === 'activity') expect(f.outputs[index - 1]).toEqual({ type: 'state', state: 'acting', turnId });
+    }
+  });
+
+  it('dismisses feedback on idle cancellation without starting native work', () => {
+    const f = fixture();
+    f.runtime.cancel();
+    expect(f.outputs).toEqual([{ type: 'dismiss-feedback' }]);
+    expect(f.commands).toEqual([]);
+    f.runtime.close(); f.runtime.cancel();
+    expect(f.outputs).toHaveLength(1);
+  });
+
   it('uses a fresh tool session for each turn, exposes progress, and records multiple requests', async () => {
     const d = mockDebugSession();
     const hosts: Array<ToolHost & { close: ReturnType<typeof vi.fn> }> = [];
@@ -225,10 +257,12 @@ describe('live voice turn lifecycle', () => {
     f.runtime.cancel(); f.runtime.handle({ type: 'audio-stopped', turnId: id });
     expect(request?.signal.aborted).toBe(true);
     expect(host.close).toHaveBeenCalled();
+    request?.onTool?.({ callId: 'late', name: 'focus_window', arguments: {}, effect: 'focus', phase: 'started' });
     request?.onTool?.({ callId: 'late', name: 'focus_window', arguments: {}, effect: 'focus', phase: 'completed' });
     result.resolve('Late success'); await flush();
     expect(d.debug.tool).not.toHaveBeenCalled();
     expect(f.outputs.some((event) => event.type === 'result')).toBe(false);
+    expect(f.outputs.some((event) => event.type === 'activity')).toBe(false);
     expect(f.outputs.at(-1)).toMatchObject({ type: 'state', state: 'ready' });
   });
 
@@ -524,5 +558,11 @@ describe('live voice turn lifecycle', () => {
     const second = f.id(); f.runtime.handle({ type: 'audio-started', turnId: second });
     await vi.advanceTimersByTimeAsync(120_000);
     expect(f.commands.at(-1)).toEqual({ type: 'stop', turnId: second });
+    expect(f.outputs).toContainEqual({ type: 'warning', turnId: second, message: 'Two-minute recording limit reached; finishing this turn.' });
+    expect(f.outputs.filter((event) => event.type === 'error' && event.turnId === second)).toEqual([]);
+    f.runtime.handle({ type: 'audio-stopped', turnId: second });
+    f.sessions[1]!.final.resolve('Finish this long request'); await flush();
+    expect(f.outputs).toContainEqual(expect.objectContaining({ type: 'result', turnId: second, response: 'Which window?' }));
+    expect(f.outputs.at(-1)).toEqual({ type: 'state', state: 'ready' });
   });
 });

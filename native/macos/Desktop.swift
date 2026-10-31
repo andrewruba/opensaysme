@@ -95,6 +95,9 @@ func requireAccessibility() throws {
 // Public AX APIs do not expose a universal stable window ID. These short-lived
 // tokens fail closed when titles change, the app restarts, or windows collide.
 func targetID(_ application: NSRunningApplication, _ window: AXUIElement) throws -> String {
+    guard !isDesktopHelperProcess(application.processIdentifier) else {
+        throw DesktopError("OpenSaysMe feedback is not a desktop target.", code: "invalid-target")
+    }
     guard let started = try? processStartIdentity(application.processIdentifier) else {
         throw DesktopError("This application's launch identity is unavailable; it cannot be targeted safely.")
     }
@@ -111,7 +114,8 @@ func listWindows() throws -> WindowInventory {
     var omitted = false
     var limited = false
     let deadline = Date().addingTimeInterval(3)
-    for application in NSWorkspace.shared.runningApplications where application.activationPolicy == .regular {
+    for application in NSWorkspace.shared.runningApplications where application.activationPolicy == .regular
+        && !isDesktopHelperProcess(application.processIdentifier) {
         if found.count >= 128 || Date() >= deadline { limited = true; break }
         let app = applicationElement(application)
         AXUIElementSetMessagingTimeout(app, 0.15)
@@ -339,7 +343,7 @@ func captureContext() -> DesktopContext {
 func resolveWindow(_ id: String, deadline: TimeInterval) throws -> (NSRunningApplication, AXUIElement) {
     try requireAccessibility()
     let parts = id.split(separator: ":")
-    guard parts.count == 4, parts[0] == "mac", let pid = Int32(parts[1]), pid > 0,
+    guard parts.count == 4, parts[0] == "mac", let pid = Int32(parts[1]), pid > 0, !isDesktopHelperProcess(pid),
           let application = NSRunningApplication(processIdentifier: pid) else {
         throw DesktopError("Invalid or expired macOS window target. Run desktop inspect again.", code: "invalid-target")
     }
@@ -642,6 +646,7 @@ struct DesktopMain {
             case ["--context"]: try output(captureContext())
             case ["--frame"]: try output(captureFrame())
             case ["--voice"]: VoiceSession().run()
+            case ["--feedback"]: FeedbackSession().run()
             case ["--inspect-input"]: try desktopInput(execute: false)
             case ["--execute-input"]: try desktopInput(execute: true)
             case let args where args.count == 2 && args[0] == "--inspect-window":

@@ -168,8 +168,8 @@ Status: **Partial**
 | ID | Status | Outcome |
 | --- | --- | --- |
 | R01 | Done | Measure audio/transcript delivery, visual preparation, tool time, and stop-to-response latency. |
-| R02 | Todo | Show minimal listening/processing/completion/error feedback usable away from the terminal, including the current target when acting. |
-| R03 | Partial | CLI follow-ups can carry a clarification answer back to the prior request. Feedback near the user's work and live clarification accuracy remain; do not reconfirm an already explicit, still-applicable request. |
+| R02 | Done | A small macOS panel shows runtime status, known action targets, responses and errors without taking focus or mouse input. Bounded responses persist for up to a minute; cancellation/shutdown dismiss the panel, and UI failures leave terminal voice use available. Unit and synthetic native checks cover lifecycle, target labels and layout policy; live focus/display validation remains under P03/P07. |
+| R03 | Partial | Clarification questions appear in the panel; the next hotkey activation can carry an answer back to the prior request through existing conversation history. Live clarification accuracy remains; do not reconfirm an already explicit, still-applicable request. |
 | R04 | Todo | Measure actual completion accuracy, unintended actions, unnecessary clarifications and user corrections against manual interaction baselines; separate capture, authorization and actor latency. |
 | R05 | Todo | Reduce measured capture/preparation delays and unnecessary model/tool round trips; verify improvements against the same trials. |
 

@@ -105,6 +105,10 @@ export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestSc
     };
   });
   return { definitions, invalidate, conversationActions: () => structuredClone(actions),
+    feedbackTarget: (observationId: string) => {
+      if (closed || stopped || !observation || observation.id !== observationId || performance.now() - observation.at > 30_000) return undefined;
+      return structuredClone(observation.frame.window);
+    },
     observe: (frame: Frame) => {
       const id = `observation-${++next}`;
       observation = { id, frame: structuredClone(frame), at: performance.now() };

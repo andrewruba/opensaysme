@@ -101,6 +101,7 @@ export interface DesktopAdapter {
   testHotkey(durationSeconds: number): Promise<DesktopTestResult>;
   testMicrophone(durationSeconds: number): Promise<DesktopTestResult>;
   voiceHelper(): Promise<VoiceHelperSpec>;
+  feedbackHelper?(): Promise<VoiceHelperSpec>;
   captureContext(signal?: AbortSignal): Promise<DesktopContext>;
   captureFrame(signal?: AbortSignal): Promise<ScreenFrameCapture>;
 }

@@ -91,6 +91,7 @@ private func captureCandidate(_ window: SCWindow) -> WindowCaptureCandidate {
 @MainActor
 private func captureWindowImage(_ target: WindowCaptureTarget) async throws -> CapturedWindowImage {
     try Task.checkCancellation()
+    guard !isDesktopHelperProcess(target.processID) else { throw WindowCaptureError.unavailable }
     guard CGPreflightScreenCaptureAccess() else { throw VisualCaptureError.permissionRequired }
     let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
     try Task.checkCancellation()

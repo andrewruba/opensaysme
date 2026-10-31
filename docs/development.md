@@ -51,16 +51,17 @@ configuration and provider keys are unchanged.
 ## Voice interaction
 
 - Keep the CLI running and work in another app. Tap **Ctrl+Shift+Space** to begin.
-- Wait for `listening` and its terminal bell, then say your request. Point or select
-  content when useful; existing desktop context is captured either way.
-  Terminal bell behavior depends on terminal settings; no overlay is installed.
+- Wait for “Listening…” in the macOS panel or `listening` in the terminal, then say
+  your request. Point or select content when useful; existing desktop context is
+  captured either way. The terminal bell depends on terminal settings.
 - Tap **Ctrl+Shift+Space** again to stop audio and freeze visual capture. No hold
   is needed. Silence does not automatically finish a turn.
 - Final transcript feedback appears immediately when transcription finishes.
   `interpreting` prepares visual evidence and runs the agent loop; `inspecting`
   indicates evidence gathering and `acting` a requested focus/input operation (including its internal permission check).
-- **Escape** cancels recording, interpretation, or pending tools and clears recent conversation.
-  While idle, Escape in the CLI terminal clears conversation; global Escape is registered
+- **Escape** cancels recording, interpretation, or pending tools, hides the panel,
+  and clears recent conversation. While idle, Escape in the CLI terminal hides the
+  panel and clears conversation; global Escape is registered
   only during an active turn. **Ctrl+C** quits and cleans up
   native hooks, microphone capture, screenshot processes, and provider requests.
 - The runtime returns to `ready` after each turn. Activation is ignored during
@@ -73,6 +74,23 @@ confirmed, the runtime exits rather than claiming it is ready to record again.
 Automatic history capture stops at the second tap. The agent may request fresh
 desktop evidence while fulfilling that activated turn. Cancellation cannot undo
 an input or focus change already issued to the OS.
+
+The macOS feedback panel starts automatically with voice mode. It stays above the
+current work without taking keyboard focus or intercepting clicks. It shows runtime
+status and known focus/input targets from the tool host's window evidence; an
+unresolved target is labelled as such. These labels do not authorize actions or
+verify their outcome. Answers, clarification questions and errors appear as plain
+text for up to 60 seconds, until replaced by the next activation, or until dismissed.
+Use the hotkey to answer a clarification. Display text is bounded and may be
+shortened; the full response remains in the terminal. No interactive controls or
+additional hotkeys are installed.
+
+The panel uses a separate helper process, with bounded messages over stdin,
+startup and shutdown deadlines, and a native hide failsafe. It makes no provider
+requests and does not delay voice startup; failures warn in the terminal while
+voice continues. Helper-owned windows are excluded from discovery, action targets,
+and ScreenCaptureKit display captures using executable identity. Manual focus,
+Spaces, display-placement and capture-exclusion validation remains outstanding.
 
 ## Conversational follow-ups
 
@@ -165,7 +183,7 @@ Optional full-size copies show cyan trails fading from older to newer observatio
 A filled dot marks the latest trail endpoint, which may be after frame capture; a
 hollow ring marks the last observed pointer at or before capture. Exact point times
 remain in metadata. The clean screenshot accompanies its marked copy so trails do
-not hide the only view of content. No crops or on-screen overlays are created.
+not hide the only view of content. No crops or on-screen cursor-trail overlays are created.
 
 Local rendering uses two workers, a two-second deadline, and an additional 8 MB
 base64 budget. Failures or limits fall back to clean images and timed coordinates,
@@ -278,7 +296,8 @@ logs are created. Images and full attention history are released on completion;
 the bounded conversation record described above can retain text and target evidence
 for follow-ups. Cancellation clears both. Screen
 image payloads are never printed. Results are JSON on stdout; state, transcript,
-and response feedback appear on stderr. Text and attention metadata can contain
+and response feedback appear on stderr. The macOS panel also displays bounded
+status, target and response text, clearing it when hidden. Text and attention metadata can contain
 private content and remain in terminal scrollback or user-created redirects.
 Cancellation aborts requests; data already sent cannot be recalled. `doctor`
 checks key presence only, without authentication, paid requests, or device capture.
@@ -438,7 +457,9 @@ Current validation coverage and limits:
   scripted, so these checks do not establish model understanding or permission accuracy.
 - Native macOS checks cover process identity, Accessibility traversal and protected
   fields, complete-content input fingerprints, capture source/geometry validation,
-  initialization, main-thread resumption, synthetic audio and JPEG encoding. They
+  initialization, main-thread resumption, synthetic audio and JPEG encoding.
+  Feedback tests cover protocol bounds, executable identity and screen placement;
+  runtime tests cover target labels, stale events, dismissal and helper cleanup. They
   issue no desktop input and do not capture the screen.
 - The isolated Linux/X11 suite exercises window discovery, screenshots, cursor
   sampling, recording lifecycle and cleanup. Its synthetic audio and virtual desktop

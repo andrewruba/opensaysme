@@ -139,6 +139,27 @@ function desktopFixture() {
 }
 
 describe('desktop tool primitives', () => {
+  it('resolves feedback labels from discovered windows without extra desktop access', async () => {
+    const { host, adapter, state } = desktopFixture();
+    const args = { windowId: 'window-1' };
+    expect(host.feedbackTarget!('focus_window', args)).toBeUndefined();
+    await host.call('list_windows', {}, signal());
+    const label = host.feedbackTarget!('focus_window', args);
+    expect(label).toEqual({ application: editor.application, title: editor.title });
+    label!.title = 'Changed outside the host';
+    expect(host.feedbackTarget!('focus_window', args)?.title).toBe(editor.title);
+    expect(host.feedbackTarget!('focus_window', { ...args, title: 'Model-supplied target' })).toBeUndefined();
+    expect(host.feedbackTarget!('focus_window', { windowId: editor.id })).toBeUndefined();
+    expect(host.feedbackTarget!('inspect_window', args)).toBeUndefined();
+    expect(adapter.listWindows).toHaveBeenCalledOnce();
+    expect(adapter.focus).not.toHaveBeenCalled(); expect(adapter.inspect).not.toHaveBeenCalled();
+    state.inventory = [browser, { ...editor, title: 'A different project' }];
+    await host.call('list_windows', {}, signal());
+    expect(host.feedbackTarget!('focus_window', args)).toBeUndefined();
+    host.close();
+    expect(host.feedbackTarget!('focus_window', { windowId: 'window-2' })).toBeUndefined();
+  });
+
   it('maps fresh discoveries to prior native sources, rejecting same-title replacements as matches', async () => {
     const { adapter, state } = desktopFixture();
     const prior: ConversationTurn = { id: 'previous', completedAt: '2026-10-30T12:00:00Z', request: 'Switch to the frontend',

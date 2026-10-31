@@ -3,10 +3,13 @@ import { runVoice } from '../src/voice.js';
 import type { DebugSession } from '../src/diagnostics.js';
 import type { NativeVoiceEvent } from '../src/desktop/voice-types.js';
 
-const mocks = vi.hoisted(() => ({ adapter: vi.fn(), start: vi.fn(), debug: vi.fn() }));
+const mocks = vi.hoisted(() => ({ adapter: vi.fn(), start: vi.fn(), debug: vi.fn(), feedback: vi.fn() }));
 vi.mock('../src/desktop/index.js', () => ({ desktopAdapter: mocks.adapter }));
 vi.mock('../src/desktop/voice-process.js', () => ({ startVoiceHelper: mocks.start }));
 vi.mock('../src/debug-session.js', () => ({ createDebugSession: mocks.debug }));
+vi.mock('../src/desktop/feedback-process.js', async (original) => ({
+  ...await original<typeof import('../src/desktop/feedback-process.js')>(), startFeedbackHelper: mocks.feedback,
+}));
 vi.mock('node:readline', () => ({ emitKeypressEvents: vi.fn() }));
 afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
@@ -96,4 +99,75 @@ it('keeps debug startup failures separate from voice configuration errors', asyn
   await expect(runVoice(config, new AbortController().signal, emit, { debugDirectory: '/fixture/debug' })).rejects.toThrow('Set OPENSAYSME_TEST_KEY');
   expect(emit).toHaveBeenCalledWith(expect.objectContaining({ type: 'warning' }));
   expect(JSON.stringify(emit.mock.calls)).not.toContain('private filesystem failure');
+});
+
+it('starts optional feedback, preserves terminal events, and closes the panel on stop', async () => {
+  vi.stubEnv('OPENSAYSME_TEST_KEY', 'fixture-only');
+  const controller = new AbortController();
+  const sink = { send: vi.fn(), close: vi.fn(async () => {}) };
+  mocks.feedback.mockReturnValue(sink);
+  const captureContext = vi.fn(), captureFrame = vi.fn();
+  mocks.adapter.mockResolvedValue({ voiceHelper: async () => ({ file: 'fixture', args: ['--voice'] }),
+    feedbackHelper: async () => ({ file: 'fixture', args: ['--feedback'] }), captureContext, captureFrame });
+  mocks.start.mockImplementation((_spec: unknown, onEvent: (event: NativeVoiceEvent) => void) => {
+    queueMicrotask(() => onEvent({ type: 'ready' }));
+    return { ready: Promise.resolve(), done: new Promise(() => {}), send: vi.fn(), close: vi.fn(async () => {}) };
+  });
+  const emit = vi.fn((event) => { if (event.type === 'state' && event.state === 'ready') setTimeout(() => controller.abort(), 0); });
+  await runVoice(config, controller.signal, emit);
+  expect(mocks.feedback).toHaveBeenCalledWith({ file: 'fixture', args: ['--feedback'] }, expect.any(Function));
+  expect(emit).toHaveBeenCalledWith({ type: 'state', state: 'ready' });
+  expect(sink.send).toHaveBeenLastCalledWith({ type: 'hide' });
+  expect(sink.close).toHaveBeenCalledOnce();
+  expect(captureContext).not.toHaveBeenCalled(); expect(captureFrame).not.toHaveBeenCalled();
+});
+
+it('continues voice when feedback setup fails without exposing the native error', async () => {
+  vi.stubEnv('OPENSAYSME_TEST_KEY', 'fixture-only');
+  const controller = new AbortController();
+  mocks.adapter.mockResolvedValue({ voiceHelper: async () => ({ file: 'fixture', args: [] }),
+    feedbackHelper: async () => { throw new Error('private native data'); }, captureContext: vi.fn(), captureFrame: vi.fn() });
+  mocks.start.mockImplementation((_spec: unknown, onEvent: (event: NativeVoiceEvent) => void) => {
+    setTimeout(() => onEvent({ type: 'ready' }), 0);
+    return { ready: Promise.resolve(), done: new Promise(() => {}), send: vi.fn(), close: vi.fn(async () => {}) };
+  });
+  const emit = vi.fn((event) => { if (event.type === 'state' && event.state === 'ready') controller.abort(); });
+  await runVoice(config, controller.signal, emit);
+  expect(emit).toHaveBeenCalledWith({ type: 'warning', message: expect.stringContaining('Voice continues in the terminal') });
+  expect(JSON.stringify(emit.mock.calls)).not.toContain('private native data');
+  expect(mocks.start).toHaveBeenCalledOnce(); expect(mocks.feedback).not.toHaveBeenCalled();
+});
+
+it('does not launch a late feedback helper after voice shutdown', async () => {
+  vi.stubEnv('OPENSAYSME_TEST_KEY', 'fixture-only');
+  const controller = new AbortController();
+  let resolveFeedback!: (spec: { file: string; args: string[] }) => void;
+  const feedbackSpec = new Promise<{ file: string; args: string[] }>((resolve) => { resolveFeedback = resolve; });
+  mocks.adapter.mockResolvedValue({ voiceHelper: async () => ({ file: 'fixture', args: [] }),
+    feedbackHelper: () => feedbackSpec, captureContext: vi.fn(), captureFrame: vi.fn() });
+  mocks.start.mockImplementation((_spec: unknown, onEvent: (event: NativeVoiceEvent) => void) => {
+    queueMicrotask(() => onEvent({ type: 'ready' }));
+    return { ready: Promise.resolve(), done: new Promise(() => {}), send: vi.fn(), close: vi.fn(async () => {}) };
+  });
+  await runVoice(config, controller.signal, (event) => {
+    if (event.type === 'state' && event.state === 'ready') {
+      controller.abort(); resolveFeedback({ file: 'fixture', args: ['--feedback'] });
+    }
+  });
+  expect(mocks.feedback).not.toHaveBeenCalled();
+});
+
+it('never waits for optional feedback setup when stopping voice', async () => {
+  vi.stubEnv('OPENSAYSME_TEST_KEY', 'fixture-only');
+  const controller = new AbortController();
+  mocks.adapter.mockResolvedValue({ voiceHelper: async () => ({ file: 'fixture', args: [] }),
+    feedbackHelper: () => new Promise(() => {}), captureContext: vi.fn(), captureFrame: vi.fn() });
+  mocks.start.mockImplementation((_spec: unknown, onEvent: (event: NativeVoiceEvent) => void) => {
+    queueMicrotask(() => onEvent({ type: 'ready' }));
+    return { ready: Promise.resolve(), done: new Promise(() => {}), send: vi.fn(), close: vi.fn(async () => {}) };
+  });
+  await runVoice(config, controller.signal, (event) => {
+    if (event.type === 'state' && event.state === 'ready') controller.abort();
+  });
+  expect(mocks.feedback).not.toHaveBeenCalled();
 });

@@ -224,6 +224,11 @@ export async function macOSVoiceHelper(): Promise<VoiceHelperSpec> {
   return { file: helperPath, args: ['--voice'] };
 }
 
+export async function macOSFeedbackHelper(): Promise<VoiceHelperSpec> {
+  await requireHelper();
+  return { file: helperPath, args: ['--feedback'] };
+}
+
 export async function captureMacOSContext(signal?: AbortSignal): Promise<DesktopContext> {
   const result = decode(desktopContextSchema, await invoke(['--context'], 4_000, signal));
   if (result.platform !== 'darwin' || [result.activeWindow, result.pointer?.window]

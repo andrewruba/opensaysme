@@ -283,6 +283,30 @@ describe('request-scoped desktop input', () => {
     expect(value(await host.call('click', { ...f.args, observationId: captured.observationId }, signal())).code).toBe('stale-observation');
     host.close();
   });
+
+  it('resolves input feedback only from a fresh unconsumed native observation', async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const desktop = { input: f.adapter, captureWindow: vi.fn(async () => frame), listWindows: vi.fn(async () => ({ windows: [frame.window], warnings: [] })),
+      inspect: vi.fn(), focus: vi.fn(), captureContext: vi.fn(), captureFrame: vi.fn() };
+    const host = createDesktopTools(desktop, f.scope);
+    await host.call('list_windows', {}, signal());
+    expect(host.feedbackTarget!('click', f.args)).toBeUndefined();
+    await host.call('capture_window', { windowId: 'window-1' }, signal());
+    expect(host.feedbackTarget!('click', f.args)).toEqual({ application: 'Browser', title: 'Contact form' });
+    expect(host.feedbackTarget!('click', { ...f.args, title: 'Forged target' })).toBeUndefined();
+    expect(host.feedbackTarget!('click', { ...f.args, observationId: 'observation-99' })).toBeUndefined();
+    expect(f.adapter.inspect).not.toHaveBeenCalled(); expect(f.adapter.execute).not.toHaveBeenCalled();
+    expect(f.authorize).not.toHaveBeenCalled(); expect(desktop.captureWindow).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(30_001);
+    expect(host.feedbackTarget!('click', f.args)).toBeUndefined();
+    const capture = value(await host.call('capture_window', { windowId: 'window-1' }, signal()));
+    const current = { ...f.args, observationId: capture.observationId };
+    expect(host.feedbackTarget!('click', current)?.application).toBe('Browser');
+    await host.call('click', current, signal());
+    expect(host.feedbackTarget!('click', current)).toBeUndefined();
+    host.close(); f.host.close(); f.inputs.close();
+  });
 });
 
 it('fails closed on unknown effects and refuses an edit interpretation for Enter', () => {

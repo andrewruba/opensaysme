@@ -1,0 +1,78 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { createFeedback } from '../src/feedback.js';
+import type { VoiceOutput } from '../src/runtime.js';
+
+afterEach(() => vi.useRealTimers());
+function fixture() {
+  vi.useFakeTimers();
+  const sink = { send: vi.fn(), close: vi.fn(async () => {}) };
+  const feedback = createFeedback(sink);
+  const state = (state: 'starting' | 'listening' | 'acting' | 'interpreting', turnId = 'one') => feedback.handle({ type: 'state', state, turnId });
+  const response = (text: string, turnId = 'one') => feedback.handle({ type: 'result', turnId, response: text } as VoiceOutput);
+  return { sink, feedback, state, response, last: () => sink.send.mock.lastCall?.[0] };
+}
+
+it('shows status and actual target, then keeps the answer visible when the runtime returns to ready', async () => {
+  const f = fixture(); f.state('starting'); f.state('listening');
+  expect(f.last()).toMatchObject({ type: 'show', title: 'Listening…' });
+  f.state('acting');
+  f.feedback.handle({ type: 'activity', turnId: 'one', name: 'type_text', target: { application: 'Editor', title: 'Agent — project A' } });
+  expect(f.last()).toMatchObject({ title: 'Preparing input…', message: 'Editor — Agent — project A' });
+  f.state('interpreting'); expect(f.last().message).toBe('');
+  f.response('Which project should receive this error?');
+  f.feedback.handle({ type: 'state', state: 'ready' });
+  expect(f.last()).toMatchObject({ message: 'Which project should receive this error?', detail: expect.stringContaining('to reply') });
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(f.last()).toEqual({ type: 'hide' });
+  await f.feedback.close();
+});
+
+it('never replaces a missing target with a previous target or response', async () => {
+  const f = fixture(); f.state('starting');
+  f.feedback.handle({ type: 'activity', turnId: 'one', name: 'click', target: { application: 'Browser', title: 'Form' } });
+  f.feedback.handle({ type: 'activity', turnId: 'one', name: 'click' });
+  expect(f.last().message).toBe('Resolving target…');
+  await f.feedback.close();
+});
+
+it('hides on cancellation, ignores late results and stale-turn events, and clears old response timers on follow-up', async () => {
+  const f = fixture(); f.state('starting'); f.response('Prepared.');
+  await vi.advanceTimersByTimeAsync(59_000);
+  f.state('starting', 'two'); f.state('listening', 'two');
+  expect(f.sink.send.mock.calls.slice(-3).map(([command]) => command.type)).toEqual(['hide', 'show', 'show']);
+  f.response('Old response', 'one'); f.state('acting', 'one');
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(f.last()).toMatchObject({ title: 'Listening…' });
+  f.feedback.handle({ type: 'cancelled', turnId: 'two' });
+  f.response('Late response', 'two');
+  expect(f.last()).toEqual({ type: 'hide' });
+  await f.feedback.close();
+});
+
+it('keeps a failure visible across cancellation cleanup, and idle Escape dismisses it', async () => {
+  const f = fixture(); f.state('starting');
+  f.feedback.handle({ type: 'state', state: 'cancelling', turnId: 'one' });
+  f.feedback.handle({ type: 'error', turnId: 'one', message: 'The microphone is unavailable.' });
+  f.feedback.handle({ type: 'state', state: 'ready' });
+  expect(f.last()).toMatchObject({ message: 'The microphone is unavailable.' });
+  f.feedback.handle({ type: 'dismiss-feedback' });
+  expect(f.last()).toEqual({ type: 'hide' });
+  await f.feedback.close();
+});
+
+it('bounds Unicode display text, ignores diagnostic/transcript payloads, and makes shutdown idempotent', async () => {
+  const f = fixture(); f.state('starting');
+  f.feedback.handle({ type: 'partial', turnId: 'one', text: 'private transcript' });
+  f.feedback.handle({ type: 'debug', directory: '/private/path' });
+  expect(JSON.stringify(f.sink.send.mock.calls)).not.toMatch(/private transcript|private\/path/);
+  f.feedback.handle({ type: 'activity', turnId: 'one', name: 'click', target: { application: 'Editor', title: 'Cut \ud83c' } });
+  expect(f.last().message).toBe('Editor — Cut �');
+  f.response('🌱'.repeat(3000));
+  expect(f.last().message.length).toBeLessThanOrEqual(4096);
+  expect(f.last().message.isWellFormed()).toBe(true);
+  await Promise.all([f.feedback.close(), f.feedback.close()]);
+  const calls = f.sink.send.mock.calls.length;
+  f.state('starting', 'two'); await vi.runAllTimersAsync();
+  expect(f.sink.send).toHaveBeenCalledTimes(calls);
+  expect(f.sink.close).toHaveBeenCalledOnce();
+});

@@ -6,7 +6,7 @@ import { AttentionCollector, attentionSummary } from './attention.js';
 import { RecentConversation, type ConversationTurn } from './conversation.js';
 import type { DebugSession, DiagnosticEvent, DebugTurnResult } from './diagnostics.js';
 import type { ReasoningFactory } from './reasoning/types.js';
-import type { ToolHost } from './tools/types.js';
+import type { ToolFeedbackTarget, ToolHost } from './tools/types.js';
 import { prepareVisualContext, discardVisualContext, visualContextSummary, type PreparedVisualContext } from './visual-input.js';
 import type { VoiceInput } from './desktop/voice-process.js';
 import type { TranscriptionFactory, TranscriptionSession } from './speech/types.js';
@@ -33,6 +33,8 @@ export interface LatencyMeasurements {
 }
 export type VoiceOutput =
   | { type: 'state'; state: VoiceState; turnId?: string }
+  | { type: 'activity'; turnId: string; name: string; target?: ToolFeedbackTarget }
+  | { type: 'dismiss-feedback' }
   | { type: 'partial'; turnId: string; text: string }
   | { type: 'transcript'; turnId: string; text: string }
   | { type: 'cancelled'; turnId: string }
@@ -207,7 +209,7 @@ export class VoiceRuntime {
     turn.startupTimer = this.timer(turn, this.options.deadlines?.startup ?? 10_000,
       () => this.cancel('Microphone did not become ready. Check permissions, then tap to retry.'));
     turn.captureTimer = this.timer(turn, this.options.deadlines?.capture ?? 120_000,
-      () => { this.options.emit({ type: 'error', turnId: turn.id, message: 'Two-minute recording limit reached; finishing this turn.' }); this.toggle(); });
+      () => { this.options.emit({ type: 'warning', turnId: turn.id, message: 'Two-minute recording limit reached; finishing this turn.' }); this.toggle(); });
     try {
       // Begin all three together; desktop access never gates listening.
       this.options.input.send({ type: 'start', turnId: turn.id });
@@ -282,6 +284,11 @@ export class VoiceRuntime {
         }
         try { this.options.debug?.tool?.(turn.id, event); } catch { /* Diagnostics cannot stop a turn. */ }
         this.publishState(event.phase === 'completed' ? 'interpreting' : event.effect === 'read' ? 'inspecting' : 'acting');
+        if (event.phase === 'started' && event.effect !== 'read') {
+          let target: ToolFeedbackTarget | undefined;
+          try { target = turn.tools?.feedbackTarget?.(event.name, event.arguments); } catch { /* Feedback cannot stop tool execution. */ }
+          this.options.emit({ type: 'activity', turnId: turn.id, name: event.name, ...(target ? { target } : {}) });
+        }
       } : undefined,
       onRequest: this.options.debug ? (request, step) => this.options.debug!.request(turn.id, request, step) : undefined,
       onDiagnostic: this.options.debug ? (event) => this.diagnostic(event.component, event.event, turn, event.data) : undefined,
@@ -308,9 +315,11 @@ export class VoiceRuntime {
   }
 
   cancel(message?: string): void {
+    if (this.closed) return;
     this.conversation.clear();
     const turn = this.turn;
-    if (!turn || this.state === 'cancelling' || this.closed) return;
+    if (!turn) { this.options.emit({ type: 'dismiss-feedback' }); return; }
+    if (this.state === 'cancelling') return;
     this.debugResult(turn, message ? { status: 'failed', error: { component: 'runtime', message } } : { status: 'cancelled' });
     this.diagnostic('runtime', message ? 'turn-failed' : 'cancel-requested', turn, message ? { message } : undefined);
     this.publishState('cancelling');
