@@ -13,7 +13,6 @@ struct InputBounds: Codable {
 struct InputAction: Decodable {
     let kind: String
     let text: String?
-    let key: String?
     let deltaY: Int?
 }
 struct InputTarget: Decodable { let windowId: String; let bounds: InputBounds; let point: InputPoint }
@@ -85,7 +84,6 @@ func parseInputCommand(_ data: Data, execute: Bool) throws -> InputCommand {
     case "move_pointer", "click": keys = ["kind"]
     case "scroll": keys = ["kind", "deltaY"]
     case "type_text": keys = ["kind", "text"]
-    case "press_key": keys = ["kind", "key"]
     default: throw InputError.invalid
     }
     guard Set(action.keys) == keys else { throw InputError.invalid }
@@ -100,7 +98,6 @@ func parseInputCommand(_ data: Data, execute: Bool) throws -> InputCommand {
     switch kind {
     case "type_text":
         guard let text = command.action.text, validInputText(text) else { throw InputError.invalid }
-    case "press_key": guard let key = command.action.key, ["Tab", "Enter"].contains(key) else { throw InputError.invalid }
     case "scroll": guard let delta = command.action.deltaY, delta != 0, delta >= -600, delta <= 600 else { throw InputError.invalid }
     default: break
     }

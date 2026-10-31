@@ -42,5 +42,12 @@ xcrun swiftc -O \
 xcrun swiftc -O \
   -target "$(uname -m)-apple-macosx12.0" \
   -module-cache-path "$helper_dir/bin/module-cache" \
+  -framework Carbon \
+  "$helper_dir/InputProtocol.swift" "$helper_dir/KeyboardProtocol.swift" \
+  "$helper_dir/KeyboardProtocolTests.swift" -o "$helper_dir/bin/keyboard-protocol-tests"
+"$helper_dir/bin/keyboard-protocol-tests"
+xcrun swiftc -O \
+  -target "$(uname -m)-apple-macosx12.0" \
+  -module-cache-path "$helper_dir/bin/module-cache" \
   "$helper_dir/FeedbackSupport.swift" "$helper_dir/FeedbackTests.swift" -o "$helper_dir/bin/feedback-tests"
 "$helper_dir/bin/feedback-tests"

@@ -539,6 +539,8 @@ struct DesktopMain {
             case ["--feedback"]: FeedbackSession().run()
             case ["--inspect-input"]: try desktopInput(execute: false)
             case ["--execute-input"]: try desktopInput(execute: true)
+            case ["--inspect-keyboard"]: try output(inspectKeyboard())
+            case ["--execute-keyboard"]: try output(executeKeyboard())
             case let args where args.count == 2 && args[0] == "--inspect-window":
                 try output(inspectWindow(args[1]))
             case let args where args.count == 2 && args[0] == "--capture-window":

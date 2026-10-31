@@ -76,8 +76,8 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
     if (signal.aborted) return;
     const input = startVoiceHelper(spec, (event) => runtime.handle(event));
     const runtime = new VoiceRuntime({ input, transcribe: openAITranscription, captureContext: adapter.captureContext,
-      captureFrame: adapter.captureFrame, reason, createTools: (request, referenceContext, conversation) => createDesktopTools(adapter, { request, referenceContext, conversation, authorize }),
-      deadlines: { reasoning: adapter.input ? 95_000 : 50_000 },
+      captureFrame: adapter.captureFrame, reason, createTools: (request, referenceContext, conversation) => createDesktopTools(adapter, { request, referenceContext, conversation, authorize, activationHotkey }),
+      deadlines: { reasoning: adapter.input || adapter.keyboard ? 95_000 : 50_000 },
       debug, apiKey, model: config.speech.model, emit: publish });
     let resolveStopped!: () => void;
     const stopped = new Promise<void>((resolve) => { resolveStopped = resolve; });

@@ -601,7 +601,7 @@ describe('desktop tool reasoning loop', () => {
     let index = 0;
     const f = fixture(vi.fn<typeof fetch>().mockImplementation(async () => callResponse(callItem('list_windows', {}, `call-${++index}`))));
     const host = toolHost(); f.input.tools = host;
-    const limit = inputEnabled ? 12 : 5;
+    const limit = inputEnabled ? 24 : 5;
     if (inputEnabled) host.list.mockReturnValue([...descriptors, { name: 'click', description: 'Guarded input fixture',
       effect: 'input', inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false } }]);
     await expect(f.reason(f.input)).resolves.toContain('tool limit');

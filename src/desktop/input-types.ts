@@ -4,7 +4,7 @@ import { frameBoundsSchema } from './visual-types.js';
 const point = z.object({ x: z.number().finite(), y: z.number().finite() }).strict();
 // JSON Schema maxLength counts code points; the native protocol bounds UTF-16.
 const inputText = z.string().max(4096).refine((text) => text.length <= 4096, 'Text exceeds 4096 UTF-16 code units.');
-// No arbitrary shortcuts, shell text, clipboard use, held buttons, or key sequences.
+// Pointer-targeted input and literal AX replacement; keyboard input has its own focused-target protocol.
 export const desktopInputSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('move_pointer') }).strict(),
   z.object({ kind: z.literal('click') }).strict(),
@@ -13,7 +13,6 @@ export const desktopInputSchema = z.discriminatedUnion('kind', [
   // Other C0 controls and DEL remain invalid. JS length is UTF-16, as in the helper.
   // eslint-disable-next-line no-control-regex
   z.object({ kind: z.literal('type_text'), text: inputText.regex(/^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]*$/) }).strict(),
-  z.object({ kind: z.literal('press_key'), key: z.enum(['Tab', 'Enter']) }).strict(),
 ]);
 export type DesktopInput = z.infer<typeof desktopInputSchema>;
 export function textRequiresTextArea(text: string): boolean { return /[\t\n\r\u0085\u2028\u2029]/.test(text); }

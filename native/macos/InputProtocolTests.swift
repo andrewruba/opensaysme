@@ -15,7 +15,7 @@ struct InputProtocolTests {
         let parsed = try parseInputCommand(data(["kind": "type_text", "text": "Literal $(text) 🌱"]), execute: false)
         precondition(parsed.target.point.x == -1100 && parsed.action.text == "Literal $(text) 🌱")
         for action: [String: Any] in [["kind": "move_pointer"], ["kind": "click"], ["kind": "scroll", "deltaY": -600],
-                                     ["kind": "press_key", "key": "Tab"], ["kind": "press_key", "key": "Enter"], ["kind": "type_text", "text": ""]] {
+                                     ["kind": "type_text", "text": ""]] {
             _ = try parseInputCommand(data(action), execute: false)
             _ = try parseInputCommand(data(action, fingerprint: String(repeating: "a", count: 64)), execute: true)
             reject(try data(action), execute: true)

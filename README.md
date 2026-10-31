@@ -13,8 +13,10 @@ context, finds the right window, and carries out your request.
 ## What works today
 
 Tap a hotkey to talk; the model receives speech, screen history, selection and
-pointer context, and can inspect windows, navigate, point, click, scroll and enter
-text. Short follow-ups carry context across activations. A small panel shows status
+pointer context, and can inspect windows, navigate, point, click, scroll, type and
+use keyboard shortcuts. It can use Spotlight to open an app and a browser's address
+bar to navigate, including when the app has no open window yet. Short follow-ups
+carry context across activations. A small panel shows status
 and answers without taking focus; full responses stay in the terminal.
 
 For example, show an error and say **“Put this error and my explanation into the
@@ -66,6 +68,13 @@ pointing and selection help the model resolve references.
 - **Escape:** stop pending work and clear follow-up context. While idle, press it
   in the CLI terminal. It cannot undo actions already issued.
 - **Ctrl+C:** quit and release native resources.
+
+The agent can use shortcuts such as Cmd+Space and Cmd+L, then type into the focused
+input. It checks fresh screen and focus evidence between actions. Enter can open a
+requested app or website; sending a message or submitting a form still requires
+that outcome in your request. Escape, Ctrl+C and your activation shortcut stay
+reserved for you. Keyboard typing inserts single-line text; multiline preparation
+uses direct text replacement in supported inputs.
 
 ```sh
 osm hotkey                   # press a key combination at the capture prompt

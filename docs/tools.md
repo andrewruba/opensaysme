@@ -10,7 +10,7 @@ the same Node.js process; only offered, validated operations can execute.
 | --- | --- |
 | `list_windows` | Discover current windows with automatic references. |
 | `inspect_desktop` | Read current active-window, selection and pointer context. |
-| `capture_screen` | Capture the display under the pointer. |
+| `capture_screen` | Capture the display under the pointer and, when stable, return keyboard focus evidence and a `keyboardObservationId`. |
 | `inspect_window` | Read bounded Accessibility text/roles without focusing a discovered window. |
 | `capture_window` | Capture that window's image without focusing it, including when obscured. |
 | `focus_window` | Recheck, focus and verify a discovered target. |
@@ -18,9 +18,10 @@ the same Node.js process; only offered, validated operations can execute.
 | `click` | Issue a single left click after an independent request/effect check. |
 | `scroll` | Scroll vertically by up to 600 logical pixels; positive means content down. |
 | `type_text` | Replace a focused writable input's value with literal text, up to 4096 UTF-16 units. |
-| `press_key` | Send Tab or Enter to the focused editable input. Enter requires submission authority. |
+| `press_key` | Press and release one named key with optional Cmd/Ctrl/Alt/Shift modifiers at the current keyboard focus. |
+| `type_keyboard_text` | Insert literal single-line text at the focused caret or replace its selection, up to 4096 UTF-16 units. |
 
-Run `npm run dev -- tools` to inspect the catalog without reading the desktop or
+Run `osm tools` to inspect the catalog without reading the desktop or
 calling a provider. macOS 14+ is the only supported platform.
 
 Window references are internal handles, not names users must maintain. Unchanged
@@ -37,6 +38,13 @@ in logical points, image dimensions and capture time. It requires separate
 Accessibility and Screen Recording grants. Hidden, minimized or ambiguous sources
 fail explicitly; no foreground screenshot is substituted.
 
+`capture_screen` checks keyboard focus before and after capture. Its
+`keyboardFocus` includes the app, role, labels, bounded value, truncation flag and
+whether typing is supported. When focus changes or cannot be inspected, the
+screenshot remains available but no keyboard observation is issued. The display
+under the pointer may differ from the display containing keyboard focus; inspect
+both the image and focus evidence before acting.
+
 ## Requests and effects
 
 “Fill this form” permits entry and excludes submission. “Fill this form and submit
@@ -46,17 +54,23 @@ likewise separate outcomes. Screen text, screenshots and model plans never grant
 authority. Ask only about material ambiguity or needed additional authority.
 
 The acting model interprets every action against the current request and relevant
-prior user speech. Routine point/scroll/Tab/literal-entry calls execute without a
-second model call. Tool results label this as `actor-request`; they do not invent
-an independent approval or supporting quote.
+prior user speech. Pointing, scrolling, literal text entry and unmodified
+Tab/arrows/Home/End/PageUp/PageDown execute without a second model call. Tool
+results label this as `actor-request`; they do not invent an independent approval
+or supporting quote.
 
-Every click and Enter retains an independent check. Native roles and button labels
-do not reliably reveal whether a click sends, deletes or executes, so the runtime
+Every click and other key press, including shortcuts and Enter, gets an independent
+check. Native roles and button labels do not reliably reveal whether a click sends,
+deletes or executes, so the runtime
 does not guess which labels are harmless. The checker sees the original request,
 current image/control and relevant history, has no tools, and returns a strict
 allow/deny/clarify decision. Approval must quote current user speech and match the
-effect. Unknown, malformed or unavailable decisions do not execute. Enter must
-have a submit effect. Results identify this path as `independent-check`.
+effect. Unknown, malformed or unavailable decisions do not execute. Unmodified
+Enter can have a navigation effect when current evidence shows it opens the
+requested app from Spotlight or site from a browser address bar. Otherwise Enter,
+including modified Enter, requires a submit effect; it cannot be classified as
+draft editing. Opening a site does not authorize submitting its forms. Results
+identify this path as `independent-check`.
 
 This is a deliberate prototype tradeoff. Routine actions depend on the acting
 model honoring the request; they are not independently authorized. Text can
@@ -66,9 +80,9 @@ behavior with scripted decisions, not semantic accuracy on arbitrary interfaces.
 
 ## Native input checks
 
-Input requires the latest `capture_window` observation and coordinates in that
-image's pixels. Focus the window before capturing. The host maps pixels through
-its logical desktop bounds; native code hit-tests the visible control and checks
+Pointer actions and `type_text` require a recent `capture_window` `observationId`
+and coordinates in that image's pixels. Focus the window before capturing. The host
+maps pixels through its logical desktop bounds; native code hit-tests the visible control and checks
 window identity, focus, geometry, protected fields and held/user input.
 
 The target control's metadata, value and interaction state are checked again just
@@ -77,22 +91,50 @@ be complete. Unrelated fields, timers and badges can change without rejecting th
 input; pending submission checks do not freeze other form values. Inspect material
 content when deciding to commit. No check makes the OS operation atomic.
 
-Observations expire and are consumed before input. Focus/discovery/capture changes
-invalidate them; recapture after input to inspect the result. Unsupported targets
-fail explicitly, including purely visual targets without accessible hit evidence.
-
 `type_text` requires an already-focused writable AXTextField or AXTextArea. Literal
 tabs and line breaks require AXTextArea; they never synthesize Tab/Enter. Empty text
 clears the field. Exact value read-back is required for `verified`; app normalization
-or rejection is uncertain. There is no clipboard or keyboard-entry fallback.
-Arbitrary shortcuts, held keys and model-generated shell commands are unavailable.
+or rejection is uncertain. This tool does not automatically fall back to keyboard
+typing or paste.
+
+Keyboard tools instead require a recent `capture_screen` `keyboardObservationId`,
+with no pointer coordinates or discovered window. This permits system shortcuts
+such as Cmd+Space and typing into Spotlight to open an app that has no window yet.
+The native helper rechecks the focused app/control, process identity, editable
+value/selection, protected fields and user input before dispatch. Changing
+noneditable Terminal output does not invalidate shortcuts.
+
+`press_key` accepts A–Z, 0–9, Space, Tab, Enter, Backspace, Delete, arrow keys,
+Home, End, PageUp and PageDown. Supply `modifiers: []` for an unmodified key or a
+unique combination of `Cmd`, `Ctrl`, `Alt` and `Shift`. Letter/digit shortcuts use
+US physical positions; literal keyboard text supports Unicode. Escape, any
+Ctrl+C combination, the configured activation shortcut, and Cmd/Ctrl+V paste
+shortcuts are unavailable to the agent. There are no held-key or shell tools.
+
+`type_keyboard_text` inserts at the caret or replaces the current selection; it
+does not replace the whole field automatically. It supports focused AXTextField
+and AXComboBox controls without writable AX values, and AXTextArea controls with
+a writable value or selected-text attribute. Tabs, line breaks and control
+characters are rejected. Use `type_text` for multiline preparation rather than
+simulating it with Enter. Neither text tool uses the clipboard.
+
+Observations expire after 30 seconds and are consumed before input. Mouse and
+keyboard tools share invalidation and stop state: recapture after each action to
+inspect its outcome and obtain a fresh observation. Unsupported targets fail
+explicitly, including purely visual pointer targets without accessible hit evidence.
 
 Pointer position or exact text can be verified locally. Click/scroll/key events
-report `issued`, which does not prove application success. Uncertainty blocks
-further input for the turn. An issued submission also stops input to prevent a
-blind duplicate; read tools remain available. `not-issued` permits a fresh
-observation and retry. Escape/cancellation stops pending work and releases paired
-key/button events, but cannot undo effects already issued.
+report `issued`, which does not prove application success. A denied or
+clarify-required action, uncertain outcome, or issued submission stops both input
+paths and window focusing for the turn; read tools remain available. Recapturing
+does not resume stopped input. `not-issued` permits a fresh observation and retry.
+Escape/cancellation stops pending work and releases paired key/button events,
+but cannot undo effects already issued. Keyboard typing checks cancellation and
+focus between event pairs; partial typing is uncertain and is not retried automatically.
+
+The reasoning loop defaults to at most 24 tool calls within 90 seconds when input
+tools are available, or five calls within 45 seconds otherwise. These are runtime
+bounds, not a required interaction sequence.
 
 ## Follow-ups and feedback
 

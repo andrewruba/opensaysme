@@ -3,6 +3,7 @@ import type { DesktopContext, VoiceHelperSpec } from './voice-types.js';
 import { frameBoundsSchema, frameImageSchema, type ScreenFrameCapture } from './visual-types.js';
 import type { DesktopInputAdapter } from './input-types.js';
 import type { HotkeyCaptureResult } from './hotkey-process.js';
+import type { KeyboardAdapter } from './keyboard-types.js';
 
 export const capabilityNames = [
   'activeWindow', 'focusWindow', 'selectedText', 'globalHotkey', 'microphone', 'screenCapture',
@@ -84,6 +85,7 @@ export type WindowFrameCapture = z.infer<typeof windowFrameCaptureSchema>;
 
 export interface DesktopAdapter {
   input?: DesktopInputAdapter;
+  keyboard?: KeyboardAdapter;
   probe(): Promise<DesktopReport>;
   listWindows(signal?: AbortSignal): Promise<WindowInventory>;
   // Omitted when the platform has no implementation; do not advertise a phantom tool.

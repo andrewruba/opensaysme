@@ -85,15 +85,33 @@ no key events and uses no clipboard. Exact read-back reports `verified`; a chang
 normalized or unreadable result is `uncertain`. There is no fallback typing/paste.
 Other control characters and DEL are rejected.
 
-Pointer movement uses `CGWarpMouseCursorPosition`. Click, scroll and unmodified
-Tab/Return use `CGEvent.postToPid`; keys require the same focused editable input.
+Pointer movement uses `CGWarpMouseCursorPosition`. Click and scroll use
+`CGEvent.postToPid` with the validated target application.
 Down/up pairs briefly defer SIGTERM while queuing release; the parent has a bounded
 SIGKILL fallback. Pointer position or text can be locally verified, while other
 input reports only `issued`. Failures after possible dispatch are uncertain.
 
+`--inspect-keyboard` reads the system's focused AX element, including accessory
+interfaces such as Spotlight. `--execute-keyboard` takes strict JSON containing a
+typed action and that focus fingerprint over stdin. It supports named keys with
+Cmd/Ctrl/Alt/Shift and literal single-line Unicode typing. Keys use physical US
+positions; text does not. The keyboard fingerprint includes process launch identity,
+focused control/window labels, identifier, bounds and HID counters. Editable
+controls also bind their value and selection; changing terminal output does not
+invalidate shortcuts. Returned values are bounded and marked when truncated.
+Held keys/buttons, changed focus and protected fields reject dispatch. Typing needs
+a text field or combo box even without a writable AX value; text areas must expose
+a writable AX value or selected-text attribute, excluding terminal output.
+Literal typing inserts at the current selection, unlike AX value replacement.
+Escape, Ctrl+C, clipboard paste shortcuts and control characters in typed text are
+rejected. Key events go through the HID event stream so system shortcuts work.
+Each down/up pair defers termination until release; longer typing checks cancellation
+and focus between pairs. Partial typing is `uncertain`, never retried automatically.
+
 The helper verifies mechanics and target evidence. Request interpretation belongs
-to the acting model; the TypeScript host adds an independent check for clicks and
-Enter, consumes observations, and stops input after submission or uncertainty.
+to the acting model; the TypeScript host checks consequential keys/shortcuts and
+clicks against the request, consumes observations, and stops input after submission
+or uncertainty.
 Direct local helper use does not interpret speech. OS dispatch is not atomic and
 arbitrary application side effects cannot be proved from issued events.
 

@@ -3,6 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { windowInventorySchema, windowInspectionSchema } from './desktop/types.js';
 import { desktopContextSchema } from './desktop/voice-types.js';
 import { desktopInputSchema, inputEvidenceSchema, inputResultSchema } from './desktop/input-types.js';
+import { keyboardActionSchema, keyboardEvidenceSchema } from './desktop/keyboard-types.js';
 
 const windowSchema = windowInventorySchema.shape.windows.element;
 export const conversationEvidenceSchema = z.object({
@@ -18,6 +19,11 @@ export const conversationEvidenceSchema = z.object({
     effect: z.enum(['point', 'navigate', 'edit', 'submit', 'unknown']),
     status: inputResultSchema.shape.status,
   }).strict()).max(12),
+  keyboardActions: z.array(z.object({
+    capturedAt: z.string().datetime(), action: keyboardActionSchema,
+    target: keyboardEvidenceSchema.omit({ fingerprint: true }),
+    effect: z.enum(['navigate', 'edit', 'submit']), status: inputResultSchema.shape.status,
+  }).strict()).max(12).optional(),
 }).strict();
 export type ConversationEvidence = z.infer<typeof conversationEvidenceSchema>;
 export const conversationTurnSchema = z.object({

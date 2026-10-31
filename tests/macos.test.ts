@@ -12,6 +12,7 @@ import {
   captureMacOSFrame,
   captureMacOSWindow,
   macOSInput,
+  macOSKeyboard,
   macOSVoiceHelper,
   recordMacOSHotkey,
   macOSFeedbackHelper,
@@ -27,6 +28,33 @@ vi.mock('../src/desktop/hotkey-process.js', () => ({ recordHotkey: vi.fn() }));
 vi.mock('../src/desktop/process.js', async (importOriginal) => ({
   ...await importOriginal<typeof import('../src/desktop/process.js')>(), runCommand: vi.fn(),
 }));
+
+test('keyboard adapter sends validated actions through stdin and preserves native focus evidence', async () => {
+  const signal = new AbortController().signal;
+  const target = { fingerprint: 'a'.repeat(64), application: 'Spotlight', role: 'AXTextField',
+    title: '', description: 'Search', value: '', editable: true, valueTruncated: false };
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(target));
+  assert.deepEqual(await macOSKeyboard.inspect(signal), target);
+  assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.slice(1), [['--inspect-keyboard'], { timeoutMs: 3000, signal }]);
+  const action = { kind: 'type_keyboard_text', text: 'Google Chrome' } as const;
+  vi.mocked(runCommand).mockResolvedValueOnce('{"status":"issued"}');
+  assert.deepEqual(await macOSKeyboard.execute(action, target.fingerprint, signal), { status: 'issued' });
+  assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.slice(1), [['--execute-keyboard'], {
+    input: JSON.stringify({ action, fingerprint: target.fingerprint }), timeoutMs: 5000, signal,
+  }]);
+  const count = vi.mocked(runCommand).mock.calls.length;
+  await assert.rejects(macOSKeyboard.execute(action, 'bad fingerprint', signal));
+  await assert.rejects(macOSKeyboard.execute({ kind: 'type_keyboard_text', text: 'line\nenter' }, target.fingerprint, signal));
+  await assert.rejects(macOSKeyboard.execute(action, target.fingerprint, AbortSignal.abort()));
+  assert.equal(vi.mocked(runCommand).mock.calls.length, count);
+});
+
+test('keyboard inspection preserves known failures without exposing arbitrary native output', async () => {
+  vi.mocked(runCommand).mockResolvedValueOnce('{"error":"secure-field"}');
+  await assert.rejects(macOSKeyboard.inspect(new AbortController().signal), /secure text fields/);
+  vi.mocked(runCommand).mockResolvedValueOnce('{"value":"private focused text"}');
+  await assert.rejects(macOSKeyboard.inspect(new AbortController().signal), { message: 'The macOS desktop helper returned an invalid response.' });
+});
 
 test('rejects inactive platforms instead of claiming desktop support', async () => {
   for (const platform of ['linux', 'win32'] as const) {

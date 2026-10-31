@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import type { DesktopInput, InputEvidence } from '../desktop/input-types.js';
 import type { WindowFrameCapture } from '../desktop/types.js';
+import type { KeyboardAction, KeyboardEvidence } from '../desktop/keyboard-types.js';
+import type { ScreenFrameCapture } from '../desktop/visual-types.js';
 import type { AttentionHistory } from '../attention.js';
 import type { ConversationTurn } from '../conversation.js';
 
@@ -21,28 +23,44 @@ export interface ActionReview {
   point: { x: number; y: number };
   completed: Array<{ action: DesktopInput['kind']; effect: PermissionDecision['effect']; status: string }>;
 }
-export type ActionAuthorizer = (review: ActionReview, signal: AbortSignal) => Promise<PermissionDecision>;
+export interface KeyboardReview {
+  request: string;
+  referenceContext: AttentionHistory['contexts'];
+  conversation?: ConversationTurn[];
+  action: KeyboardAction;
+  target: KeyboardEvidence;
+  frame: ScreenFrameCapture;
+  completed: Array<{ action: string; effect: PermissionDecision['effect']; status: string }>;
+}
+export type ActionAuthorizer = (review: ActionReview | KeyboardReview, signal: AbortSignal) => Promise<PermissionDecision>;
 
 /** Routine operations follow the actor's interpretation of the spoken request.
- * Clicks can commit regardless of their labels; Enter always gets a separate check. */
+ * Clicks can commit regardless of their labels. */
 export function routineEffect(action: DesktopInput): 'point' | 'navigate' | 'edit' | undefined {
   switch (action.kind) {
     case 'move_pointer': return 'point';
     case 'scroll': return 'navigate';
     case 'type_text': return 'edit';
-    case 'press_key': return action.key === 'Tab' ? 'navigate' : undefined;
     case 'click': return undefined;
   }
 }
 
-/** An independent decision is used once for the exact click or Enter reviewed.
+/** An independent decision is used once for the exact click reviewed.
  * The actor cannot supply its effect, supporting quote or approval. */
 export function permits(request: string, action: DesktopInput, decision: PermissionDecision): boolean {
   if (decision.decision !== 'allow' || !decision.requestQuote.trim()
     || !request.includes(decision.requestQuote) || decision.effect === 'unknown') return false;
   switch (action.kind) {
-    case 'press_key': return action.key === 'Enter' && decision.effect === 'submit';
     case 'click': return ['navigate', 'edit', 'submit'].includes(decision.effect);
     default: return false;
   }
+}
+
+export function permitsKeyboard(request: string, action: KeyboardAction, decision: PermissionDecision): boolean {
+  if (decision.decision !== 'allow' || !decision.requestQuote.trim() || !request.includes(decision.requestQuote)
+    || !['navigate', 'edit', 'submit'].includes(decision.effect)) return false;
+  // Enter can open a requested app/site, or commit an action. It is never a
+  // substitute for literal line breaks while preparing an unsent draft.
+  return action.kind !== 'press_key' || action.key !== 'Enter' || decision.effect === 'submit'
+    || (action.modifiers.length === 0 && decision.effect === 'navigate');
 }

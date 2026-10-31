@@ -150,6 +150,27 @@ function desktopFixture() {
   return { adapter, state, host: createDesktopTools(adapter) };
 }
 
+it('exposes keyboard focus from screen capture even without discoverable windows', async () => {
+  const f = desktopFixture(); f.state.inventory = [];
+  const keyboard = {
+    inspect: vi.fn(async () => ({ fingerprint: 'a'.repeat(64), application: 'Terminal', role: 'AXTextArea',
+      title: '', description: '', value: '', valueTruncated: false, editable: false })),
+    execute: vi.fn(async () => ({ status: 'issued' as const })),
+  };
+  const host = createDesktopTools({ ...f.adapter, keyboard }, { request: 'Open chess on Chrome.',
+    authorize: async () => ({ decision: 'allow', effect: 'navigate', requestQuote: 'Open chess on Chrome.', reason: 'Open Spotlight.' }) });
+  expect(value(await host.call('list_windows', {}, signal())).windows).toEqual([]);
+  const capture = value(await host.call('capture_screen', {}, signal()));
+  expect(capture.keyboardFocus.application).toBe('Terminal');
+  const result = value(await host.call('press_key', { keyboardObservationId: capture.keyboardObservationId, key: 'Space', modifiers: ['Cmd'] }, signal()));
+  expect(result).toMatchObject({ status: 'issued', effect: 'navigate', inputStopped: false });
+  expect(keyboard.execute).toHaveBeenCalledWith({ kind: 'press_key', key: 'Space', modifiers: ['Cmd'] }, 'a'.repeat(64), expect.any(AbortSignal));
+  const evidence = host.conversationEvidence!();
+  expect(evidence.keyboardActions).toMatchObject([{ action: { kind: 'press_key', key: 'Space' }, status: 'issued' }]);
+  expect(JSON.stringify(evidence)).not.toMatch(/keyboardObservationId|fingerprint/);
+  host.close(); f.host.close();
+});
+
 describe('desktop tool primitives', () => {
   it('resolves feedback labels from discovered windows without extra desktop access', async () => {
     const { host, adapter, state } = desktopFixture();

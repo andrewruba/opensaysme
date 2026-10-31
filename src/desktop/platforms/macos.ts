@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { activationHotkeySchema, defaultActivationHotkey } from '../../hotkey.js';
 import { recordHotkey, type HotkeyCaptureResult } from '../hotkey-process.js';
+import { keyboardActionSchema, keyboardEvidenceSchema, type KeyboardAdapter } from '../keyboard-types.js';
 
 import { runCommand } from '../process.js';
 import { DesktopError, desktopCommandError, desktopIssue, desktopMessages, desktopIssueSchema } from '../errors.js';
@@ -160,6 +161,20 @@ export const macOSInput: DesktopInputAdapter = {
   execute: async (target, action, fingerprint, signal) => {
     if (!/^[a-f0-9]{64}$/.test(fingerprint)) throw new Error('Invalid macOS input evidence.');
     return decode(inputResultSchema, await inputCommand('execute', target, action, fingerprint, signal));
+  },
+};
+
+export const macOSKeyboard: KeyboardAdapter = {
+  inspect: async (signal) => decode(keyboardEvidenceSchema, await invoke(['--inspect-keyboard'], 3_000, signal)),
+  execute: async (action, fingerprint, signal) => {
+    const parsed = keyboardActionSchema.parse(action);
+    if (!/^[a-f0-9]{64}$/.test(fingerprint)) throw new Error('Invalid keyboard evidence.');
+    signal.throwIfAborted(); await requireHelper(); signal.throwIfAborted();
+    try {
+      return decode(inputResultSchema, await runCommand(helperPath, ['--execute-keyboard'], {
+        input: JSON.stringify({ action: parsed, fingerprint }), timeoutMs: 5_000, signal,
+      }));
+    } catch (error) { signal.throwIfAborted(); throw desktopCommandError(error); }
   },
 };
 

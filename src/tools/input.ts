@@ -9,6 +9,7 @@ import { conversationSchema, type ConversationTurn, type ConversationEvidence } 
 
 type Frame = Extract<WindowFrameCapture, { status: 'ok' }>;
 export interface RequestScope {
+  activationHotkey?: string;
   request: string; authorize?: ActionAuthorizer; referenceContext?: ActionReview['referenceContext'];
   conversation?: ConversationTurn[];
 }
@@ -19,32 +20,33 @@ const descriptions = {
   click: 'Issue one left click on a visible, accessible target. A click may edit or submit.',
   scroll: 'Scroll vertically at the target; positive deltaY scrolls content down, negative up, in logical pixels (at most 600).',
   type_text: 'Replace the entire value of the focused writable Accessibility input with literal text (at most 4096 UTF-16 code units). Tabs and line breaks require AXTextArea; ordinary single-line text also supports AXTextField. Preserves exact text, including indentation and line endings, without keyboard events or clipboard use. This is not append. Empty text clears the field. Some applications autosave; entering text does not authorize sending. Unsupported targets fail without a typing or paste fallback.',
-  press_key: 'Send one unmodified Tab or Enter to the already-focused editable input under this point. Enter requires submission authority. Tab can trigger blur/save. No other keys or shortcuts are supported.',
 };
 
-export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestScope) {
+export interface InputSession { stopped: boolean; revision: number }
+
+export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestScope,
+  session: InputSession = { stopped: false, revision: 0 }) {
   // Copy the original finalized request; neither tool arguments nor captured content can replace it.
   const request = scope?.request ?? '';
   const authorize = scope?.authorize;
   const referenceContext = structuredClone(scope?.referenceContext ?? []);
   const conversation = conversationSchema.parse(scope?.conversation ?? []);
   const actions: ConversationEvidence['actions'] = [];
-  let observation: { id: string; frame: Frame; at: number } | undefined;
+  let observation: { id: string; frame: Frame; at: number; revision: number } | undefined;
   let next = 0;
-  let stopped = false;
   let closed = false;
   const completed: ActionReview['completed'] = [];
-  const invalidate = () => { observation = undefined; };
+  const invalidate = () => { observation = undefined; session.revision++; };
   const definitions: ToolDefinition[] = desktopInputSchema.options.map((schema) => {
     const kind = schema.shape.kind.value;
     const parameters = Object.fromEntries(Object.entries(schema.shape).filter(([name]) => name !== 'kind'));
     return { name: kind, effect: 'input', timeoutMs: 20_000, input: z.object({ ...position, ...parameters }).strict(),
-      description: `${descriptions[kind]} Requires a recent capture_window observationId and x/y in that image's pixels, not screen coordinates. Target window must already be focused and unobscured. You must stay within the original request; only clicks and Enter receive a separate permission check. Other input uses your request interpretation with native target checks. Tools cannot grant permission. Every issued action invalidates observations; capture again to inspect the outcome. Stop after a submission or uncertain outcome. macOS only.`,
+      description: `${descriptions[kind]} Requires a recent capture_window observationId and x/y in that image's pixels, not screen coordinates. Target window must already be focused and unobscured. You must stay within the original request; clicks receive a separate permission check. Other input uses your request interpretation with native target checks. Tools cannot grant permission. Every issued action invalidates observations; capture again to inspect the outcome. Stop after a submission or uncertain outcome. macOS only.`,
       run: async (args, signal): Promise<ToolResult> => {
-        if (closed || stopped) return toolError('input-stopped', 'Input has stopped for this turn after a commitment, uncertain outcome, or close. Inspect and report the result; do not retry.');
+        if (closed || session.stopped) return toolError('input-stopped', 'Input has stopped for this turn after a commitment, uncertain outcome, or close. Inspect and report the result; do not retry.');
         if (!request.trim() || request.length > 65_536) return toolError('request-required', 'Input requires the original user request.');
         const seen = observation;
-        if (!seen || seen.id !== args.observationId || performance.now() - seen.at > 30_000) {
+        if (!seen || seen.id !== args.observationId || seen.revision !== session.revision || performance.now() - seen.at > 30_000) {
           return toolError('stale-observation', 'Capture the intended window again before acting. Previous images are not current action targets.');
         }
         const x = args.x as number, y = args.y as number;
@@ -72,28 +74,31 @@ export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestSc
           invalidate();
           return desktopToolError('unsupported-text-target');
         }
-        if ((action.kind === 'type_text' || action.kind === 'press_key') && !evidence.focused) {
+        if (action.kind === 'type_text' && !evidence.focused) {
           invalidate();
-          return toolError('input-not-focused', 'The editable input must already have keyboard focus. Focus the intended field, capture it again, then enter text or press a key. No input was issued.');
+          return toolError('input-not-focused', 'The editable input must already have keyboard focus. Focus the intended field, capture it again, then enter text. No input was issued.');
         }
         let effect: 'point' | 'navigate' | 'edit' | 'submit' | undefined = routineEffect(action);
         let permission: { mode: 'actor-request' | 'independent-check'; requestQuote?: string; reason: string } = {
           mode: 'actor-request', reason: 'Actor-scoped routine input; no separate permission check.',
         };
         if (effect === undefined) {
-          if (!authorize) return toolError('permission-unavailable', 'Clicks and Enter require an independent request check. No input was issued.');
+          if (!authorize) return toolError('permission-unavailable', 'Clicks require an independent request check. No input was issued.');
           const decision = permissionDecisionSchema.parse(await authorize(structuredClone({ request, referenceContext, conversation, action, target: evidence,
             frame: seen.frame, point, completed }), signal));
           signal.throwIfAborted();
-          if (!permits(request, action, decision)) return toolError('outside-request',
-            `Input was not issued: ${decision.reason} Do not repeat this action or ask to expand the request merely because a control exists; clarify only if necessary to fulfill the request.`);
+          if (!permits(request, action, decision)) {
+            invalidate(); session.stopped = true;
+            return toolError('outside-request',
+              `Input was not issued: ${decision.reason} Input stopped for this turn. Do not repeat this action or ask to expand the request merely because a control exists; clarify only if necessary to fulfill the request.`);
+          }
           effect = decision.effect as 'navigate' | 'edit' | 'submit';
           permission = { mode: 'independent-check', requestQuote: decision.requestQuote, reason: decision.reason };
         }
         signal.throwIfAborted();
-        if (closed || observation !== seen || performance.now() - seen.at > 30_000) return toolError('stale-observation', 'The observation expired while checking the target or request. Inspect again.');
+        if (closed || session.stopped || observation !== seen || seen.revision !== session.revision || performance.now() - seen.at > 30_000) return toolError('stale-observation', 'The observation expired while checking the target or request. Inspect again.');
         // Consume evidence and block retries BEFORE touching the OS, including timeouts/cancellation.
-        invalidate(); stopped = true;
+        invalidate(); session.stopped = true;
         const { fingerprint, ...control } = evidence;
         const recorded: ConversationEvidence['actions'][number] = structuredClone({
           window: seen.frame.window, capturedAt: seen.frame.capturedAt, action, target: control,
@@ -114,25 +119,25 @@ export function createInputTools(adapter: DesktopInputAdapter, scope?: RequestSc
         signal.throwIfAborted();
         recorded.status = result.status;
         completed.push({ action: action.kind, effect, status: result.status });
-        if (result.status === 'not-issued') stopped = false;
-        else if (result.status !== 'uncertain' && effect !== 'submit') stopped = false;
+        if (result.status === 'not-issued') session.stopped = false;
+        else if (result.status !== 'uncertain' && effect !== 'submit') session.stopped = false;
         return { isError: ['not-issued', 'uncertain'].includes(result.status), content: [{ type: 'text', text: JSON.stringify({
           action: action.kind, effect, status: result.status, permission,
           message: result.status === 'not-issued' ? 'Native checks rejected input before execution. Recheck the target, focus and permissions with fresh evidence.'
             : 'Input may change the UI. Capture fresh evidence to verify the intended outcome. Issued events are not proof of submission success.',
-          inputStopped: stopped,
+          inputStopped: session.stopped,
         }) }] };
       },
     };
   });
   return { definitions, invalidate, conversationActions: () => structuredClone(actions),
     feedbackTarget: (observationId: string) => {
-      if (closed || stopped || !observation || observation.id !== observationId || performance.now() - observation.at > 30_000) return undefined;
+      if (closed || session.stopped || !observation || observation.id !== observationId || observation.revision !== session.revision || performance.now() - observation.at > 30_000) return undefined;
       return structuredClone(observation.frame.window);
     },
     observe: (frame: Frame) => {
       const id = `observation-${++next}`;
-      observation = { id, frame: structuredClone(frame), at: performance.now() };
+      observation = { id, frame: structuredClone(frame), at: performance.now(), revision: session.revision };
       return id;
     },
     close: () => { closed = true; invalidate(); completed.length = 0; actions.length = 0; conversation.length = 0; },

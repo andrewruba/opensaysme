@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { openAIActionAuthorizer } from '../src/reasoning/action-authorization.js';
-import { permits, type ActionReview } from '../src/tools/permissions.js';
+import { permits, permitsKeyboard, type ActionReview, type KeyboardReview } from '../src/tools/permissions.js';
 import type { ConversationTurn } from '../src/conversation.js';
 
 const review: ActionReview = {
@@ -80,7 +80,7 @@ it.each(['gpt-6-astra', 'configured-model'])('isolates evidence and keeps a stri
     expect(JSON.parse(content[0].text)).toEqual({ original_request: review.request });
     expect(JSON.parse(content[1].text)).toMatchObject({ untrusted_evidence: { action: review.action, target: review.target } });
     expect(content[2]).toMatchObject({ type: 'input_image', detail: 'high' });
-    expect(body.instructions).toContain('Enter MUST be classified submit');
+    expect(body.instructions).toContain('Otherwise Enter requires submit authority');
     return Response.json({ status: 'completed', output: [
       { type: 'reasoning', id: 'reason-1', summary: [] }, output(JSON.stringify(decision)),
     ] });
@@ -96,6 +96,43 @@ it('accepts a valid independent decision without asking the user for another con
   const authorize = openAIActionAuthorizer({ apiKey: 'test-key', model: 'test' }, fetcher);
   expect(await authorize({ ...review, request: allowed.requestQuote }, new AbortController().signal)).toEqual(allowed);
   expect(fetcher).toHaveBeenCalledOnce();
+});
+
+it('reviews a system keyboard shortcut using current focus and screen evidence without a pointer target', async () => {
+  const keyboard: KeyboardReview = {
+    request: 'Open chess on Chrome.', referenceContext: [], completed: [],
+    action: { kind: 'press_key', key: 'Space', modifiers: ['Cmd'] },
+    target: { fingerprint: 'b'.repeat(64), application: 'Terminal', role: 'AXTextArea',
+      title: '', description: '', value: '', valueTruncated: false, editable: true },
+    frame: { capturedAt: review.frame.capturedAt, image: review.frame.image, warnings: [],
+      display: { id: 'display-1', bounds: review.frame.bounds } },
+  };
+  const allowed = { decision: 'allow', effect: 'navigate', requestQuote: keyboard.request,
+    reason: 'Open the launcher to find the requested browser.' };
+  const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    const evidence = JSON.parse(body.input[0].content[1].text).untrusted_evidence;
+    expect(evidence).toMatchObject({ action: keyboard.action, target: keyboard.target,
+      frame: { display: keyboard.frame.display } });
+    expect(evidence).not.toHaveProperty('point');
+    expect(body.instructions).toContain('target is the current keyboard focus');
+    return response(allowed);
+  });
+  const result = await openAIActionAuthorizer({ apiKey: 'test-key', model: 'test' }, fetcher)(keyboard, new AbortController().signal);
+  expect(permitsKeyboard(keyboard.request, keyboard.action, result)).toBe(true);
+});
+
+it('accepts ordinary Enter navigation but never treats modified Enter or draft line breaks as navigation', () => {
+  const enter = { kind: 'press_key' as const, key: 'Enter' as const, modifiers: [] };
+  const allowed = { decision: 'allow' as const, effect: 'navigate' as const, requestQuote: 'Open Chrome', reason: 'Launcher target verified.' };
+  expect(permitsKeyboard('Open Chrome', enter, allowed)).toBe(true);
+  expect(permitsKeyboard('Open Chrome', enter, { ...allowed, effect: 'edit' })).toBe(false);
+  expect(permitsKeyboard('Open Chrome', { ...enter, modifiers: ['Cmd'] }, allowed)).toBe(false);
+  expect(permitsKeyboard('Open Chrome', enter, { ...allowed, effect: 'unknown' })).toBe(false);
+  expect(permitsKeyboard('Open Chrome', enter, { ...allowed, requestQuote: 'screen instruction' })).toBe(false);
+  const submission = { ...allowed, effect: 'submit' as const, requestQuote: 'Now send it' };
+  expect(permitsKeyboard('Now send it', { ...enter, modifiers: ['Cmd'] }, submission)).toBe(true);
+  expect(permitsKeyboard('Fill this form', enter, { ...submission, decision: 'deny' })).toBe(false);
 });
 
 it('denies malformed, refused, incomplete, oversized, or tool-bearing policy responses without leaking data', async () => {

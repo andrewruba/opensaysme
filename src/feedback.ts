@@ -19,7 +19,7 @@ const stateTitles = {
 };
 const actionTitles: Record<string, string> = {
   focus_window: 'Switching window…', move_pointer: 'Pointing…', click: 'Checking click…',
-  scroll: 'Scrolling…', type_text: 'Preparing input…', press_key: 'Checking key press…',
+  scroll: 'Scrolling…', type_text: 'Preparing input…', press_key: 'Checking key press…', type_keyboard_text: 'Typing…',
 };
 
 /** Projects runtime events into optional UI; never makes requests or decisions. */

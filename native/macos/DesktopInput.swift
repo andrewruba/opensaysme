@@ -92,7 +92,6 @@ private func resolveInput(_ command: InputCommand) throws -> ResolvedInput {
             throw DesktopError("The input does not support literal text replacement.", code: "unsupported-text-target")
         }
     }
-    if command.action.kind == "press_key" { guard editable && focused else { throw InputError.unavailable } }
     guard let pointer = CGEvent(source: nil)?.location else { throw InputError.unavailable }
     let events: [CGEventType] = [.mouseMoved, .leftMouseDown, .rightMouseDown, .keyDown, .scrollWheel]
     let fingerprint = try inputFingerprint(InputFingerprintState(
@@ -153,13 +152,6 @@ private func executeInput(_ command: InputCommand) -> InputResult {
                 guard let actual = stringAttribute(resolved.element, kAXValueAttribute), actual.utf16.count <= 4096 else { return nil }
                 return actual
             })
-    case "press_key":
-        let code = CGKeyCode(action.key == "Enter" ? kVK_Return : kVK_Tab)
-        guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false),
-              (try? assertInputFocus(resolved.application, resolved.window)) != nil,
-              let focused = try? focusedElement(applicationElement(resolved.application)), CFEqual(focused, resolved.element) else { return InputResult(status: "not-issued") }
-        postPair(down, up, pid: pid)
     default: return InputResult(status: "not-issued")
     }
     return InputResult(status: "issued")
