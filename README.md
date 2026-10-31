@@ -6,8 +6,8 @@
 [![macOS 14 or newer](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square)](#run-it)
 [![MIT license](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
-OpenSaysMe is a macOS command-line tool for interacting with AI agents through
-voice and desktop context. Speak while showing the relevant work; it gathers
+OpenSaysMe is a command-line tool for interacting with AI agents through voice
+and desktop context. Speak while showing the relevant work; it gathers
 context, finds the right window, and carries out your request.
 
 ## What works today
