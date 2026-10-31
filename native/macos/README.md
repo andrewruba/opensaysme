@@ -99,17 +99,28 @@ before and after the read and requiring the returned element to belong to it.
 typed action and that focus fingerprint over stdin. It supports named keys with
 Cmd/Ctrl/Alt/Shift and literal single-line Unicode typing. Keys use physical US
 positions; text does not. The keyboard fingerprint includes process launch identity,
-focused control/window labels, identifier, bounds and HID counters. Editable
-controls also bind their value and selection; changing terminal output does not
-invalidate shortcuts. Returned values are bounded and marked when truncated.
+focused control labels, identifiers, owning-window bounds and HID counters. A
+window title is used only when no window identifier is available. Editable controls
+also bind their value, selection and control bounds. Noneditable text areas and web
+areas bind their index path within the owning window and use the window's bounds,
+so same-labeled panes stay distinct while output and scrollback can grow. Finding
+this path reads at most 16 parents and 512 direct siblings per parent, without
+reading sibling values or traversing descendants. If the path or window bounds
+are unavailable, the control's own bounds remain required. Other controls retain
+their own bounds.
+Returned values are bounded and marked when truncated.
 Held keys/buttons, changed focus and protected fields reject dispatch. Typing needs
 a text field or combo box even without a writable AX value; text areas must expose
 a writable AX value or selected-text attribute, excluding terminal output.
 Literal typing inserts at the current selection, unlike AX value replacement.
 Escape, Ctrl+C, clipboard paste shortcuts and control characters in typed text are
 rejected. Key events go through the HID event stream so system shortcuts work.
-Each down/up pair defers termination until release; longer typing checks cancellation
-and focus between pairs. Partial typing is `uncertain`, never retried automatically.
+Shortcuts include explicit modifier presses and releases around the main key;
+each complete shortcut or text chunk defers termination until all keys are released.
+Longer typing checks cancellation and focus between chunks. After posting any
+events, the helper keeps the event source and events alive for one 100ms drain
+before exiting, with cancellation unblocked. Partial typing is `uncertain`, never
+retried automatically.
 
 The helper verifies mechanics and target evidence. Request interpretation belongs
 to the acting model; the TypeScript host checks consequential keys/shortcuts and

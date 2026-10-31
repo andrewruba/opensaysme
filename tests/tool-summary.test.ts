@@ -26,6 +26,44 @@ it.each(['issued', 'verified', 'not-issued', 'uncertain'] as const)('preserves t
   expect(result).toEqual({ name: 'press_key', effect: 'input', outcome: status });
 });
 
+it.each(['stale-observation', 'invalid-arguments', 'reserved-shortcut', 'permission-unavailable', 'outside-request'])(
+'identifies a %s failure without copying the action or guard explanation', (code) => {
+  const summary = summarizeTool({ ...event, name: 'press_key', effect: 'input', result: {
+    isError: true, content: [{ type: 'text', text: JSON.stringify({ code,
+      message: 'private target details', permission: { reason: 'private request quote' } }) }],
+  } }, catalog);
+  expect(summary).toEqual({ name: 'press_key', effect: 'input', outcome: 'failed', code });
+  expect(formatToolSummary(summary!)).toBe(`Tool: press_key — failed (${code})`);
+  expect(JSON.stringify(summary)).not.toContain('private');
+});
+
+it('prints shared desktop/tool error codes once and retains distinct local failure context', () => {
+  const failed = { ...event, name: 'press_key', effect: 'input' as const, result: {
+    isError: true, desktopIssue: 'input-unavailable' as const,
+    content: [{ type: 'text' as const, text: '{"code":"input-unavailable","message":"private target"}' }],
+  } };
+  const summary = summarizeTool(failed, catalog)!;
+  expect(summary.code).toBe('input-unavailable');
+  expect(formatToolSummary(summary)).toBe('Tool: press_key — failed (input-unavailable)');
+  failed.result.content[0]!.text = '{"code":"input-uncertain","message":"private target"}';
+  expect(formatToolSummary(summarizeTool(failed, catalog)!))
+    .toBe('Tool: press_key — failed (input-uncertain, input-unavailable)');
+});
+
+it('does not extract failure codes from successful evidence, nested content, or arbitrary strings', () => {
+  const result = (text: string, isError = true): ToolEvent => ({ ...event, result: {
+    isError, content: [{ type: 'text', text }],
+  } });
+  expect(summarizeTool(result('{"code":"outside-request"}', false), catalog))
+    .toEqual({ name: 'capture_screen', effect: 'read', outcome: 'ok' });
+  for (const text of ['{"value":{"code":"outside-request"}}', '{"code":"private-token"}',
+    '{"code":"stale-observation\\nprivate data"}', '{"code":["outside-request"]}', '{"code":"__proto__"}',
+    'private invalid JSON']) {
+    expect(summarizeTool(result(text), catalog))
+      .toEqual({ name: 'capture_screen', effect: 'read', outcome: 'failed' });
+  }
+});
+
 it('does not expose arbitrary result statuses, error text, issue codes, or unadvertised tool names', () => {
   const invalid: ToolEvent = { ...event, name: 'press_key', effect: 'input', result: {
     isError: true, desktopIssue: 'private error' as never,

@@ -130,7 +130,7 @@ report `issued`, which does not prove application success. A denied or
 clarify-required action, uncertain outcome, or issued submission stops both input
 paths and window focusing for the turn; read tools remain available. Recapturing
 does not resume stopped input. `not-issued` permits a fresh observation and retry.
-Escape/cancellation stops pending work and releases paired key/button events,
+Escape/cancellation stops pending work and releases keys, shortcut modifiers and buttons,
 but cannot undo effects already issued. Keyboard typing checks cancellation and
 focus between event pairs; partial typing is uncertain and is not retried automatically.
 
@@ -159,7 +159,8 @@ warning may remain visible after recovery.
 Normal CLI output names each completed tool and its outcome, and the final JSON
 includes the same `toolResults`. A partial result means some evidence was returned
 with a known desktop problem, such as a screenshot without keyboard focus. These
-summaries contain no tool arguments or captured text; `osm --debug` remains the
+summaries include known failure codes such as `stale-observation` or `outside-request`.
+They contain no tool arguments or captured text; `osm --debug` remains the
 opt-in path for full requests, responses and screenshots.
 
 ## Changing tools

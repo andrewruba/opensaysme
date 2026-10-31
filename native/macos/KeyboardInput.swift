@@ -74,6 +74,21 @@ private func keyboardSelection(_ element: AXUIElement) -> [Int] {
     return [range.location, range.length]
 }
 
+private func keyboardControlPath(_ element: AXUIElement, window: AXUIElement) -> [Int]? {
+    keyboardWindowControlPath(element, window: window, same: { CFEqual($0, $1) }, parent: {
+        AXUIElementSetMessagingTimeout($0, 0.1)
+        return try elementAttribute($0, kAXParentAttribute)
+    }, children: { parent, limit in
+        AXUIElementSetMessagingTimeout(parent, 0.1)
+        var count = 0; var values: CFArray?
+        guard AXUIElementGetAttributeValueCount(parent, kAXChildrenAttribute as CFString, &count) == .success,
+              count > 0, count <= limit,
+              AXUIElementCopyAttributeValues(parent, kAXChildrenAttribute as CFString, 0, count, &values) == .success,
+              let children = values as? [AXUIElement], children.count == count else { throw InputError.unavailable }
+        return children
+    })
+}
+
 private func keyboardValue(_ element: AXUIElement) throws -> (text: String, digest: String, truncated: Bool) {
     var raw: CFTypeRef?
     let result = AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &raw)
@@ -108,13 +123,16 @@ private func resolveKeyboard() throws -> KeyboardTarget {
     let editable = keyboardEditable(role: role, valueWritable: valueWritable, selectionWritable: selectionWritable,
         enabled: (try? attribute(element, kAXEnabledAttribute) as? Bool) != false)
     let window = try? elementAttribute(element, kAXWindowAttribute)
+    let controlPath = !editable && ["AXTextArea", "AXWebArea"].contains(role)
+        ? window.flatMap { keyboardControlPath(element, window: $0) } : nil
     let events: [CGEventType] = [.mouseMoved, .leftMouseDown, .rightMouseDown, .keyDown, .scrollWheel]
     let fingerprint = try keyboardFingerprint(KeyboardFingerprintState(pid: pid, started: processStartIdentity(pid),
         role: role, title: title, description: description, value: value.digest,
         identifier: keyboardString(element, kAXIdentifierAttribute, limit: 1024),
         windowTitle: window.map { try keyboardString($0, kAXTitleAttribute, limit: 1024) } ?? "",
         windowIdentifier: window.map { try keyboardString($0, kAXIdentifierAttribute, limit: 1024) } ?? "",
-        bounds: keyboardGeometry(element), selection: keyboardSelection(element),
+        windowBounds: window.map(keyboardGeometry) ?? [],
+        bounds: keyboardGeometry(element), controlPath: controlPath, selection: keyboardSelection(element),
         interaction: events.map { CGEventSource.counterForEventType(.hidSystemState, eventType: $0) }, editable: editable))
     guard keyboardIdle(), CFEqual(try keyboardFocus(), element) else { throw InputError.unavailable }
     let name = application.localizedName ?? "Application"
@@ -126,14 +144,21 @@ private func resolveKeyboard() throws -> KeyboardTarget {
 
 func inspectKeyboard() throws -> KeyboardEvidence { try resolveKeyboard().evidence }
 
-private func postKeyboardPair(_ down: CGEvent, _ up: CGEvent) {
-    // Block (rather than discard) cancellation during a balanced pair. A pending
-    // signal is delivered on restoration and stops before the next pair.
+private func postKeyboardBatch(_ events: [CGEvent]) {
+    // Block cancellation until the main key and all modifiers are released. A
+    // pending signal is delivered on restoration, before the next batch.
     var blocked = sigset_t(); var previous = sigset_t()
     sigemptyset(&blocked); sigaddset(&blocked, SIGTERM); sigaddset(&blocked, SIGINT)
     sigprocmask(SIG_BLOCK, &blocked, &previous)
     defer { sigprocmask(SIG_SETMASK, &previous, nil) }
-    down.post(tap: .cghidEventTap); up.post(tap: .cghidEventTap)
+    for event in events { event.post(tap: .cghidEventTap) }
+}
+
+private func drainKeyboardEvents() {
+    // An immediately exiting one-shot helper can lose its queued HID events.
+    // Keep source/events alive once per action, with cancellation unblocked.
+    var remaining = timespec(tv_sec: 0, tv_nsec: 100_000_000), interrupted = timespec()
+    while nanosleep(&remaining, &interrupted) != 0 && errno == EINTR { remaining = interrupted }
 }
 
 func executeKeyboard() throws -> InputResult {
@@ -150,16 +175,18 @@ func executeKeyboard() throws -> InputResult {
     guard let target = try? resolveKeyboard(), target.evidence.fingerprint == command.fingerprint else {
         return InputResult(status: "not-issued")
     }
-    let action = command.action, source = CGEventSource(stateID: .privateState)
-    var pairs: [(CGEvent, CGEvent)] = []
+    let action = command.action
+    guard let source = CGEventSource(stateID: .privateState) else { return InputResult(status: "not-issued") }
+    var batches: [[CGEvent]] = []
     if action.kind == "press_key" {
-        let code = keyboardKeyCodes[action.key!]!
-        guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) else { return InputResult(status: "not-issued") }
-        let flags: [String: CGEventFlags] = ["Cmd": .maskCommand, "Ctrl": .maskControl, "Alt": .maskAlternate, "Shift": .maskShift]
-        let modifiers = action.modifiers!.reduce(CGEventFlags()) { $0.union(flags[$1]!) }
-        down.flags = modifiers; up.flags = modifiers
-        pairs.append((down, up))
+        var events: [CGEvent] = []
+        for stroke in keyboardShortcutStrokes(key: keyboardKeyCodes[action.key!]!, modifiers: action.modifiers!) {
+            guard let event = CGEvent(keyboardEventSource: source, virtualKey: stroke.key, keyDown: stroke.down) else {
+                return InputResult(status: "not-issued")
+            }
+            event.flags = stroke.flags; events.append(event)
+        }
+        batches.append(events)
     } else {
         guard target.evidence.editable else { return InputResult(status: "not-issued") }
         for units in keyboardTextChunks(action.text!) {
@@ -168,16 +195,18 @@ func executeKeyboard() throws -> InputResult {
             down.flags = []; up.flags = []
             down.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
             up.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
-            pairs.append((down, up))
+            batches.append([down, up])
         }
     }
     guard let current = try? resolveKeyboard(), current.evidence.fingerprint == command.fingerprint else {
         return InputResult(status: "not-issued")
     }
-    return dispatchKeyboardPairs(count: pairs.count, ready: {
-        guard keyboardCancelled == 0, keyboardIdle(), !target.application.isTerminated,
-              let current = try? keyboardFocus(), CFEqual(current, target.element),
-              (try? assertKeyboardUnprotected(current)) != nil else { return false }
-        return true
-    }, pair: { index in postKeyboardPair(pairs[index].0, pairs[index].1) })
+    return withExtendedLifetime((source, batches)) {
+        dispatchKeyboardBatches(count: batches.count, ready: {
+            guard keyboardCancelled == 0, keyboardIdle(), !target.application.isTerminated,
+                  let current = try? keyboardFocus(), CFEqual(current, target.element),
+                  (try? assertKeyboardUnprotected(current)) != nil else { return false }
+            return true
+        }, batch: { index in postKeyboardBatch(batches[index]) }, drain: drainKeyboardEvents)
+    }
 }

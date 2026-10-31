@@ -17,8 +17,9 @@ struct KeyboardEvidence: Encodable {
 struct KeyboardFingerprintState: Encodable {
     var pid: Int32; var started: UInt64
     var role: String; var title: String; var description: String; var value: String; var identifier: String
-    var windowTitle: String; var windowIdentifier: String
-    var bounds: [Double]; var selection: [Int]; var interaction: [UInt32]; var editable: Bool
+    var windowTitle: String; var windowIdentifier: String; var windowBounds: [Double]
+    var bounds: [Double]; var controlPath: [Int]?
+    var selection: [Int]; var interaction: [UInt32]; var editable: Bool
 }
 
 let keyboardKeyCodes: [String: CGKeyCode] = [
@@ -33,6 +34,30 @@ let keyboardKeyCodes: [String: CGKeyCode] = [
     "Home": CGKeyCode(kVK_Home), "End": CGKeyCode(kVK_End),
     "PageUp": CGKeyCode(kVK_PageUp), "PageDown": CGKeyCode(kVK_PageDown),
 ]
+
+struct KeyboardStroke: Equatable {
+    let key: CGKeyCode
+    let down: Bool
+    let flags: CGEventFlags
+}
+
+func keyboardShortcutStrokes(key: CGKeyCode, modifiers: [String]) -> [KeyboardStroke] {
+    let definitions: [(String, CGKeyCode, CGEventFlags)] = [
+        ("Cmd", CGKeyCode(kVK_Command), .maskCommand), ("Ctrl", CGKeyCode(kVK_Control), .maskControl),
+        ("Alt", CGKeyCode(kVK_Option), .maskAlternate), ("Shift", CGKeyCode(kVK_Shift), .maskShift),
+    ]
+    let held = definitions.filter { modifiers.contains($0.0) }
+    var flags = CGEventFlags(), strokes: [KeyboardStroke] = []
+    for (_, code, flag) in held {
+        flags.insert(flag); strokes.append(KeyboardStroke(key: code, down: true, flags: flags))
+    }
+    strokes.append(KeyboardStroke(key: key, down: true, flags: flags))
+    strokes.append(KeyboardStroke(key: key, down: false, flags: flags))
+    for (_, code, flag) in held.reversed() {
+        flags.remove(flag); strokes.append(KeyboardStroke(key: code, down: false, flags: flags))
+    }
+    return strokes
+}
 
 func validKeyboardText(_ text: String) -> Bool {
     !text.isEmpty && text.utf16.count <= 4096 && text.unicodeScalars.allSatisfy {
@@ -97,22 +122,50 @@ func keyboardFocusWithForegroundFallback<Element>(
     return focused
 }
 
+// Read only the ancestry and direct sibling lists, not descendants or their values.
+// A unique path distinguishes same-labeled panes without depending on content size.
+func keyboardWindowControlPath<Element>(
+    _ element: Element, window: Element, same: (Element, Element) -> Bool,
+    parent: (Element) throws -> Element, children: (Element, Int) throws -> [Element]
+) -> [Int]? {
+    var current = element, reversed: [Int] = []
+    for _ in 0..<16 {
+        if same(current, window) { return reversed.reversed() }
+        guard let ancestor = try? parent(current), let siblings = try? children(ancestor, 512),
+              siblings.count <= 512 else { return nil }
+        let matches = siblings.indices.filter { same(siblings[$0], current) }
+        guard matches.count == 1 else { return nil }
+        reversed.append(matches[0]); current = ancestor
+    }
+    return same(current, window) ? reversed.reversed() : nil
+}
+
 func keyboardFingerprint(_ target: KeyboardFingerprintState) throws -> String {
     var state = target
-    // Terminal output changes as the runtime reports status. That is evidence,
-    // not an editable destination whose contents should freeze a shortcut.
-    if !state.editable { state.value = ""; state.selection = [] }
+    // Output and scrollback geometry can change while the same content surface
+    // stays focused. Bind its owning window, preserving geometry for input controls.
+    if !state.editable {
+        state.value = ""; state.selection = []
+        if ["AXTextArea", "AXWebArea"].contains(state.role),
+           state.controlPath != nil, !state.windowBounds.isEmpty {
+            state.bounds = state.windowBounds
+        }
+    }
+    // A stable window identifier survives titles that follow the current process.
+    if !state.windowIdentifier.isEmpty { state.windowTitle = "" }
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
     return SHA256.hash(data: try encoder.encode(state)).map { String(format: "%02x", $0) }.joined()
 }
 
-// A pair must queue both edges before returning, even when cancellation arrives
-// during the down event. The next ready check stops the sequence at that boundary.
-func dispatchKeyboardPairs(count: Int, ready: () -> Bool, pair: (Int) -> Void) -> InputResult {
+// Each batch must release every key before returning, even if cancelled during
+// a down event. Drain once after posting, including a partially completed action.
+func dispatchKeyboardBatches(count: Int, ready: () -> Bool, batch: (Int) -> Void,
+                             drain: () -> Void) -> InputResult {
     var issued = 0
+    defer { if issued > 0 { drain() } }
     for index in 0..<count {
         guard ready() else { return InputResult(status: issued == 0 ? "not-issued" : "uncertain") }
-        pair(index); issued += 1
+        batch(index); issued += 1
     }
     return InputResult(status: issued == 0 ? "not-issued" : "issued")
 }
