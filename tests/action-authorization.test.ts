@@ -102,6 +102,24 @@ it('accepts a valid independent decision without asking the user for another con
   expect(fetcher).toHaveBeenCalledOnce();
 });
 
+it('sends candidate provenance and cross-tool progress as untrusted evidence and preserves an inspect decision', async () => {
+  const inspect = { decision: 'inspect', effect: 'unknown', requestQuote: review.request,
+    reason: 'Current evidence does not identify the requested destination.' };
+  const resolution = { candidates: [{ targetId: 'window-2', status: 'possible' }],
+    evidence: [{ id: 'evidence-4', text: 'Current window contains unrelated work.' }] };
+  const progress = { actions: [], evidenceNeeded: { action: review.action, reason: 'The previous target was unrelated.', target: review.target } };
+  const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    expect(JSON.parse(body.input[0].content[0].text)).toEqual({ original_request: review.request });
+    expect(JSON.parse(body.input[0].content[1].text).untrusted_evidence).toMatchObject({ resolution, progress });
+    expect(body.instructions).toContain('require materially useful new evidence');
+    expect(body.instructions).toContain('An issued event does not prove completion');
+    return response(inspect);
+  });
+  expect(await openAIActionAuthorizer({ apiKey: 'test-key', model: 'test' }, fetcher)(
+    { ...review, resolution, progress }, new AbortController().signal)).toEqual(inspect);
+});
+
 it('preserves spoken names and restrictions alongside current evidence for exploratory app opening', async () => {
   const keyboard: KeyboardReview = {
     request: 'Find the coding agent for Aster Work; do not send anything yet.',
@@ -110,7 +128,7 @@ it('preserves spoken names and restrictions alongside current evidence for explo
       activeWindow: { id: 'source-window', application: 'Editor', title: 'AsterWork — task notes' }, warnings: [],
     } }], completed: [],
     action: { kind: 'press_key', key: 'Enter', modifiers: [] },
-    target: { fingerprint: 'b'.repeat(64), application: 'System Launcher', role: 'AXTextField',
+    target: { fingerprint: 'b'.repeat(64), application: 'System Launcher', applicationId: 'mac-app:101:2', role: 'AXTextField',
       title: '', description: '', value: 'Agent Workspace', valueTruncated: false, editable: true },
     frame: { capturedAt: review.frame.capturedAt, image: review.frame.image, warnings: [],
       display: { id: 'display-1', bounds: review.frame.bounds } },

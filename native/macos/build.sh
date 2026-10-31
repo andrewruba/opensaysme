@@ -14,7 +14,7 @@ xcrun swiftc -O \
   -framework AppKit -framework ApplicationServices -framework AVFoundation -framework Carbon \
   -Xlinker -weak_framework -Xlinker ScreenCaptureKit \
   -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$helper_dir/Info.plist" \
-  "$helper_dir/Desktop.swift" "$helper_dir/ProcessIdentity.swift" \
+  "$helper_dir/Desktop.swift" "$helper_dir/ProcessIdentity.swift" "$helper_dir/ApplicationDiscovery.swift" \
   "$helper_dir/WindowContent.swift" "$helper_dir/WindowCapture.swift" "$helper_dir/CaptureExecution.swift" \
   "$helper_dir/InputProtocol.swift" "$helper_dir/DesktopInput.swift" \
   "$helper_dir/KeyboardProtocol.swift" "$helper_dir/KeyboardInput.swift" \

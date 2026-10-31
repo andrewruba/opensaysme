@@ -10,6 +10,11 @@ xcrun swiftc -O \
 xcrun swiftc -O \
   -target "$(uname -m)-apple-macosx12.0" \
   -module-cache-path "$helper_dir/bin/module-cache" \
+  "$helper_dir/ApplicationDiscovery.swift" "$helper_dir/ApplicationDiscoveryTests.swift" -o "$helper_dir/bin/application-discovery-tests"
+"$helper_dir/bin/application-discovery-tests"
+xcrun swiftc -O \
+  -target "$(uname -m)-apple-macosx12.0" \
+  -module-cache-path "$helper_dir/bin/module-cache" \
   "$helper_dir/CaptureExecution.swift" "$helper_dir/CaptureExecutionTests.swift" -o "$helper_dir/bin/capture-execution-tests"
 "$helper_dir/bin/capture-execution-tests"
 xcrun swiftc -O \

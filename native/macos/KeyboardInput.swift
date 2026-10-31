@@ -118,10 +118,17 @@ private func resolveKeyboard() throws -> KeyboardTarget {
     let editable = keyboardEditable(role: role, valueWritable: valueWritable, selectionWritable: selectionWritable,
         enabled: (try? attribute(element, kAXEnabledAttribute) as? Bool) != false)
     let window = try? elementAttribute(element, kAXWindowAttribute)
+    let started = try processStartIdentity(pid)
+    let applicationId = ApplicationProcessTarget(processID: pid, started: started).id
+    let windowId: String? = window.flatMap { candidate in
+        var owner: pid_t = 0
+        guard AXUIElementGetPid(candidate, &owner) == .success, owner == pid else { return nil }
+        return try? targetID(application, candidate)
+    }
     let controlPath = !editable && ["AXTextArea", "AXWebArea"].contains(role)
         ? window.flatMap { keyboardControlPath(element, window: $0) } : nil
     let events: [CGEventType] = [.mouseMoved, .leftMouseDown, .rightMouseDown, .keyDown, .scrollWheel]
-    let fingerprint = try keyboardFingerprint(KeyboardFingerprintState(pid: pid, started: processStartIdentity(pid),
+    let fingerprint = try keyboardFingerprint(KeyboardFingerprintState(pid: pid, started: started, windowTargetID: windowId,
         role: role, title: title, description: description, value: value.digest,
         identifier: keyboardString(element, kAXIdentifierAttribute, limit: 1024),
         windowTitle: window.map { try keyboardString($0, kAXTitleAttribute, limit: 1024) } ?? "",
@@ -131,10 +138,13 @@ private func resolveKeyboard() throws -> KeyboardTarget {
         interaction: events.map { CGEventSource.counterForEventType(.hidSystemState, eventType: $0) }, editable: editable))
     guard keyboardIdle() else { throw InputFailureReason.userIntervention }
     guard CFEqual(try keyboardFocus(), element) else { throw InputFailureReason.focusChanged }
+    guard !application.isTerminated, try processStartIdentity(pid) == started,
+          windowId == window.flatMap({ try? targetID(application, $0) }) else { throw InputFailureReason.focusChanged }
     let name = application.localizedName ?? "Application"
     guard name.utf16.count <= 1024 else { throw InputError.unavailable }
     return KeyboardTarget(application: application, element: element,
-        evidence: KeyboardEvidence(fingerprint: fingerprint, application: name, role: role, title: title,
+        evidence: KeyboardEvidence(fingerprint: fingerprint, applicationId: applicationId, windowId: windowId,
+            application: name, role: role, title: title,
             description: description, value: value.text, editable: editable, valueTruncated: value.truncated))
 }
 

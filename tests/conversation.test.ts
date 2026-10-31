@@ -56,3 +56,19 @@ it('releases retained data and timers on explicit clear', () => {
   expect(recent.recent()).toEqual([]);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it('keeps a pending destination question with its original constraints, without retaining live resolution handles', () => {
+  const recent = memory();
+  const pending = { ...turn(), response: 'Which conversation should receive the draft?', evidence: {
+    windows: [], actions: [], resolution: { requestQuote: 'Fill this form', source: 'Selected notes',
+      question: 'Which conversation should receive the draft?', candidates: [
+        { application: 'Workspace', title: 'Planning', status: 'possible' as const, reason: 'Two matching conversations remain.' },
+      ] },
+  } };
+  expect(recent.remember(pending)).toBe(true);
+  expect(recent.remember({ ...turn('answer'), request: 'The planning one.', response: 'Resolved.' })).toBe(true);
+  expect(recent.recent()[0]!.request).toBe('Fill this form; leave it unsubmitted.');
+  expect(recent.recent()[0]!.evidence.resolution?.question).toBe(pending.evidence.resolution.question);
+  expect(conversationSchema.safeParse([{ ...pending, evidence: { ...pending.evidence,
+    resolution: { ...pending.evidence.resolution, evidenceIds: ['evidence-1'] } } }]).success).toBe(false);
+});

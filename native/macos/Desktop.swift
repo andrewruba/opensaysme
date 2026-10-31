@@ -22,10 +22,25 @@ struct Window: Encodable {
     let title: String?
 }
 
+struct RunningApplication: Encodable {
+    let id: String
+    let application: String
+    let bundleIdentifier: String?
+    let hidden: Bool
+    let frontmost: Bool
+    let windowStatus: String
+    let windowIds: [String]
+}
+
+struct ApplicationActivation: Encodable {
+    let activated = true
+    let application: RunningApplication
+}
+
 struct WindowInventory: Encodable {
     let windows: [Window]
     let warnings: [String]
-    let applicationsWithoutWindows: [String]?
+    let applications: [RunningApplication]
 }
 
 struct Snapshot: Encodable {
@@ -101,55 +116,133 @@ func targetID(_ application: NSRunningApplication, _ window: AXUIElement) throws
     return "mac:\(application.processIdentifier):\(started):\(digest)"
 }
 
-func listWindows() throws -> WindowInventory {
-    try requireAccessibility()
-    var found: [Window] = []
-    var applicationsWithoutWindows: [String] = []
-    var applicationNamesOmitted = false
-    var omitted = false
+func applicationID(_ application: NSRunningApplication) throws -> String {
+    guard !application.isTerminated, !isDesktopHelperProcess(application.processIdentifier),
+          let started = try? processStartIdentity(application.processIdentifier) else {
+        throw DesktopError("Application identity is unavailable.", code: "stale-or-ambiguous-target")
+    }
+    return ApplicationProcessTarget(processID: application.processIdentifier, started: started).id
+}
+
+struct ApplicationWindows {
+    let windows: [AXUIElement]
+    let status: String
+    let limited: Bool
+}
+
+func applicationWindows(_ app: AXUIElement, deadline: TimeInterval) -> ApplicationWindows {
+    guard AXIsProcessTrusted() else { return ApplicationWindows(windows: [], status: "inaccessible", limited: false) }
+    AXUIElementSetMessagingTimeout(app, 0.05)
+    var listed: [AXUIElement] = []
+    var accessible = false
     var limited = false
-    let deadline = Date().addingTimeInterval(3)
-    for application in NSWorkspace.shared.runningApplications where application.activationPolicy == .regular
-        && !isDesktopHelperProcess(application.processIdentifier) {
-        if found.count >= 128 || Date() >= deadline { limited = true; break }
-        let app = applicationElement(application)
-        AXUIElementSetMessagingTimeout(app, 0.15)
-        guard let windows = try? attribute(app, kAXWindowsAttribute) as? [AXUIElement] else {
-            omitted = true
-            continue
-        }
-        if windows.isEmpty {
-            // An empty AX list does not establish that the app has no activity.
-            // Names are discovery evidence only; never synthesize window targets.
-            if let name = application.localizedName, !name.isEmpty, name.utf16.count <= 256 {
-                if !applicationsWithoutWindows.contains(name) {
-                    if applicationsWithoutWindows.count < 128 { applicationsWithoutWindows.append(name) }
-                    else { applicationNamesOmitted = true }
-                }
-            } else { applicationNamesOmitted = true }
-            continue
-        }
-        var candidates: [Window] = []
-        for window in windows {
-            if found.count + candidates.count >= 128 || Date() >= deadline { limited = true; break }
-            AXUIElementSetMessagingTimeout(window, 0.15)
-            guard let id = try? targetID(application, window) else { omitted = true; continue }
-            candidates.append(Window(id: id, application: String((application.localizedName ?? "Application").prefix(1024)),
-                title: stringAttribute(window, kAXTitleAttribute).map { String($0.prefix(16384)) }))
-        }
-        // The focus helper cannot disambiguate identical AX identifiers/titles.
-        let counts = Dictionary(grouping: candidates, by: { $0.id })
-        for candidate in candidates {
-            if counts[candidate.id]?.count == 1 { found.append(candidate) }
-            else { omitted = true }
+    var count = 0
+    if ProcessInfo.processInfo.systemUptime < deadline,
+       AXUIElementGetAttributeValueCount(app, kAXWindowsAttribute as CFString, &count) == .success, count >= 0 {
+        limited = count > 128
+        if count == 0 { accessible = true }
+        else {
+            var values: CFArray?
+            if AXUIElementCopyAttributeValues(app, kAXWindowsAttribute as CFString, 0, min(count, 128), &values) == .success,
+               let windows = values as? [AXUIElement] {
+                listed = windows
+                accessible = true
+                limited = limited || windows.count != min(count, 128)
+            }
         }
     }
+    let focused = ProcessInfo.processInfo.systemUptime < deadline ? try? elementAttribute(app, kAXFocusedWindowAttribute) : nil
+    let main = ProcessInfo.processInfo.systemUptime < deadline ? try? elementAttribute(app, kAXMainWindowAttribute) : nil
+    let merged = mergeApplicationWindows(listed: listed, focused: focused, main: main, same: { CFEqual($0, $1) })
+    limited = limited || merged.limited || ProcessInfo.processInfo.systemUptime >= deadline
+    let status = limited ? "incomplete" : merged.windows.isEmpty ? (accessible ? "empty" : "inaccessible")
+        : accessible ? "available" : "incomplete"
+    return ApplicationWindows(windows: merged.windows, status: status, limited: limited)
+}
+
+func discoverApplication(_ application: NSRunningApplication, deadline: TimeInterval, windowLimit: Int = 128)
+    throws -> (application: RunningApplication, windows: [Window]) {
+    let id = try applicationID(application)
+    let name = String((application.localizedName ?? application.bundleIdentifier ?? "Application").prefix(512))
+    let discovered = applicationWindows(applicationElement(application), deadline: deadline)
+    var candidates: [Window] = []
+    var incomplete = discovered.status == "incomplete"
+    for window in discovered.windows {
+        guard ProcessInfo.processInfo.systemUptime < deadline else { incomplete = true; break }
+        AXUIElementSetMessagingTimeout(window, 0.05)
+        guard let target = try? targetID(application, window) else { incomplete = true; continue }
+        candidates.append(Window(id: target, application: name,
+                                 title: stringAttribute(window, kAXTitleAttribute).map { String($0.prefix(8192)) }))
+    }
+    let counts = Dictionary(grouping: candidates, by: { $0.id })
+    let unique = candidates.filter { counts[$0.id]?.count == 1 }
+    // Apply the global limit only after checking all observed identities, so a
+    // duplicate beyond the remaining output capacity cannot look unique.
+    let windows = Array(unique.prefix(windowLimit))
+    if windows.count != candidates.count { incomplete = true }
+    guard try applicationID(application) == id else {
+        throw DesktopError("Application changed during discovery.", code: "stale-or-ambiguous-target")
+    }
+    let state = incomplete ? "incomplete" : discovered.status
+    return (RunningApplication(id: id, application: name,
+        bundleIdentifier: application.bundleIdentifier.map { String($0.prefix(512)) }, hidden: application.isHidden,
+        frontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier == application.processIdentifier,
+        windowStatus: state, windowIds: windows.map { $0.id }), windows)
+}
+
+func listWindows() throws -> WindowInventory {
+    var found: [Window] = []
+    var applications: [RunningApplication] = []
+    var omitted = false
+    var limited = false
+    let deadline = ProcessInfo.processInfo.systemUptime + 3
+    let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    // Ensure the user's active application survives a bounded inventory even
+    // when many other processes take the full Accessibility message timeout.
+    let running = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular
+        && !isDesktopHelperProcess($0.processIdentifier) }.sorted {
+            $0.processIdentifier == foreground && $1.processIdentifier != foreground
+        }
+    for application in running {
+        if applications.count >= 128 || ProcessInfo.processInfo.systemUptime >= deadline { limited = true; break }
+        do {
+            let result = try discoverApplication(application, deadline: deadline, windowLimit: 128 - found.count)
+            found.append(contentsOf: result.windows)
+            applications.append(result.application)
+            if ["inaccessible", "incomplete"].contains(result.application.windowStatus) { omitted = true }
+        } catch { omitted = true }
+    }
     var warnings: [String] = []
-    if omitted { warnings.append("Some inaccessible or ambiguous windows were omitted.") }
-    if limited { warnings.append("Window discovery reached its time or 128-window limit; some windows may be missing.") }
-    if applicationNamesOmitted { warnings.append("Some running application names were unavailable or exceeded discovery limits.") }
-    return WindowInventory(windows: found, warnings: warnings,
-        applicationsWithoutWindows: applicationsWithoutWindows.isEmpty ? nil : applicationsWithoutWindows)
+    if !AXIsProcessTrusted() { warnings.append(permissionHelp) }
+    if omitted { warnings.append("Some windows or application identities were inaccessible, ambiguous or incomplete; application windowStatus describes discovery, not activity.") }
+    if limited { warnings.append("Discovery reached its time or 128-application limit; some applications may be missing.") }
+    return WindowInventory(windows: found, warnings: warnings, applications: applications)
+}
+
+func activateApplication(_ id: String) throws -> ApplicationActivation {
+    guard let target = ApplicationProcessTarget(id: id), !isDesktopHelperProcess(target.processID),
+          let application = NSRunningApplication(processIdentifier: target.processID), application.activationPolicy == .regular,
+          try applicationID(application) == id else {
+        throw DesktopError("Invalid or expired application target. Discover applications again.", code: "stale-or-ambiguous-target")
+    }
+    guard application.activate(options: []) else {
+        throw DesktopError("macOS rejected application activation.", code: "focus-rejected")
+    }
+    let deadline = ProcessInfo.processInfo.systemUptime + 1.5
+    repeat {
+        guard try applicationID(application) == id else {
+            throw DesktopError("Application changed during activation.", code: "stale-or-ambiguous-target")
+        }
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processID, !application.isHidden {
+            let observed = try discoverApplication(application, deadline: ProcessInfo.processInfo.systemUptime + 1)
+            guard observed.application.frontmost && !observed.application.hidden else {
+                throw DesktopError("Application activation could not be verified.", code: "focus-unverified")
+            }
+            return ApplicationActivation(application: observed.application)
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    } while ProcessInfo.processInfo.systemUptime < deadline
+    throw DesktopError("Application activation could not be verified.", code: "focus-unverified")
 }
 
 func focusedElement(_ app: AXUIElement) throws -> AXUIElement {
@@ -360,22 +453,18 @@ func resolveWindow(_ id: String, deadline: TimeInterval) throws -> (NSRunningApp
     }
     let app = applicationElement(application)
     AXUIElementSetMessagingTimeout(app, 0.1)
-    var count = 0
-    guard AXUIElementGetAttributeValueCount(app, kAXWindowsAttribute as CFString, &count) == .success, count <= 128 else {
-        throw DesktopError("The target application does not expose its windows.")
+    let discovered = applicationWindows(app, deadline: deadline)
+    let windows = discovered.windows
+    guard !windows.isEmpty else {
+        throw DesktopError("The target window is not currently discoverable.", code: "stale-or-ambiguous-target")
     }
-    guard count > 0 else { throw DesktopError("The window closed.", code: "stale-or-ambiguous-target") }
-    var values: CFArray?
-    guard AXUIElementCopyAttributeValues(app, kAXWindowsAttribute as CFString, 0, count, &values) == .success,
-          let windows = values as? [AXUIElement] else { throw DesktopError("The target application's windows are unavailable.") }
-    var matches: [AXUIElement] = []
-    for window in windows {
+    let resolved = try uniqueApplicationWindow(windows: windows, limited: discovered.limited) { window in
         guard ProcessInfo.processInfo.systemUptime < deadline else { throw DesktopError("Window resolution timed out.") }
         AXUIElementSetMessagingTimeout(window, 0.05)
-        if try targetID(application, window) == id { matches.append(window) }
+        return try targetID(application, window) == id
     }
-    guard matches.count == 1, let window = matches.first else {
-        throw DesktopError("Window target is stale or ambiguous. Run desktop inspect again; duplicate window titles may require a distinct title.", code: "stale-or-ambiguous-target")
+    guard let window = resolved, ProcessInfo.processInfo.systemUptime < deadline else {
+        throw DesktopError("Window target is stale, ambiguous or incompletely enumerated. Discover current targets again.", code: "stale-or-ambiguous-target")
     }
     return (application, window)
 }
@@ -444,17 +533,16 @@ func validateWindowCaptureSource(_ application: NSRunningApplication, _ window: 
     }
     let app = applicationElement(application)
     AXUIElementSetMessagingTimeout(app, 0.05)
-    var count = 0
-    var values: CFArray?
-    guard AXUIElementGetAttributeValueCount(app, kAXWindowsAttribute as CFString, &count) == .success,
-          count > 0, count <= 128,
-          AXUIElementCopyAttributeValues(app, kAXWindowsAttribute as CFString, 0, count, &values) == .success,
-          let windows = values as? [AXUIElement] else { throw WindowCaptureError.unavailable }
+    let discovered = applicationWindows(app, deadline: deadline)
+    let windows = discovered.windows
+    guard !discovered.limited else { throw WindowCaptureError.ambiguous }
+    guard !windows.isEmpty else { throw WindowCaptureError.unavailable }
     let candidates = try windows.map { candidate in
         guard ProcessInfo.processInfo.systemUptime < deadline else { throw WindowCaptureError.timeout }
         AXUIElementSetMessagingTimeout(candidate, 0.05)
         return try windowCaptureTarget(application, candidate)
     }
+    guard ProcessInfo.processInfo.systemUptime < deadline else { throw WindowCaptureError.timeout }
     // A unique SC match is insufficient if another AX window could be its source.
     // Check against the actual captured bounds after capture, including rounding.
     let index = try uniqueCaptureTarget(target, candidates: candidates)
@@ -562,11 +650,13 @@ struct DesktopMain {
                 try output(inspectWindow(args[1]))
             case let args where args.count == 2 && args[0] == "--capture-window":
                 try output(captureWindow(args[1]))
+            case let args where args.count == 2 && args[0] == "--activate-application":
+                try output(activateApplication(args[1]))
             case let args where args.count == 2 && args[0] == "--focus":
                 try focus(args[1])
                 try output(["ok": true])
             default:
-                throw DesktopError("Expected --probe, --inspect, --inspect-selection, --list-windows, --inspect-window <target-id>, --capture-window <target-id>, --context, --frame, --voice [activation-hotkey], --record-hotkey, or --focus <target-id>.")
+                throw DesktopError("Expected --probe, --inspect, --inspect-selection, --list-windows, --inspect-window <target-id>, --capture-window <target-id>, --context, --frame, --voice [activation-hotkey], --record-hotkey, --activate-application <application-id>, or --focus <target-id>.")
             }
         } catch let error as VisualCaptureError {
             try? output(["error": error.rawValue])

@@ -54,7 +54,8 @@ struct KeyboardProtocolTests {
         }
         reject(try data(["kind": "press_key", "key": "Enter", "modifiers": []], digest: ""))
         reject(Data(repeating: 32, count: 65537))
-        var state = KeyboardFingerprintState(pid: 42, started: 123456789, role: "AXTextField", title: "Address",
+        var state = KeyboardFingerprintState(pid: 42, started: 123456789, windowTargetID: "mac:42:123456789:original",
+            role: "AXTextField", title: "Address",
             description: "Address", value: "", identifier: "omnibox", windowTitle: "Chrome", windowIdentifier: "window",
             windowBounds: [0, 0, 1000, 700],
             bounds: [0, 0, 500, 30], controlPath: nil, selection: [0, 0], interaction: [1, 2, 3, 4, 5], editable: true)
@@ -116,7 +117,11 @@ struct KeyboardProtocolTests {
         try expectChanged(state, "Editable values must remain bound") { $0.value = "edited" }
         var titled = state; titled.windowTitle = "Different page"
         let renamed = try keyboardFingerprint(titled), originalTitle = try keyboardFingerprint(state)
-        precondition(renamed == originalTitle, "Stable window identity must tolerate title updates")
+        precondition(renamed == originalTitle, "Redundant window labels do not replace the native target token")
+        try expectChanged(titled, "A retitled native target must invalidate pending input even with a stable AX identifier") {
+            $0.windowTargetID = "mac:42:123456789:retitled"
+        }
+        try expectChanged(titled, "Losing the owning window must invalidate pending input") { $0.windowTargetID = nil }
         titled.windowIdentifier = ""
         try expectChanged(titled, "Window titles remain identity evidence when no identifier is available") { $0.windowTitle = "Another window" }
         for role in ["AXTextArea", "AXWebArea"] {

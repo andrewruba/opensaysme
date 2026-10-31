@@ -123,10 +123,18 @@ describe('local tool registry', () => {
 
 const editor = { id: 'native-editor-42', application: 'Code', title: 'frontend — Visual Studio Code' };
 const browser = { id: 'native-browser-17', application: 'Browser', title: 'Issue tracker' };
+function inventory(windows: WindowInventory['windows'], extraNames: string[] = []): WindowInventory {
+  const names = [...new Set([...windows.map(({ application }) => application), ...extraNames])];
+  return { windows, warnings: [], applications: names.map((application) => ({
+    id: `native-application-${application}`, application, hidden: false, frontmost: false,
+    windowStatus: windows.some((window) => window.application === application) ? 'available' : 'empty',
+    windowIds: windows.filter((window) => window.application === application).map(({ id }) => id),
+  })) };
+}
 function desktopFixture() {
   const state = { current: browser, inventory: [editor, browser] };
   const adapter = {
-    listWindows: vi.fn<DesktopAdapter['listWindows']>(async () => ({ windows: structuredClone(state.inventory), warnings: [] })),
+    listWindows: vi.fn<DesktopAdapter['listWindows']>(async () => inventory(structuredClone(state.inventory))),
     inspectWindow: vi.fn<NonNullable<DesktopAdapter['inspectWindow']>>(async (id) => ({
       status: 'ok', capturedAt: '2026-10-29T12:00:00.000Z', window: { ...state.inventory.find((window) => window.id === id)! },
       nodes: [{ parent: null, role: 'AXWindow', title: 'Project' }, { parent: 0, role: 'AXTextArea', value: 'frontend/src/App.tsx' }], warnings: [],
@@ -153,7 +161,7 @@ function desktopFixture() {
 it('exposes keyboard focus from screen capture even without discoverable windows', async () => {
   const f = desktopFixture(); f.state.inventory = [];
   const keyboard = {
-    inspect: vi.fn(async () => ({ fingerprint: 'a'.repeat(64), application: 'Terminal', role: 'AXTextArea',
+    inspect: vi.fn(async () => ({ fingerprint: 'a'.repeat(64), application: 'Terminal', applicationId: 'native-terminal', role: 'AXTextArea',
       title: '', description: '', value: '', valueTruncated: false, editable: false })),
     execute: vi.fn(async () => ({ status: 'issued' as const })),
   };
@@ -173,6 +181,14 @@ it('exposes keyboard focus from screen capture even without discoverable windows
 
 const payloads = (result: ToolResult) => result.content.flatMap((part) => part.type === 'text' ? [JSON.parse(part.text)] : []);
 const observation = (result: ToolResult) => payloads(result).find((part) => part.observationId || part.keyboardObservationId);
+async function selectDestination(host: ReturnType<typeof createDesktopTools>, request: string, result: ToolResult, windowId = 'window-1') {
+  const content = payloads(result).find((part) => part.source === 'window-screenshot' || part.source === 'accessibility');
+  expect(content?.evidenceId).toEqual(expect.any(String));
+  const resolved = await host.call('resolve_target', { requestQuote: request, source: null,
+    candidates: [{ targetId: windowId, status: 'selected', evidenceIds: [content.evidenceId],
+      reason: 'The observed destination matches this requested message.' }], question: null }, signal());
+  expect(resolved.isError).not.toBe(true);
+}
 function actionableDesktop() {
   const f = desktopFixture();
   let committing = false;
@@ -186,7 +202,7 @@ function actionableDesktop() {
   const authorize = vi.fn(async () => ({ decision: 'allow' as const, effect: committing ? 'submit' as const : 'edit' as const,
     requestQuote: request, reason: 'Scripted request-scoped decision.' }));
   const host = createDesktopTools({ ...f.adapter, input }, { request, authorize });
-  return { ...f, host, input, authorize, commit: () => { committing = true; },
+  return { ...f, host, input, authorize, select: (result: ToolResult) => selectDestination(host, request, result), commit: () => { committing = true; },
     close: () => { host.close(); f.host.close(); } };
 }
 
@@ -195,6 +211,7 @@ describe('fresh observations bundled with actions', () => {
     const f = actionableDesktop();
     await f.host.call('list_windows', {}, signal());
     const focused = await f.host.call('focus_window', { windowId: 'window-1' }, signal());
+    await f.select(focused);
     expect(value(focused).focused).toBe(true);
     const first = observation(focused).observationId;
     const clicked = await f.host.call('click', { observationId: first, x: 100, y: 100 }, signal());
@@ -223,15 +240,20 @@ describe('fresh observations bundled with actions', () => {
 
   it('returns each new keyboard focus for navigation, typing and Enter without intervening capture calls', async () => {
     const f = desktopFixture(); let revision = 0;
+    const window = { id: 'native-workspace', application: 'Workspace', title: 'Message' };
+    f.state.inventory = [window]; f.state.current = window;
     const request = 'Write and send the requested message.';
     const keyboard = {
       inspect: vi.fn<NonNullable<DesktopAdapter['keyboard']>['inspect']>(async () => ({ fingerprint: String(revision).repeat(64),
-        application: 'Workspace', role: 'AXTextArea', title: 'Message', description: '', value: revision > 1 ? 'Hello' : '',
+        application: 'Workspace', applicationId: 'native-application-Workspace', windowId: window.id, role: 'AXTextArea', title: 'Message', description: '', value: revision > 1 ? 'Hello' : '',
         valueTruncated: false, editable: true })),
       execute: vi.fn<NonNullable<DesktopAdapter['keyboard']>['execute']>(async () => { revision++; return { status: 'issued' }; }),
     };
     const host = createDesktopTools({ ...f.adapter, keyboard }, { request,
-      authorize: async () => ({ decision: 'allow', effect: 'submit', requestQuote: request, reason: 'Send requested message.' }) });
+      authorize: async (review) => ({ decision: 'allow', effect: review.action.kind === 'type_keyboard_text' ? 'edit' : 'submit',
+        requestQuote: request, reason: 'Prepare or send the requested message.' }) });
+    await host.call('list_windows', {}, signal());
+    await selectDestination(host, request, await host.call('capture_window', { windowId: 'window-1' }, signal()));
     const initial = await host.call('capture_screen', {}, signal());
     const navigated = await host.call('press_key', { keyboardObservationId: observation(initial).keyboardObservationId,
       key: 'Tab', modifiers: [] }, signal());
@@ -253,6 +275,7 @@ describe('fresh observations bundled with actions', () => {
   it.each(['not-issued', 'uncertain'] as const)('observes a native %s result without retrying or reopening stopped input', async (status) => {
     const f = actionableDesktop(); await f.host.call('list_windows', {}, signal());
     const focused = await f.host.call('focus_window', { windowId: 'window-1' }, signal());
+    await f.select(focused);
     f.input.execute.mockResolvedValue({ status, reason: 'stale-observation' });
     const result = await f.host.call('click', { observationId: observation(focused).observationId, x: 100, y: 100 }, signal());
     expect(value(result)).toMatchObject({ status, inputStopped: status === 'uncertain' });
@@ -266,6 +289,7 @@ describe('fresh observations bundled with actions', () => {
   it.each(['throw', 'unavailable', 'malformed'] as const)('preserves an issued action when its optional refresh is %s', async (failure) => {
     const f = actionableDesktop(); await f.host.call('list_windows', {}, signal());
     const focused = await f.host.call('focus_window', { windowId: 'window-1' }, signal());
+    await f.select(focused);
     if (failure === 'throw') f.adapter.captureWindow.mockRejectedValue(new Error('private native details'));
     if (failure === 'unavailable') f.adapter.captureWindow.mockResolvedValue({ status: 'unavailable', reason: 'inaccessible' });
     if (failure === 'malformed') f.adapter.captureWindow.mockResolvedValue({ status: 'ok' } as never);
@@ -301,6 +325,7 @@ describe('fresh observations bundled with actions', () => {
   it('cancels a post-action refresh without publishing late observations or retrying input', async () => {
     const f = actionableDesktop(); await f.host.call('list_windows', {}, signal());
     const focused = await f.host.call('focus_window', { windowId: 'window-1' }, signal());
+    await f.select(focused);
     const frame = await f.adapter.captureWindow(editor.id, signal());
     const gate = deferred<typeof frame>(); const entered = deferred<void>();
     f.adapter.captureWindow.mockImplementation(async () => { entered.resolve(); return gate.promise; });
@@ -318,6 +343,7 @@ describe('fresh observations bundled with actions', () => {
   it('does not capture after point-only, invalid, or denied actions', async () => {
     const f = actionableDesktop(); await f.host.call('list_windows', {}, signal());
     const focused = await f.host.call('focus_window', { windowId: 'window-1' }, signal());
+    await f.select(focused);
     const args = { observationId: observation(focused).observationId, x: 100, y: 100 };
     await f.host.call('click', { ...args, unexpected: true }, signal());
     await f.host.call('move_pointer', args, signal());
@@ -389,10 +415,10 @@ describe('desktop tool primitives', () => {
 
   it('discovers windows without manual names or exposing native IDs', async () => {
     const { host, adapter } = desktopFixture();
-    expect(host.list().map((tool) => tool.name)).toEqual(['list_windows', 'inspect_desktop', 'capture_screen', 'focus_window', 'inspect_window', 'capture_window']);
+    expect(host.list().map((tool) => tool.name)).toEqual(['resolve_target', 'list_windows', 'inspect_desktop', 'capture_screen', 'focus_window', 'inspect_window', 'capture_window']);
     expect(adapter.listWindows).not.toHaveBeenCalled();
     const result = await host.call('list_windows', {}, signal());
-    expect(value(result)).toEqual({ windows: [
+    expect(value(result)).toMatchObject({ windows: [
       { windowId: 'window-1', application: 'Code', title: editor.title },
       { windowId: 'window-2', application: 'Browser', title: browser.title },
     ], applications: [
@@ -405,8 +431,8 @@ describe('desktop tool primitives', () => {
 
   it('reports running apps with empty inventories without inventing window handles', async () => {
     const { host, adapter } = desktopFixture();
-    adapter.listWindows.mockResolvedValueOnce({ windows: [], warnings: [], applicationsWithoutWindows: ['Chat App'] });
-    expect(value(await host.call('list_windows', {}, signal()))).toEqual({
+    adapter.listWindows.mockResolvedValueOnce(inventory([], ['Chat App']));
+    expect(value(await host.call('list_windows', {}, signal()))).toMatchObject({
       windows: [], warnings: [], applications: [
         { application: 'Chat App', windowIds: [], inventoryStatus: 'running-without-listed-windows', recentWindowNames: [] },
       ],
@@ -416,8 +442,8 @@ describe('desktop tool primitives', () => {
     expect(host.conversationEvidence!()).toEqual({ windows: [], actions: [] });
 
     const window = { id: 'native-chat-43', application: 'Chat App', title: 'Project conversation' };
-    adapter.listWindows.mockResolvedValueOnce({ windows: [window], warnings: [] });
-    expect(value(await host.call('list_windows', {}, signal()))).toEqual({
+    adapter.listWindows.mockResolvedValueOnce(inventory([window]));
+    expect(value(await host.call('list_windows', {}, signal()))).toMatchObject({
       windows: [{ windowId: 'window-1', application: 'Chat App', title: window.title }], warnings: [],
       applications: [{ application: 'Chat App', windowIds: ['window-1'], inventoryStatus: 'windows-listed', recentWindowNames: [] }],
     });
@@ -438,10 +464,9 @@ describe('desktop tool primitives', () => {
     const host = createDesktopTools(adapter, { request: 'Continue the conversation', workContext });
     workContext[0]!.title = 'Mutated outside the tool host';
     state.inventory = [editor, browser, secondEditor];
-    adapter.listWindows.mockImplementation(async () => ({ windows: structuredClone(state.inventory), warnings: [],
-      applicationsWithoutWindows: ['Chat App', 'Code'] }));
+    adapter.listWindows.mockImplementation(async () => inventory(structuredClone(state.inventory), ['Chat App', 'Code']));
     const listed = value(await host.call('list_windows', {}, signal()));
-    expect(listed.applications).toEqual([
+    expect(listed.applications).toMatchObject([
       { application: 'Code', windowIds: ['window-1', 'window-3'], inventoryStatus: 'windows-listed',
         recentWindowNames: [{ title: 'Earlier workspace', observedAt }] },
       { application: 'Browser', windowIds: ['window-2'], inventoryStatus: 'windows-listed', recentWindowNames: [] },
@@ -462,7 +487,7 @@ describe('desktop tool primitives', () => {
 
     state.inventory = [browser];
     const refreshed = value(await host.call('list_windows', {}, signal()));
-    expect(refreshed.applications.find(({ application }: { application: string }) => application === 'Code')).toEqual({
+    expect(refreshed.applications.find(({ application }: { application: string }) => application === 'Code')).toMatchObject({
       application: 'Code', windowIds: [], inventoryStatus: 'running-without-listed-windows',
       recentWindowNames: [{ title: 'Earlier workspace', observedAt }],
     });
@@ -518,7 +543,7 @@ describe('desktop tool primitives', () => {
     const { host, adapter } = desktopFixture();
     await host.call('list_windows', {}, signal());
     const result = await host.call('capture_window', { windowId: 'window-1' }, signal());
-    expect(value(result)).toEqual({ source: 'window-screenshot', capturedAt: '2026-10-29T12:00:01.000Z',
+    expect(value(result)).toMatchObject({ source: 'window-screenshot', capturedAt: '2026-10-29T12:00:01.000Z',
       window: { windowId: 'window-1', application: 'Code', title: editor.title },
       bounds: { x: -1200, y: -100, width: 800, height: 600 }, coordinateSpace: 'global-desktop-logical-points',
       image: { mimeType: 'image/jpeg', width: 1600, height: 1200 }, warnings: ['Protected content may be blank.'] });
@@ -630,7 +655,7 @@ describe('desktop tool primitives', () => {
     const { host, adapter } = desktopFixture();
     await host.call('list_windows', {}, signal());
     const result = await host.call('focus_window', { windowId: 'window-1' }, signal());
-    expect(value(result)).toEqual({ focused: true, window: { windowId: 'window-1', application: 'Code', title: editor.title } });
+    expect(value(result)).toMatchObject({ focused: true, window: { windowId: 'window-1', application: 'Code', title: editor.title } });
     expect(adapter.listWindows).toHaveBeenCalledTimes(2);
     expect(adapter.focus).toHaveBeenCalledWith(editor.id, expect.any(AbortSignal));
     expect(adapter.inspect).toHaveBeenCalledWith(false, expect.any(AbortSignal));
@@ -662,7 +687,7 @@ describe('desktop tool primitives', () => {
     const pending = host.call('focus_window', { windowId: 'window-1' }, controller.signal);
     const cancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     await Promise.resolve(); controller.abort(); await cancelled;
-    gate.resolve({ windows: [editor, browser], warnings: [] });
+    gate.resolve(inventory([editor, browser]));
     await Promise.resolve(); await Promise.resolve();
     expect(adapter.focus).not.toHaveBeenCalled();
   });
@@ -673,7 +698,7 @@ describe('desktop tool primitives', () => {
     const pending = host.call('list_windows', {}, signal());
     const cancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     await Promise.resolve(); host.close(); await cancelled;
-    gate.resolve({ windows: [editor, browser], warnings: [] });
+    gate.resolve(inventory([editor, browser]));
     await Promise.resolve(); await Promise.resolve();
     expect(host.list()).toEqual([]);
     expect(value(await host.call('focus_window', { windowId: 'window-1' }, signal())).code).toBe('closed');
@@ -700,7 +725,7 @@ describe('desktop tool primitives', () => {
 
   it('rejects ambiguous or invalid inventories instead of inventing target identities', async () => {
     const { host, adapter } = desktopFixture();
-    adapter.listWindows.mockResolvedValue({ windows: [editor, editor], warnings: [] });
+    adapter.listWindows.mockResolvedValue(inventory([editor, editor]));
     expect((await host.call('list_windows', {}, signal())).isError).toBe(true);
     expect(value(await host.call('focus_window', { windowId: 'window-1' }, signal())).code).toBe('unknown-window');
     expect(adapter.focus).not.toHaveBeenCalled();

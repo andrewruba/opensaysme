@@ -18,6 +18,8 @@ import {
   windowInventorySchema,
   windowInspectionSchema,
   windowFrameCaptureSchema,
+  applicationActivationSchema,
+  type ApplicationActivation,
   type DesktopReport,
   type DesktopSnapshot,
   type WindowInventory,
@@ -27,6 +29,8 @@ import {
 
 const helperPath = fileURLToPath(new URL('../../../native/macos/bin/opensaysme-desktop', import.meta.url));
 const targetIdSchema = z.string().regex(/^mac:[1-9]\d{0,9}:\d{1,16}:[a-f0-9]{64}$/)
+  .refine((id) => Number(id.split(':')[1]) <= 2_147_483_647, 'Invalid macOS process ID');
+const applicationIdSchema = z.string().regex(/^mac-app:[1-9]\d{0,9}:[1-9]\d{0,15}$/)
   .refine((id) => Number(id.split(':')[1]) <= 2_147_483_647, 'Invalid macOS process ID');
 const focusResultSchema = z.object({ ok: z.literal(true) }).strict();
 async function requireHelper(): Promise<void> {
@@ -93,10 +97,22 @@ export async function probeMacOS(): Promise<DesktopReport> {
 
 export async function listMacOSWindows(signal?: AbortSignal): Promise<WindowInventory> {
   const inventory = decode(windowInventorySchema, await invoke(['--list-windows'], 4_000, signal));
-  if (inventory.windows.some((window) => !targetIdSchema.safeParse(window.id).success)) {
-    throw new Error('The macOS desktop helper returned an invalid window target.');
+  if (inventory.windows.some((window) => !targetIdSchema.safeParse(window.id).success)
+    || inventory.applications.some((application) => !applicationIdSchema.safeParse(application.id).success
+      || application.windowIds.some((id) => id.split(':').slice(1, 3).join(':') !== application.id.split(':').slice(1).join(':')))) {
+    throw new Error('The macOS desktop helper returned an invalid discovery target.');
   }
   return inventory;
+}
+
+export async function activateMacOSApplication(targetId: string, signal?: AbortSignal): Promise<ApplicationActivation> {
+  if (!applicationIdSchema.safeParse(targetId).success) throw new Error('Use a macOS application ID returned by discovery.');
+  const result = decode(applicationActivationSchema, await invoke(['--activate-application', targetId], 4_000, signal));
+  if (result.application.id !== targetId || result.application.windowIds.some((id) => !targetIdSchema.safeParse(id).success
+    || id.split(':').slice(1, 3).join(':') !== targetId.split(':').slice(1).join(':'))) {
+    throw new Error('The macOS desktop helper returned a mismatched application target.');
+  }
+  return result;
 }
 
 export async function inspectMacOSWindow(targetId: string, signal?: AbortSignal): Promise<WindowInspection> {
@@ -174,7 +190,15 @@ export async function readMacOSText(signal?: AbortSignal): Promise<TextCapture> 
 }
 
 export const macOSKeyboard: KeyboardAdapter = {
-  inspect: async (signal) => decode(keyboardEvidenceSchema, await invoke(['--inspect-keyboard'], 3_000, signal)),
+  inspect: async (signal) => {
+    const result = decode(keyboardEvidenceSchema, await invoke(['--inspect-keyboard'], 3_000, signal));
+    if (!applicationIdSchema.safeParse(result.applicationId).success || (result.windowId !== undefined
+      && (!targetIdSchema.safeParse(result.windowId).success
+        || result.windowId.split(':').slice(1, 3).join(':') !== result.applicationId.split(':').slice(1).join(':')))) {
+      throw new DesktopError('helper-invalid-response');
+    }
+    return result;
+  },
   execute: async (action, fingerprint, signal) => {
     const parsed = keyboardActionSchema.parse(action);
     if (!/^[a-f0-9]{64}$/.test(fingerprint)) throw new Error('Invalid keyboard evidence.');

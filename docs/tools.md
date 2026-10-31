@@ -4,28 +4,41 @@ The model chooses how to fulfill a spoken request with evidence and tools. There
 is no window-naming step or fixed sequence. The runtime calls a typed tool host in
 the same Node.js process; only offered, validated operations can execute.
 
-The prompt separates resolving the destination from finding a control inside it.
-The whole request, activation context and relevant history determine whether the
-user means an app, window, document, conversation, recipient or control. The
-original source context stays separate from content revealed during navigation.
-A capable interface alone does not establish relevance: unrelated content should
-prompt comparison with another candidate before opening more panels or commands.
-Current observations and remembered names are evidence; inventory order, repeated
-title variants and ease of access are not rankings. Fresh details about an
-unrelated window do not displace an older relevant clue. The model can inspect in
-the background or bring a candidate forward to resolve a useful question, then
-proceed once one destination has strong support. It asks only when useful
-inspection leaves material ambiguity. These rules apply across apps and tasks,
-without preferred applications or fixed routing sequences.
-Transcribed proper names can be matched to observed names using pronunciation,
-spelling and task context. The transcript and permission quotes remain verbatim;
-resolving a name cannot change the requested action or its restrictions.
+Destination resolution has an explicit per-turn record. `resolve_target` records
+an exact excerpt of the current request, source material, candidate destinations,
+evidence references, and an optional pending question. The model interprets the
+content; the host validates provenance, freshness and identity. Source material
+and destination are separate. Focusing a candidate is exploration and does not
+select it for editing. A rejected candidate needs new content evidence before it
+can be selected; an inaccessible capture remains uncertainty. No application
+names, project names, preferred hosts or fixed interaction sequences are encoded.
+
+Each observation has an `evidenceId`, separate from input observation handles.
+Selection requires successful content evidence from the candidate within 30
+seconds; inventory names and title-only context are insufficient. Evidence is
+bounded in memory and supplied as untrusted data to the independent action
+checker. The first edit of a newly resolved destination also receives this check.
+The model's selection and explanation never grant authority. Later input still
+requires the actual native destination to match, along with normal freshness and
+focus checks. Application selections bind process-start identity and the observed
+window (when present), so identical display names do not merge destinations.
+
+Inspect enough to distinguish plausible candidates, then act when the destination
+and requested effect are supported. If useful inspection leaves material
+ambiguity, retain one specific question and ask it. Recent conversation keeps the
+source description, candidate labels and question for corrections; it carries no
+live evidence handles or reusable approval. Current speech overrides earlier
+interpretations. Transcribed names can be matched using pronunciation, spelling
+and task context while preserving verbatim request and permission quotes.
 
 ## macOS capabilities
 
 | Tool | Behavior |
 | --- | --- |
-| `list_windows` | Discover current window references and application candidates with separately labelled recent window names and current availability. |
+| `list_windows` | Discover stable current window/application references, visibility, per-app window availability and separately labelled recent names. |
+| `activate_application` | Recheck and activate a discovered running process, including one without listed windows, then return fresh discovery. |
+| `resolve_target` | Retain source, candidates, evidence and a pending question; select a supported destination before editing. |
+| `continue_task` | Independently verify an issued commitment and the next requested step before reopening input. |
 | `inspect_desktop` | Read current active-window, selection and pointer context. |
 | `capture_screen` | Capture the display under the pointer and, when stable, return keyboard focus evidence and a `keyboardObservationId`. |
 | `inspect_window` | Read bounded Accessibility text/roles without focusing a discovered window. |
@@ -50,13 +63,23 @@ lose them. Fresh discoveries can link to prior conversation through
 `previousTurnIds`. This is historical source evidence, not proof of unchanged
 contents or permission. A fresh tool host is created for every activation.
 `list_windows` returns `windows` with current handles and `applications` with
-`windowIds`, `inventoryStatus` and `recentWindowNames`. Each app appears once,
-including running apps without listed windows and remembered apps absent from the
-current inventory. Historical names carry observation times and are associated
-only by exact app name; they are never assigned to a current window as proof of
-its contents. Empty window lists are not proof of inactivity. The model can open
-a supported candidate through available tools, then rediscover actual windows.
-Discovery and the actor receive the same work-history snapshot for the turn.
+`applicationId`, `windowIds`, `windowStatus`, hidden/frontmost state, optional
+bundle identifier, and `recentWindowNames`. Running instances have separate
+process-start identities even when names match. Window status distinguishes
+available, empty, inaccessible and incomplete results. Native discovery supplements
+the AX window list with focused/main windows and deduplicates actual elements.
+`activate_application` does not launch an executable or select content: it verifies
+that the discovered process still exists, brings it forward, verifies foreground
+identity, and returns a new inventory. Historical-only entries have no activatable
+handle. Empty window lists do not establish inactivity.
+
+Historical names carry observation times and associate by exact application name,
+never as proof of current contents. Discovery and the actor receive the same
+work-history snapshot. `activationEvidence` preserves the original source context
+separately from later navigation. A stable `capture_screen` keyboard observation
+can also expose a local application handle for system UI that is absent from the
+regular window inventory; that observed owner can be resolved for input without
+inventing a window or making it activatable.
 
 `inspect_window` returns source identity, capture time, roles, available labels and
 values, and omission warnings. Parent indices describe the observation, not action
@@ -123,16 +146,18 @@ authority. Ask only about material ambiguity or needed additional authority.
 
 The acting model interprets every action against the current request and relevant
 prior user speech. Pointing, scrolling, literal text entry and unmodified
-Tab/arrows/Home/End/PageUp/PageDown execute without a second model call. Tool
-results label this as `actor-request`; they do not invent an independent approval
-or supporting quote.
+Tab/arrows/Home/End/PageUp/PageDown ordinarily execute without a second model call.
+The first content edit at a newly resolved destination, all input following a
+needs-evidence result, and input after task continuation receive an independent
+check as well. Results distinguish `actor-request` from `independent-check`;
+routine dispatch does not invent an independent approval or supporting quote.
 
 Every click and other key press, including shortcuts and Enter, gets an independent
 check. Native roles and button labels do not reliably reveal whether a click sends,
 deletes or executes, so the runtime
 does not guess which labels are harmless. The checker sees the original request,
 current image/control and relevant history, has no tools, and returns a strict
-allow/deny/clarify decision. Approval must quote current user speech and match the
+allow/deny/clarify/inspect decision. Approval must quote current user speech and match the
 effect. Unknown, malformed or unavailable decisions do not execute. Unmodified
 Enter can have a navigation effect when current evidence shows it opens the
 requested app from a launcher or site from a browser address bar. Opening a
@@ -144,8 +169,8 @@ including modified Enter, requires a submit effect; it cannot be classified as
 draft editing. Opening a site does not authorize submitting its forms. Results
 identify this path as `independent-check`.
 
-This is a deliberate prototype tradeoff. Routine actions depend on the acting
-model honoring the request; they are not independently authorized. Text can
+This is a deliberate prototype tradeoff. Routine actions outside the review
+cases above depend on the acting model honoring the request. Text can
 autosave and Tab can trigger blur/save handlers, so the actor must inspect likely
 consequences and clarify if material uncertainty remains. Fixtures establish code
 behavior with scripted decisions, not semantic accuracy on arbitrary interfaces.
@@ -203,9 +228,28 @@ explicitly, including purely visual pointer targets without accessible hit evide
 
 Pointer position or exact text can be verified locally. Click/scroll/key events
 report `issued`, which does not prove application success. A denied or
-clarify-required action, uncertain outcome, or issued submission stops both input
-paths and window focusing for the turn; read tools remain available. Recapturing
-does not resume stopped input. `not-issued` permits a fresh observation and retry.
+clarify-required action stops both input paths and window focusing for the turn;
+read tools remain available. An `inspect` decision produces `needs-evidence`:
+no input was issued, exploration may continue, and the next input (including
+routine typing) must be independently checked against the unresolved action and
+new evidence. A recapture alone is not a reason to retry an unchanged proposal.
+Denied effects cannot be retried through an equivalent mouse, keyboard or API route.
+
+Both input paths share an execution ledger. A possibly issued/uncertain action
+stops input and cannot be resumed automatically. An issued submission also stops
+input while its completion is unknown. If the original request has remaining
+work, `continue_task` captures the submitted window when its identity is still
+available, or a clearly labelled current-display fallback, and independently checks whether the
+commitment completed and whether the quoted next step is authorized with its
+dependencies satisfied. Only that check can reopen input; completed commitments
+stay in the ledger and cannot be resent. Issued events are never treated as proof
+of application success. Cancellation or a failed check leaves input stopped.
+`not-issued` permits a fresh observation and retry.
+The next step can quote current speech or a retained prior user request when a
+current clarification continues that unfinished work. Approval must still quote
+current speech; unrelated historical work and assistant suggestions cannot supply
+authority. The shared ledger retains all actions and stops before dispatch if it
+would exceed 24 actions or 512 KiB, rather than dropping earlier commitments.
 Rejected native actions include a finite failure code when known, such as
 `focus-changed`, `user-intervention`, or `stale-observation`; the same code reaches
 the model and terminal. An `uncertain` result still stops input regardless of its code.
@@ -246,8 +290,9 @@ accuracy still depends on the audio and available context. There is no hardcoded
 name substitution or transcript rewrite.
 
 Recent conversation retains bounded requests, responses, source observations and
-native outcomes in memory. It excludes screenshots, audio, live handles and
-approvals. Limits are development defaults in `src/conversation.ts`, not a final
+native outcomes in memory. It also retains bounded destination interpretations and pending questions,
+labelled separately from native evidence. It excludes screenshots, audio, live
+handles and approvals. Limits are development defaults in `src/conversation.ts`, not a final
 conversation design. Cancellation, failed turns and shutdown clear history.
 Large transferred values count toward the history budget; if a turn does not fit,
 the runtime reports that follow-up context was cleared rather than retaining a

@@ -9,6 +9,7 @@ import { inputFailureReasonSchema } from '../src/desktop/input-types.js';
 
 import {
   focusMacOS,
+  activateMacOSApplication,
   captureMacOSContext,
   captureMacOSFrame,
   captureMacOSWindow,
@@ -33,7 +34,7 @@ vi.mock('../src/desktop/process.js', async (importOriginal) => ({
 
 test('keyboard adapter sends validated actions through stdin and preserves native focus evidence', async () => {
   const signal = new AbortController().signal;
-  const target = { fingerprint: 'a'.repeat(64), application: 'Spotlight', role: 'AXTextField',
+  const target = { fingerprint: 'a'.repeat(64), application: 'Spotlight', applicationId: 'mac-app:123:1700000000000', role: 'AXTextField',
     title: '', description: 'Search', value: '', editable: true, valueTruncated: false };
   vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(target));
   assert.deepEqual(await macOSKeyboard.inspect(signal), target);
@@ -56,6 +57,24 @@ test('keyboard inspection preserves known failures without exposing arbitrary na
   await assert.rejects(macOSKeyboard.inspect(new AbortController().signal), /secure text fields/);
   vi.mocked(runCommand).mockResolvedValueOnce('{"value":"private focused text"}');
   await assert.rejects(macOSKeyboard.inspect(new AbortController().signal), { message: 'The macOS desktop helper returned an invalid response.' });
+});
+
+test('keyboard inspection binds process and optional owning-window identity without requiring an inventory window', async () => {
+  const target = { fingerprint: 'a'.repeat(64), application: 'Work App', applicationId: 'mac-app:123:1700000000000',
+    role: 'AXTextField', title: '', description: 'Search', value: '', valueTruncated: false, editable: true };
+  const windowId = `mac:123:1700000000000:${'b'.repeat(64)}`;
+  for (const evidence of [target, { ...target, windowId }]) {
+    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(evidence));
+    assert.deepEqual(await macOSKeyboard.inspect(new AbortController().signal), evidence);
+  }
+  const withoutIdentity = { ...target, applicationId: undefined };
+  for (const evidence of [withoutIdentity, { ...target, applicationId: 'Work App' },
+    { ...target, applicationId: 'mac-app:2147483648:1' }, { ...target, applicationId: 'mac-app:123:0' },
+    { ...target, windowId: `mac:124:1700000000000:${'b'.repeat(64)}` },
+    { ...target, windowId: `mac:123:1700000000001:${'b'.repeat(64)}` }, { ...target, windowId: 'window-1' }]) {
+    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(evidence));
+    await assert.rejects(macOSKeyboard.inspect(new AbortController().signal), { code: 'helper-invalid-response' });
+  }
 });
 
 test('rejects inactive platforms instead of claiming desktop support', async () => {
@@ -213,7 +232,7 @@ test('screen capture preserves the native deadline as a typed timeout instead of
 test('macOS inventory preserves distinct windows and forwards cancellation without focusing', async () => {
   const inventory = { windows: ['a', 'b'].map((digest) => ({
     id: `mac:123:1700000000000:${digest.repeat(64)}`, application: 'Code', title: `${digest} project`,
-  })), warnings: ['Some inaccessible or ambiguous windows were omitted.'] };
+  })), warnings: ['Some inaccessible or ambiguous windows were omitted.'], applications: [] };
   const signal = new AbortController().signal;
   vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(inventory));
   assert.deepEqual(await listMacOSWindows(signal), inventory);
@@ -223,29 +242,83 @@ test('macOS inventory preserves distinct windows and forwards cancellation witho
 test('macOS inventory rejects duplicate, excessive, or invalid native targets', async () => {
   const window = { id: `mac:123:1700000000000:${'a'.repeat(64)}`, application: 'Code' };
   for (const windows of [[window, window], Array(129).fill(window), [{ ...window, id: 'private invalid target' }]]) {
-    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify({ windows, warnings: [] }));
+    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify({ windows, warnings: [], applications: [] }));
     await assert.rejects(listMacOSWindows(), /invalid/);
   }
   vi.mocked(runCommand).mockResolvedValueOnce('{"error":"permission-required"}');
   await assert.rejects(listMacOSWindows(), /Enable Accessibility/);
 });
 
-test('macOS inventory preserves bounded app names separately from window targets', async () => {
-  const applicationsWithoutWindows = ['Chat App', '🧙'.repeat(128),
-    ...Array.from({ length: 126 }, (_, index) => `Application ${index}`)];
-  const inventory = { windows: [], warnings: [], applicationsWithoutWindows };
+const runningApplication = {
+  id: 'mac-app:123:1700000000000', application: 'Work App', bundleIdentifier: 'org.example.work',
+  hidden: true, frontmost: false, windowStatus: 'empty', windowIds: [],
+};
+
+test('macOS inventory preserves running applications with empty or inaccessible windows', async () => {
+  const inventory = { windows: [], warnings: [], applications: [runningApplication,
+    { ...runningApplication, id: 'mac-app:124:1700000000000', windowStatus: 'inaccessible', hidden: false }] };
   vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(inventory));
   assert.deepEqual(await listMacOSWindows(), inventory);
   assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.[1], ['--list-windows']);
+  const window = { id: `mac:123:1700000000000:${'a'.repeat(64)}`, application: runningApplication.application };
+  const withWindows = { windows: [window], warnings: [], applications: [
+    { ...runningApplication, windowStatus: 'available', windowIds: [window.id] },
+  ] };
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(withWindows));
+  assert.deepEqual(await listMacOSWindows(), withWindows);
 });
 
-test('macOS inventory rejects malformed or excessive running application evidence', async () => {
-  for (const applicationsWithoutWindows of [[], [''], ['a'.repeat(257)], ['🧙'.repeat(129)],
-    Array.from({ length: 129 }, (_, index) => `Application ${index}`), ['Chat App', 'Chat App'],
-    [{ application: 'Chat App', windowId: 'fake-window' }], 'Chat App']) {
-    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify({ windows: [], warnings: [], applicationsWithoutWindows }));
+test('macOS inventory rejects malformed, duplicate or inconsistent application identities', async () => {
+  for (const applications of [[{ ...runningApplication, id: 'mac-app:2147483648:1' }],
+    [{ ...runningApplication, id: 'mac-app:123:0' }], [{ ...runningApplication, application: '' }],
+    [{ ...runningApplication, windowStatus: 'closed' }], [{ ...runningApplication, windowStatus: 'available' }],
+    [{ ...runningApplication, application: 'a'.repeat(1025) }],
+    [runningApplication, runningApplication], Array(129).fill(runningApplication),
+    [{ ...runningApplication, windowIds: [`mac:123:1700000000000:${'a'.repeat(64)}`] }], 'Work App']) {
+    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify({ windows: [], warnings: [], applications }));
     await assert.rejects(listMacOSWindows(), /invalid/);
   }
+  const window = { id: `mac:123:1700000000000:${'a'.repeat(64)}`, application: runningApplication.application };
+  for (const application of [
+    { ...runningApplication, id: 'mac-app:124:1700000000000', windowIds: [window.id] },
+    { ...runningApplication, id: 'mac-app:123:1700000000001', windowIds: [window.id] },
+    { ...runningApplication, application: 'Different App', windowIds: [window.id] },
+  ]) {
+    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify({ windows: [window], warnings: [], applications: [application] }));
+    await assert.rejects(listMacOSWindows(), /invalid/);
+  }
+});
+
+test('application activation uses a discovered process identity and validates actual foreground state', async () => {
+  const signal = new AbortController().signal;
+  const result = { activated: true, application: { ...runningApplication, hidden: false, frontmost: true } };
+  vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify(result));
+  assert.deepEqual(await activateMacOSApplication(runningApplication.id, signal), result);
+  assert.deepEqual(vi.mocked(runCommand).mock.lastCall?.slice(1),
+    [['--activate-application', runningApplication.id], { timeoutMs: 4000, signal }]);
+  assert.equal((await desktopAdapter('darwin')).activateApplication, activateMacOSApplication);
+  const calls = vi.mocked(runCommand).mock.calls.length;
+  for (const target of ['Work App', '/Applications/Work.app', 'mac-app:123:0', 'mac-app:2147483648:1',
+    `mac:123:1700000000000:${'a'.repeat(64)}`]) {
+    await assert.rejects(activateMacOSApplication(target));
+  }
+  await assert.rejects(activateMacOSApplication(runningApplication.id, AbortSignal.abort()));
+  assert.equal(vi.mocked(runCommand).mock.calls.length, calls);
+  for (const application of [runningApplication, { ...result.application, hidden: true },
+    { ...result.application, id: 'mac-app:123:1700000000001' },
+    { ...result.application, windowIds: [`mac:124:1700000000000:${'a'.repeat(64)}`] }]) {
+    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify({ activated: true, application }));
+    await assert.rejects(activateMacOSApplication(runningApplication.id), /invalid response|mismatched application/);
+  }
+});
+
+test('application activation preserves stale and unverified outcomes without exposing native detail', async () => {
+  for (const code of ['stale-or-ambiguous-target', 'focus-rejected', 'focus-unverified']) {
+    vi.mocked(runCommand).mockResolvedValueOnce(JSON.stringify({ error: code }));
+    await assert.rejects(activateMacOSApplication(runningApplication.id), { code });
+  }
+  vi.mocked(runCommand).mockResolvedValueOnce('{"error":"private app detail"}');
+  await assert.rejects(activateMacOSApplication(runningApplication.id), { code: 'helper-failed' });
 });
 
 test('macOS inspection and focus pass cancellation and never launch after abort', async () => {

@@ -14,7 +14,9 @@ using and can pass your request to the agent you're working with.
 
 Tap a hotkey and talk. Point at something on screen or select text to show what
 you mean. OpenSaysMe can read what's there, switch apps, click and type. You can
-make short follow-up requests without repeating the context.
+make short follow-up requests without repeating the context. It can discover
+running apps even when their windows are not listed, inspect candidate destinations,
+and keep a clarification tied to the work you requested.
 
 For example, while it's listening, point out a broken page in your browser,
 select the error in your terminal, and highlight the expected behavior in an issue.
@@ -27,7 +29,9 @@ coding agent, saving you from copying each piece between apps.
 
 Your request sets the boundary: **“fill this form” excludes submission;
 “fill this form and submit it” includes it.** Screen content supplies evidence,
-not authority.
+not authority. You can request several actions together; after sending or submitting,
+OpenSaysMe verifies the result before continuing to the next requested step. If
+the outcome is uncertain, it stops without repeating the action.
 
 ## Run it
 
@@ -135,6 +139,17 @@ low reasoning effort; speech uses `gpt-live-transcribe`.
 If you change the reasoning model, choose one that supports images and tool calls.
 Speech currently requires `gpt-live-transcribe`, and sharing screen context is
 required.
+
+## Development
+
+Use the Node version in `.nvmrc`, then `npm ci`. Run the CLI from source with
+`npm run dev -- --help`. `npm run check` checks versions, types, lint, tests and
+the TypeScript build; individual commands are `npm run typecheck`, `npm run lint`,
+`npm test` and `npm run build`.
+
+For native changes, also run `sh native/macos/test.sh` and `npm run build:native`.
+Restart a running `osm` process after rebuilding. See [agent tools](docs/tools.md)
+for discovery, destination resolution and execution behavior.
 
 ## Troubleshooting
 

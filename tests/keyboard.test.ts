@@ -17,7 +17,7 @@ const frame: ScreenFrameCapture = {
   capturedAt: '2026-10-30T12:00:00Z', display: { id: 'display-1', bounds: { x: 0, y: 0, width: 1200, height: 800 } },
   image: { mimeType: 'image/jpeg', width: 1200, height: 800, data: '/9j/AA==' }, warnings: [],
 };
-const target = { fingerprint: 'a'.repeat(64), application: 'Browser', role: 'AXTextField', title: 'Name',
+const target = { fingerprint: 'a'.repeat(64), application: 'Browser', applicationId: 'mac-app:100:1', windowId: 'native-browser', role: 'AXTextField', title: 'Name',
   description: '', value: '', valueTruncated: false, editable: true };
 const cleanups: Array<() => void> = [];
 afterEach(() => { cleanups.splice(0).forEach((close) => close()); vi.useRealTimers(); });
@@ -41,7 +41,7 @@ function fixture(request = 'Fill this form. Leave it unsubmitted.', decision: Pa
     })),
   };
   const captureFrame = vi.fn(async () => structuredClone(frame));
-  const authorize = vi.fn<ActionAuthorizer>(async () => ({ decision: 'allow', effect: 'navigate', requestQuote: request,
+  const authorize = vi.fn<ActionAuthorizer>(async (review) => ({ decision: 'allow', effect: review.action.kind === 'type_keyboard_text' ? 'edit' : 'navigate', requestQuote: request,
     reason: 'The requested navigation is supported by the current target.', ...decision }));
   const scope = { request, ...(guard ? { authorize } : {}), ...(activationHotkey ? { activationHotkey } : {}) };
   const session: InputSession = { stopped: false, revision: 0 };
@@ -70,7 +70,7 @@ function desktopFixture(decision: Partial<PermissionDecision> = {}) {
     execute: vi.fn<DesktopInputAdapter['execute']>(async () => ({ status: 'issued' })),
   };
   const host = createDesktopTools({ keyboard: f.adapter, input: pointer, captureFrame: f.captureFrame,
-    listWindows: async () => ({ windows: [window], warnings: [] }),
+    listWindows: async () => ({ windows: [window], warnings: [], applications: [] }),
     captureWindow: async () => structuredClone(windowFrame),
     inspect: async () => ({ platform: 'darwin', window }), focus: async () => {},
     captureContext: async () => ({ platform: 'darwin', capturedAt: frame.capturedAt, activeWindow: window, warnings: [] }),
@@ -81,11 +81,72 @@ function desktopFixture(decision: Partial<PermissionDecision> = {}) {
 }
 
 describe('request-scoped keyboard input', () => {
+  it('returns unresolved keyboard text locally before the guard and permits a resolved retry', async () => {
+    const f = fixture();
+    const checkTarget = vi.fn(async (): Promise<string | undefined> => 'Resolve the destination first.');
+    const keyboard = createKeyboardTools(f.adapter, f.captureFrame, { ...f.scope, reviewTarget: () => true, checkTarget }, f.session);
+    const host = new ToolRegistry(keyboard.definitions);
+    const capture = value(await keyboard.capture(signal()));
+    const args = { keyboardObservationId: capture.keyboardObservationId, text: 'Morgan' };
+    expect(value(await host.call('type_keyboard_text', args, signal())).code).toBe('target-unresolved');
+    expect(f.authorize).not.toHaveBeenCalled();
+    expect(f.adapter.execute).not.toHaveBeenCalled();
+    expect(f.session.stopped).toBe(false);
+    checkTarget.mockResolvedValue(undefined);
+    expect(value(await host.call('type_keyboard_text', args, signal()))).toMatchObject({ status: 'issued', permission: { mode: 'independent-check' } });
+    expect(f.authorize).toHaveBeenCalledOnce();
+    expect(f.adapter.execute).toHaveBeenCalledOnce();
+    host.close(); keyboard.close();
+  });
+
+  it('allows inspection after missing evidence but independently checks subsequent routine input across modalities', async () => {
+    const f = fixture('Find the requested conversation and prepare this question.', { decision: 'inspect', effect: 'unknown',
+      reason: 'The focused document is unrelated to the requested conversation.' });
+    const captured = await f.capture();
+    expect(value(await f.call(captured.keyboardObservationId, { kind: 'press_key', key: 'R', modifiers: ['Ctrl'] })))
+      .toMatchObject({ code: 'needs-evidence' });
+    expect(f.session.stopped).toBe(false);
+    expect(f.adapter.execute).not.toHaveBeenCalled();
+
+    const pointer: DesktopInputAdapter = {
+      inspect: vi.fn(async () => ({ fingerprint: 'b'.repeat(64), role: 'AXTextField', title: 'Question', description: '',
+        value: '', bounds: frame.display.bounds, focused: true, editable: true })),
+      execute: vi.fn(async () => ({ status: 'verified' as const })),
+    };
+    const inputs = createInputTools(pointer, f.scope, f.session);
+    const host = new ToolRegistry(inputs.definitions);
+    const windowFrame = { status: 'ok' as const, capturedAt: frame.capturedAt, image: frame.image, warnings: [],
+      bounds: frame.display.bounds, window: { id: 'native-conversation', application: 'Agent', title: 'Requested project' } };
+    f.authorize.mockResolvedValueOnce({ decision: 'allow', effect: 'edit', requestQuote: f.scope.request,
+      reason: 'The newly inspected destination contains the requested project.' });
+    expect(value(await host.call('type_text', { observationId: inputs.observe(windowFrame), x: 10, y: 10, text: 'Question' }, signal())))
+      .toMatchObject({ status: 'verified', permission: { mode: 'independent-check' } });
+    expect(f.authorize.mock.lastCall?.[0]).toMatchObject({ progress: { evidenceNeeded: {
+      action: { kind: 'press_key', key: 'R' }, reason: 'The focused document is unrelated to the requested conversation.',
+    } }, action: { kind: 'type_text', text: 'Question' } });
+    expect(pointer.execute).toHaveBeenCalledOnce();
+    expect(f.session.progress?.evidenceNeeded).toBeUndefined();
+    host.close(); inputs.close();
+  });
+
+  it('keeps an unresolved attempt guarded when the next fresh capture supplies no useful evidence', async () => {
+    const f = fixture('Prepare this question.', { decision: 'inspect', effect: 'unknown', reason: 'The destination is unresolved.' });
+    let capture = await f.capture();
+    await f.call(capture.keyboardObservationId, { kind: 'press_key', key: 'R', modifiers: ['Ctrl'] });
+    capture = await f.capture();
+    expect(value(await f.call(capture.keyboardObservationId, { kind: 'type_keyboard_text', text: 'Question' })))
+      .toMatchObject({ code: 'needs-evidence' });
+    expect(f.authorize).toHaveBeenCalledTimes(2);
+    expect(f.authorize.mock.lastCall?.[0].progress?.evidenceNeeded?.reason).toBe('The destination is unresolved.');
+    expect(f.adapter.execute).not.toHaveBeenCalled();
+  });
   it('distinguishes a focused page from its composer and permits typing after focus is resolved', async () => {
     const f = desktopFixture();
     f.state.target = { ...target, role: 'AXWebArea', title: 'Conversation', editable: false };
     await f.call('list_windows');
     const window = await f.call('capture_window', { windowId: 'window-1' });
+    await f.call('resolve_target', { requestQuote: 'Fill this form', source: null, question: null,
+      candidates: [{ targetId: 'window-1', status: 'selected', evidenceIds: [window.evidenceId], reason: 'The requested form is visible.' }] });
     expect(await f.call('click', { observationId: window.observationId, x: 10, y: 10 })).toMatchObject({ status: 'issued' });
     const page = await f.call('capture_screen');
     expect(page.keyboardFocus).toMatchObject({ role: 'AXWebArea', editable: false });
