@@ -6,128 +6,113 @@
 [![macOS 14 or newer](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square)](#run-it)
 [![MIT license](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
-OpenSaysMe is a command-line tool that lets you work with AI agents
-through voice and desktop context. It aims to widen the input/output bandwidth
-between users and agents, with an orchestration layer that connects intent,
-context and actions. The longer-term direction is fluid, continuous interaction
-as models become able to work natively with streams of audio, live video and
-system metrics.
+OpenSaysMe is a command-line tool that lets you give AI agents instructions by
+speaking and showing them what you mean. It gathers context from the apps you're
+using and can pass your request to the agent you're working with.
 
 ## What works today
 
-Tap a hotkey to talk; the model receives speech, screen history, selection and
-pointer context, and can inspect windows, navigate, point, click, scroll, type and
-use keyboard shortcuts. It can use Spotlight to open an app and a browser's address
-bar to navigate, including when the app has no open window yet. Short follow-ups
-carry context across activations. A small panel shows status and readable,
-scrollable answers without taking focus. Responses stay open until you close them
-or start another request; they also remain in the terminal.
+Tap a hotkey and talk. Point at something on screen or select text to show what
+you mean. OpenSaysMe can read what's there, switch apps, click and type. You can
+make short follow-up requests without repeating the context.
 
-Recent app and window names help it recognize your work across restarts and give
-speech recognition vocabulary hints. Discovery pairs these historical clues with
-current app availability, including apps without exposed windows. Targeting uses
-the whole request and keeps the original context separate from windows opened
-during navigation. Spoken names can also be matched to observed
-names by pronunciation and context, without fixed app or project aliases.
+For example, while it's listening, point out a broken page in your browser,
+select the error in your terminal, and highlight the expected behavior in an issue.
+Then say:
 
-For example, show an error and say **“Put this error and my explanation into the
-agent's input.”** Then say **“Now send it.”** Preparation should leave the input
-unsent; the follow-up authorizes sending. “Point to that setting” should only point.
-No window labels, routing rules or mandatory review ceremony.
+> Collect these into a bug report for my coding agent and ask it to fix the problem.
 
-Your request defines the outcome: **“fill this form” excludes submission;
+OpenSaysMe pulls the relevant details together and passes the request to your
+coding agent, saving you from copying each piece between apps.
+
+Your request sets the boundary: **“fill this form” excludes submission;
 “fill this form and submit it” includes it.** Screen content supplies evidence,
 not authority.
 
 ## Run it
 
-Requires macOS 14+, Node.js 26.13+, Xcode Command Line Tools, and your own OpenAI API
-key in an environment variable. Reasoning defaults to GPT-6.1 Terra (`gpt-6.1-terra`)
-with low reasoning effort; speech uses `gpt-live-transcribe` independently.
+You'll need **macOS 14+**, **Node.js 26.13+**, **Xcode Command Line Tools** and an
+**OpenAI API key**.
 
-If you use nvm, run `nvm install` and `nvm use` in this folder first; `.nvmrc` selects
-the project's Node version.
+Clone the repository and open its folder:
+
+```sh
+git clone https://github.com/andrewruba/opensaysme.git
+cd opensaysme
+```
+
+If you use nvm, run `nvm install` and `nvm use` here first. Then install and configure:
 
 ```sh
 npm ci
 npm run install:cli
 osm setup
 export OPENAI_API_KEY='your-key'
+```
+
+Replace `your-key` with your API key in the terminal where you'll run `osm`.
+Setup saves the name of the environment variable, not the key itself.
+
+Grant **Microphone**, **Accessibility** and **Screen Recording** access to your
+terminal or the OpenSaysMe helper in **System Settings → Privacy & Security**.
+`osm doctor` checks access and whether your key is set; it doesn't test the key
+with OpenAI.
+
+Check your setup and start OpenSaysMe:
+
+```sh
 osm doctor
 osm
 ```
 
-Run the install commands from this repository folder. `install:cli` builds the app
-and makes `osm` and `opensaysme` available in your terminal. Both commands run files
-from this folder, even when called from another directory. Keep the folder on your
-computer; if you move it, run `npm run install:cli` again from its new location.
-
-Setup stores environment-variable names, never keys. Replace `your-key` above with
-your API key; if you chose different variable names during setup, export those in
-the same terminal used to launch `osm`. Grant Microphone, Accessibility and Screen
-Recording for your terminal/helper in System Settings → Privacy & Security.
-`osm doctor` reports access and key presence without capturing, requesting
-permissions or calling a provider; it does not verify authentication.
-`osm --help` includes this first-run guidance and usage examples.
-Startup prints the active models, configuration path and shortcut.
-Run `osm --version` to see the installed version.
+`osm` and `opensaysme` are the same command. They run from this repository folder,
+so keep it on your computer. If you move it, rerun `npm run install:cli` from the
+new location.
 
 ## Using it
 
-Keep `osm` running and switch to your work. Show the relevant content while speaking;
-pointing and selection help the model resolve references.
+Keep `osm` running and switch to your work. Show the relevant content while you
+speak. A small overlay shows progress and answers without taking focus.
 
-- **Ctrl+Shift+Space** (default): activate, wait for “Listening…”, then speak;
-  tap again to finish.
-- **Escape:** stop pending work and clear follow-up context. While idle, press it
-  in the CLI terminal. It cannot undo actions already issued.
-- **Ctrl+C:** quit and release native resources.
+| Shortcut | Action |
+| --- | --- |
+| **Ctrl+Shift+Space** (default) | Start recording. Wait for “Listening…” before speaking; tap again to finish. |
+| **Escape** | Cancel the current request and clear follow-up context. |
+| **Ctrl+C** | Quit. |
 
-The agent can use shortcuts such as Cmd+Space and Cmd+L, then type into the focused
-input. It checks fresh screen and focus evidence between actions. Enter can open a
-requested app or website; sending a message or submitting a form still requires
-that outcome in your request. Escape, Ctrl+C and your activation shortcut stay
-reserved for you. Keyboard typing inserts single-line text; multiline preparation
-uses direct text replacement in supported inputs.
+While idle, press Escape in the CLI terminal. Cancelling stops further actions;
+it cannot undo anything already done.
 
-Focus and input tools return a fresh view when capture is available, letting the
-agent choose its next step without a separate screenshot request. Action turns
-can run for up to three minutes; Escape still cancels immediately. A timeout stops
-further work but cannot undo actions already taken.
+### Change the shortcut
 
-For longer context, it can read accessible text such as Terminal scrollback and
-transfer the requested section directly into an agent's input, preserving line
-breaks. Each capture retains up to 65,536 UTF-16 units; sending remains separate.
+```sh
+osm hotkey                   # press a key combination at the prompt
+osm hotkey --show            # show the saved shortcut
+osm hotkey --help            # supported keys and modifiers
+```
 
-While idle, `osm` saves up to 12 recent app/window names in `work-context.json`
-beside your configuration. Names are used for up to eight hours; expired entries
-are removed when context is next accessed. This history contains names and
-timestamps; screenshots, document text, transcripts and permissions are excluded.
-The names are shared with the model as historical clues and speech vocabulary.
-Current targets are still rediscovered before action.
+Keep the terminal focused, press and release your combination, then press Enter
+to save. Restart `osm` to use it. Escape and Ctrl+C stay fixed.
+
+### Recent work
+
+OpenSaysMe remembers recent app/window names across restarts to help find your
+work and recognize spoken names. This history contains only names and timestamps,
+saved locally and shared with the model as context.
 
 ```sh
 osm context                 # show remembered app/window names
 osm context --clear         # stop voice mode first, then forget saved names
 ```
 
-```sh
-osm hotkey                   # press a key combination at the capture prompt
-osm hotkey --show            # show the saved shortcut
-osm hotkey --help            # supported keys and modifiers
-```
-
-To record a shortcut, grant Accessibility access, wait for the prompt, then press
-and release the combination, including its modifiers. Press Enter to confirm
-saving. Keep the terminal focused; focus changes, Escape, Ctrl+C or a 30-second
-timeout cancel capture. Restart voice mode after changing the saved shortcut.
-Letter/digit shortcuts use US physical key positions. Escape and Ctrl+C stay fixed.
-
 ## Configuration
 
-`osm setup` retains a valid saved configuration; `osm setup --replace` replaces it.
 Settings live at `~/Library/Application Support/opensaysme/config.json`.
-Set `OPENSAYSME_CONFIG_DIR` to use a different directory, or edit the file directly:
+Edit the file directly or run `osm setup --replace` to repeat setup.
+Set `OPENSAYSME_CONFIG_DIR` to use a different folder.
+
+OpenAI is currently the only provider. Reasoning defaults to GPT-6.1 Terra with
+low reasoning effort; speech uses `gpt-live-transcribe`.
 
 ```json
 {
@@ -147,9 +132,9 @@ Set `OPENSAYSME_CONFIG_DIR` to use a different directory, or edit the file direc
 }
 ```
 
-Only OpenAI is supported. Speech currently requires `gpt-live-transcribe`;
-the reasoning model must support image input and function calling. The two roles
-can use different key environment variables. Visual context sharing is required.
+If you change the reasoning model, choose one that supports images and tool calls.
+Speech currently requires `gpt-live-transcribe`, and sharing screen context is
+required.
 
 ## Troubleshooting
 
