@@ -10,7 +10,7 @@ import type { InputSession, RequestScope } from './input.js';
 import type { ToolDefinition, ToolResult } from './types.js';
 import { activationHotkeySchema, defaultActivationHotkey } from '../hotkey.js';
 
-const noneditableFocusGuidance = 'The current focus does not support text entry; this does not establish that the requested input is unavailable. Locate the intended input in fresh window evidence, then focus it with a supported click or keyboard navigation and capture_screen again. Do not type into this surface or guess a target.';
+const noneditableFocusGuidance = 'The current focus does not support text entry. When the request requires text entry and the intended destination is already established, locate its input in fresh window evidence, then focus it with a supported click or keyboard navigation. For text entry into an unresolved destination, resolve the destination before looking for an input; current focus does not establish where the request belongs. This does not establish that the requested input is unavailable. Do not type into this surface or guess a target.';
 
 export function createKeyboardTools(adapter: KeyboardAdapter, captureFrame: (signal: AbortSignal) => Promise<ScreenFrameCapture>,
   scope: RequestScope | undefined, session: InputSession) {
@@ -50,13 +50,19 @@ export function createKeyboardTools(adapter: KeyboardAdapter, captureFrame: (sig
     }
     const { image, ...metadata } = frame;
     const focus = observation?.target;
+    // AX document values can begin with old, offscreen history. They are not
+    // current-screen evidence; retain field values and compact control labels.
+    const omitReadOnlyValue = focus && !focus.editable && (['AXTextArea', 'AXWebArea', 'AXDocument', 'AXScrollArea'].includes(focus.role)
+      || focus.valueTruncated || focus.value.length > 512);
     const observationId = session.stopped ? undefined : observation?.id;
     if (session.stopped) observation = undefined;
     return { ...(keyboardIssue ? { desktopIssue: keyboardIssue } : {}), content: [
       { type: 'text', text: JSON.stringify({ ...metadata, image: { width: image.width, height: image.height, mimeType: image.mimeType },
         ...(focus ? { ...(observationId ? { keyboardObservationId: observationId } : {}), keyboardFocus: {
-          application: focus.application, role: focus.role, title: focus.title, description: focus.description, value: focus.value,
-          valueTruncated: focus.valueTruncated, editable: focus.editable,
+          application: focus.application, role: focus.role, title: focus.title, description: focus.description, editable: focus.editable,
+          ...(omitReadOnlyValue
+            ? { valueOmitted: 'Read-only content may include offscreen history. Use capture_text when its contents are needed; omission does not mean the control is empty.' }
+            : { value: focus.value, valueTruncated: focus.valueTruncated }),
         }, ...(!focus.editable && !session.stopped ? { keyboardGuidance: noneditableFocusGuidance } : {}) } : { keyboardUnavailable, keyboardIssue }) }) },
       { type: 'image', mimeType: image.mimeType, data: image.data },
     ] };
@@ -68,8 +74,8 @@ export function createKeyboardTools(adapter: KeyboardAdapter, captureFrame: (sig
       name: kind, effect: 'input', timeoutMs: 20_000,
       input: z.object({ keyboardObservationId: z.string().regex(/^keyboard-[1-9]\d{0,15}$/), ...properties }).strict(),
       description: (kind === 'press_key'
-        ? 'Press and release one key with modifiers (Cmd, Ctrl, Alt, Shift; [] for none) at the current keyboard focus. Supports system shortcuts such as Cmd+Space for Spotlight, Cmd+L for the browser address bar, and navigation/editing keys. Letter/digit keys use US physical positions. Escape and Ctrl+C are reserved; clipboard paste is unavailable. Shortcuts and Enter receive an independent request check; Enter in a verified launcher/address bar can navigate when opening was requested. Sending/submitting requires that requested outcome.'
-        : 'Type literal single-line text at the focused editable control using keyboard events, inserting at its caret or replacing its selection. Useful for Spotlight and browser address bars, including controls without writable AX values. This does NOT replace the entire field automatically; use a permitted selection shortcut if needed. No clipboard or newline/control characters. Use type_text for exact whole-value or multiline AX replacement. Text is unsent; submission is a separate authorized key/click.')
+        ? 'Press and release one key with modifiers (Cmd, Ctrl, Alt, Shift; [] for none) at the current keyboard focus. Supports system and application shortcuts and navigation/editing keys. Letter/digit keys use US physical positions. Escape and Ctrl+C are reserved; clipboard paste is unavailable. Shortcuts and Enter receive an independent request check; Enter can navigate when current evidence shows it serves the requested navigation. Sending/submitting requires that requested outcome.'
+        : 'Type literal single-line text at the focused editable control using keyboard events, inserting at its caret or replacing its selection. Supports focused inputs including controls without writable AX values. This does NOT replace the entire field automatically; use a permitted selection shortcut if needed. No clipboard or newline/control characters. Use type_text for exact whole-value or multiline AX replacement. Text is unsent; submission is a separate authorized key/click.')
         + ' Requires keyboardObservationId from a fresh capture_screen. No coordinates or existing app window required. Focus and user intervention are rechecked natively. Stay within the original request. The desktop host attempts to include a fresh screen and keyboardObservationId with the action result. Read that evidence and use the new observation directly; call capture_screen only if it is unavailable or stale. Do not retry or use another tool after inputStopped, denial, or uncertainty.',
       run: async (args, signal): Promise<ToolResult> => {
         if (session.stopped) return toolError('input-stopped', 'Input stopped after a commitment or uncertain outcome. Inspect and report; do not retry.');

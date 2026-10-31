@@ -4,18 +4,19 @@ The model chooses how to fulfill a spoken request with evidence and tools. There
 is no window-naming step or fixed sequence. The runtime calls a typed tool host in
 the same Node.js process; only offered, validated operations can execute.
 
-The prompt directs the model to choose the best supported agent, project or
-conversation using current contents and user references, without demanding an exact
-project-name match. Source material helps identify the work but is not automatically
-the destination. Prefer background inspection; when it is inconclusive, the model
-can focus or open a plausible host and look within it. It carries the user's
-original work context through that exploration. Finding a capable interface does
-not establish the intended project or recipient: when a candidate has only generic
-capability evidence or shows unrelated work, compare another plausible candidate.
-A strong match permits proceeding without surveying every app; ask only when
-meaningful ambiguity remains.
-Application-only navigation does not require inferring a project. These rules are
-general; there are no preferred applications or fixed routing sequences.
+The prompt separates resolving the destination from finding a control inside it.
+The whole request, activation context and relevant history determine whether the
+user means an app, window, document, conversation, recipient or control. The
+original source context stays separate from content revealed during navigation.
+A capable interface alone does not establish relevance: unrelated content should
+prompt comparison with another candidate before opening more panels or commands.
+Current observations and remembered names are evidence; inventory order, repeated
+title variants and ease of access are not rankings. Fresh details about an
+unrelated window do not displace an older relevant clue. The model can inspect in
+the background or bring a candidate forward to resolve a useful question, then
+proceed once one destination has strong support. It asks only when useful
+inspection leaves material ambiguity. These rules apply across apps and tasks,
+without preferred applications or fixed routing sequences.
 Transcribed proper names can be matched to observed names using pronunciation,
 spelling and task context. The transcript and permission quotes remain verbatim;
 resolving a name cannot change the requested action or its restrictions.
@@ -24,7 +25,7 @@ resolving a name cannot change the requested action or its restrictions.
 
 | Tool | Behavior |
 | --- | --- |
-| `list_windows` | Discover current windows with automatic references, plus running app names whose window inventory is empty. |
+| `list_windows` | Discover current window references and application candidates with separately labelled recent window names and current availability. |
 | `inspect_desktop` | Read current active-window, selection and pointer context. |
 | `capture_screen` | Capture the display under the pointer and, when stable, return keyboard focus evidence and a `keyboardObservationId`. |
 | `inspect_window` | Read bounded Accessibility text/roles without focusing a discovered window. |
@@ -48,10 +49,14 @@ windows retain references during a turn; removed, retitled or replaced windows
 lose them. Fresh discoveries can link to prior conversation through
 `previousTurnIds`. This is historical source evidence, not proof of unchanged
 contents or permission. A fresh tool host is created for every activation.
-`applicationsWithoutWindows` lists running apps whose Accessibility window query
-succeeded but returned no windows. These names are candidates to investigate,
-not window handles or proof that an app has no activity. The model can open a
-plausible host through available tools, then rediscover actual windows.
+`list_windows` returns `windows` with current handles and `applications` with
+`windowIds`, `inventoryStatus` and `recentWindowNames`. Each app appears once,
+including running apps without listed windows and remembered apps absent from the
+current inventory. Historical names carry observation times and are associated
+only by exact app name; they are never assigned to a current window as proof of
+its contents. Empty window lists are not proof of inactivity. The model can open
+a supported candidate through available tools, then rediscover actual windows.
+Discovery and the actor receive the same work-history snapshot for the turn.
 
 `inspect_window` returns source identity, capture time, roles, available labels and
 values, and omission warnings. Parent indices describe the observation, not action
@@ -62,8 +67,11 @@ Accessibility and Screen Recording grants. Hidden, minimized or ambiguous source
 fail explicitly; no foreground screenshot is substituted.
 
 `capture_screen` checks keyboard focus before and after capture. Its
-`keyboardFocus` includes the app, role, labels, bounded value, truncation flag and
-whether typing is supported. It follows system keyboard focus, including Spotlight
+`keyboardFocus` includes the app, role, labels and whether typing is supported.
+Editable values and compact control labels are included; read-only document bodies
+and long or truncated noneditable values are omitted with an explanation. Use
+`capture_text` for deliberate reading. This prevents old scrollback from appearing
+as current field content; native focus fingerprints and checks remain unchanged. It follows system keyboard focus, including Spotlight
 when another app remains in the foreground. When focus changes or cannot be inspected, the
 screenshot remains available but no keyboard observation is issued. The display
 under the pointer may differ from the display containing keyboard focus; inspect
@@ -72,8 +80,9 @@ Keyboard inspection failures include a recovery code and appear as desktop
 warnings even when the screenshot succeeds.
 The terminal reports keyboard focus as `editable`, `non-editable`, or `unavailable`
 without printing field contents. A successful capture can still show a non-editable
-page surface. That does not establish that its composer is unsupported: locate and
-focus the intended input, then recapture before typing.
+page surface. First establish that it is the intended destination; only then
+locate and focus its input. A noneditable surface alone does not establish that
+the application cannot accept text.
 
 Focus and input results can include their own fresh observation. After verified
 focus, pointer clicks, scrolling and text replacement, the host attempts a capture
@@ -222,8 +231,10 @@ of user choices. Up to 12 references are saved in a private `work-context.json`
 beside configuration and used for up to eight hours. Expired entries are removed
 when context is next accessed. The file contains no native handles, field values,
 transcripts, action records or permissions. These are historical clues, not a
-selected destination or a task to resume. Live evidence and current speech win
-when they conflict. `osm context` displays the saved labels; stop voice mode before
+selected destination or a task to resume. Current speech takes precedence; fresh
+evidence can confirm or contradict a historical clue about the same destination.
+A capture timestamp describes when content was observed, not when logs or other
+historical text were written. `osm context` displays the saved labels; stop voice mode before
 `osm context --clear` so a running instance cannot recreate the file.
 
 Known names also provide bounded `keywords` to the speech session. Current

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { desktopContextSchema, type DesktopContext, type NativeVoiceEvent } from './desktop/voice-types.js';
 import { desktopSnapshotSchema, type DesktopSnapshot } from './desktop/types.js';
-import type { WorkContextStore } from './work-context.js';
+import { workContextSchema, type WorkContextStore, type WorkReference } from './work-context.js';
 import { transcriptionKeywords } from './speech/keywords.js';
 import type { ScreenFrameCapture } from './desktop/visual-types.js';
 import { AttentionCollector, attentionSummary } from './attention.js';
@@ -70,7 +70,7 @@ export interface VoiceRuntimeOptions {
   workContext?: WorkContextStore;
   observeWindow?: (signal: AbortSignal) => Promise<DesktopSnapshot>;
   createTools?: (request: string, referenceContext: ReturnType<AttentionCollector['freeze']>['contexts'],
-    conversation: ConversationTurn[]) => ToolHost;
+    conversation: ConversationTurn[], workContext: WorkReference[]) => ToolHost;
   debug?: DebugSession;
   apiKey: string; model: string;
   emit: (output: VoiceOutput) => void;
@@ -326,11 +326,12 @@ export class VoiceRuntime {
     this.debugInput(turn);
     this.diagnostic('runtime', 'visuals-prepared', turn, { frames: history.frames.length, trailCopies: visual.frames.filter((frame) => frame.image).length, durationMs: turn.metrics.visualPreparationMs });
     turn.conversation = this.conversation.recent();
-    turn.tools = this.options.createTools?.(transcript, structuredClone(history.contexts), structuredClone(turn.conversation));
+    const workContext = workContextSchema.parse(this.options.workContext?.recent() ?? []);
+    turn.tools = this.options.createTools?.(transcript, structuredClone(history.contexts), structuredClone(turn.conversation), structuredClone(workContext));
     const toolCatalog = turn.tools?.list() ?? [];
     const reasoningStarted = this.now();
     const response = await this.options.reason({ transcript, history, visual, signal: turn.abort.signal,
-      tools: turn.tools, conversation: turn.conversation, workContext: this.options.workContext?.recent() ?? [],
+      tools: turn.tools, conversation: turn.conversation, workContext,
       onTool: turn.tools ? (event) => {
         if (this.turn !== turn || turn.abort.signal.aborted || this.closed) return;
         if (event.phase === 'completed') {

@@ -89,7 +89,8 @@ describe('request-scoped keyboard input', () => {
     expect(await f.call('click', { observationId: window.observationId, x: 10, y: 10 })).toMatchObject({ status: 'issued' });
     const page = await f.call('capture_screen');
     expect(page.keyboardFocus).toMatchObject({ role: 'AXWebArea', editable: false });
-    expect(page.keyboardGuidance).toContain('Locate the intended input');
+    expect(page.keyboardGuidance).toContain('When the request requires text entry and the intended destination is already established');
+    expect(page.keyboardGuidance).toContain('resolve the destination before looking for an input');
     expect(await f.call('type_keyboard_text', { keyboardObservationId: page.keyboardObservationId, text: 'Draft' }))
       .toMatchObject({ code: 'unsupported-text-target' });
     expect(f.keyboard.execute).not.toHaveBeenCalled();
@@ -105,6 +106,46 @@ describe('request-scoped keyboard input', () => {
     expect(f.keyboard.execute.mock.calls.map(([action]) => action)).toEqual([
       { kind: 'press_key', key: 'Tab', modifiers: [] }, { kind: 'type_keyboard_text', text: 'Draft' },
     ]);
+  });
+
+  it.each(['AXTextArea', 'AXWebArea', 'AXDocument', 'AXScrollArea'])(
+    'omits read-only %s history from screen focus metadata without changing the native target', async (role) => {
+      const f = fixture('Open the requested workspace.');
+      f.state.target = { ...target, application: 'Workspace', role, title: 'Activity', editable: false,
+        value: 'Old session: open an unrelated workspace before starting a different task.', valueTruncated: role === 'AXTextArea' };
+      const capture = await f.capture();
+      expect(capture.keyboardFocus).toMatchObject({ application: 'Workspace', role, title: 'Activity', editable: false,
+        valueOmitted: expect.stringContaining('capture_text') });
+      expect(capture.keyboardFocus).not.toHaveProperty('value');
+      expect(capture.keyboardFocus).not.toHaveProperty('valueTruncated');
+      expect(JSON.stringify(capture)).not.toContain('Old session');
+      const action: KeyboardAction = { kind: 'press_key', key: 'Tab', modifiers: [] };
+      expect(value(await f.call(capture.keyboardObservationId, action))).toMatchObject({ status: 'issued' });
+      expect(f.adapter.execute).toHaveBeenCalledWith(action, f.state.target.fingerprint, expect.any(AbortSignal));
+      expect(f.keyboard.conversationActions()[0]?.target.value).toBe(f.state.target.value);
+    },
+  );
+
+  it.each([
+    { role: 'AXTextArea', editable: true, value: 'Draft content\n'.repeat(200), valueTruncated: true },
+    { role: 'AXMenuItem', editable: false, value: 'Open recent document', valueTruncated: false },
+    { role: 'AXStaticText', editable: false, value: 'Choose a workspace', valueTruncated: false },
+    { role: 'AXPopUpButton', editable: false, value: 'Current account', valueTruncated: false },
+  ])('preserves editable values and compact control labels: $role', async (focus) => {
+    const f = fixture(); f.state.target = { ...target, ...focus };
+    const capture = await f.capture();
+    expect(capture.keyboardFocus).toMatchObject(focus);
+    expect(capture.keyboardFocus).not.toHaveProperty('valueOmitted');
+  });
+
+  it.each([
+    { value: 'Long read-only document text. '.repeat(100), valueTruncated: false },
+    { value: 'An incomplete control value', valueTruncated: true },
+  ])('does not present long or incomplete read-only values as compact labels', async (content) => {
+    const f = fixture(); f.state.target = { ...target, role: 'AXStaticText', editable: false, ...content };
+    const capture = await f.capture();
+    expect(capture.keyboardFocus).toHaveProperty('valueOmitted');
+    expect(capture.keyboardFocus).not.toHaveProperty('value');
   });
 
   it.each(['not-issued', 'uncertain'] as const)('returns the native reason for %s keyboard input and preserves its stop boundary', async (status) => {

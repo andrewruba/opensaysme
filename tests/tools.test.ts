@@ -395,6 +395,9 @@ describe('desktop tool primitives', () => {
     expect(value(result)).toEqual({ windows: [
       { windowId: 'window-1', application: 'Code', title: editor.title },
       { windowId: 'window-2', application: 'Browser', title: browser.title },
+    ], applications: [
+      { application: 'Code', windowIds: ['window-1'], inventoryStatus: 'windows-listed', recentWindowNames: [] },
+      { application: 'Browser', windowIds: ['window-2'], inventoryStatus: 'windows-listed', recentWindowNames: [] },
     ], warnings: [] });
     expect(JSON.stringify(result)).not.toContain('native-');
     expect(adapter.focus).not.toHaveBeenCalled();
@@ -404,7 +407,9 @@ describe('desktop tool primitives', () => {
     const { host, adapter } = desktopFixture();
     adapter.listWindows.mockResolvedValueOnce({ windows: [], warnings: [], applicationsWithoutWindows: ['Chat App'] });
     expect(value(await host.call('list_windows', {}, signal()))).toEqual({
-      windows: [], warnings: [], applicationsWithoutWindows: ['Chat App'],
+      windows: [], warnings: [], applications: [
+        { application: 'Chat App', windowIds: [], inventoryStatus: 'running-without-listed-windows', recentWindowNames: [] },
+      ],
     });
     expect(value(await host.call('focus_window', { windowId: 'window-1' }, signal())).code).toBe('unknown-window');
     expect(adapter.focus).not.toHaveBeenCalled();
@@ -414,8 +419,59 @@ describe('desktop tool primitives', () => {
     adapter.listWindows.mockResolvedValueOnce({ windows: [window], warnings: [] });
     expect(value(await host.call('list_windows', {}, signal()))).toEqual({
       windows: [{ windowId: 'window-1', application: 'Chat App', title: window.title }], warnings: [],
+      applications: [{ application: 'Chat App', windowIds: ['window-1'], inventoryStatus: 'windows-listed', recentWindowNames: [] }],
     });
     expect(adapter.focus).not.toHaveBeenCalled();
+  });
+
+  it('groups current and historical application evidence without assigning historical names to windows', async () => {
+    const { adapter, state } = desktopFixture();
+    const secondEditor = { ...editor, id: 'native-editor-43', title: 'Other workspace' };
+    const observedAt = '2026-10-30T12:00:00.000Z';
+    const workContext = [
+      { application: 'Code', title: 'Earlier workspace', observedAt },
+      { application: 'Chat App', title: 'Project conversation', observedAt },
+      { application: 'Chat App', title: 'Other conversation', observedAt },
+      { application: 'Archive', observedAt },
+      { application: 'chat app', title: 'A separate exact name', observedAt },
+    ];
+    const host = createDesktopTools(adapter, { request: 'Continue the conversation', workContext });
+    workContext[0]!.title = 'Mutated outside the tool host';
+    state.inventory = [editor, browser, secondEditor];
+    adapter.listWindows.mockImplementation(async () => ({ windows: structuredClone(state.inventory), warnings: [],
+      applicationsWithoutWindows: ['Chat App', 'Code'] }));
+    const listed = value(await host.call('list_windows', {}, signal()));
+    expect(listed.applications).toEqual([
+      { application: 'Code', windowIds: ['window-1', 'window-3'], inventoryStatus: 'windows-listed',
+        recentWindowNames: [{ title: 'Earlier workspace', observedAt }] },
+      { application: 'Browser', windowIds: ['window-2'], inventoryStatus: 'windows-listed', recentWindowNames: [] },
+      { application: 'Chat App', windowIds: [], inventoryStatus: 'running-without-listed-windows', recentWindowNames: [
+        { title: 'Project conversation', observedAt }, { title: 'Other conversation', observedAt },
+      ] },
+      { application: 'Archive', windowIds: [], inventoryStatus: 'not-in-current-inventory', recentWindowNames: [{ observedAt }] },
+      { application: 'chat app', windowIds: [], inventoryStatus: 'not-in-current-inventory',
+        recentWindowNames: [{ title: 'A separate exact name', observedAt }] },
+    ]);
+    expect(listed.windows).toEqual([
+      { windowId: 'window-1', application: 'Code', title: editor.title },
+      { windowId: 'window-2', application: 'Browser', title: browser.title },
+      { windowId: 'window-3', application: 'Code', title: secondEditor.title },
+    ]);
+    expect(listed).not.toHaveProperty('applicationsWithoutWindows');
+    expect(JSON.stringify(listed)).not.toContain('native-');
+
+    state.inventory = [browser];
+    const refreshed = value(await host.call('list_windows', {}, signal()));
+    expect(refreshed.applications.find(({ application }: { application: string }) => application === 'Code')).toEqual({
+      application: 'Code', windowIds: [], inventoryStatus: 'running-without-listed-windows',
+      recentWindowNames: [{ title: 'Earlier workspace', observedAt }],
+    });
+    expect(value(await host.call('focus_window', { windowId: 'window-1' }, signal())).code).toBe('unknown-window');
+    state.inventory = [browser, editor];
+    const rediscovered = value(await host.call('list_windows', {}, signal()));
+    expect(rediscovered.applications.find(({ application }: { application: string }) => application === 'Code').windowIds).toEqual(['window-4']);
+    expect(adapter.focus).not.toHaveBeenCalled();
+    host.close();
   });
 
   it('rejects raw, undiscovered, and removed discovery handles before focusing', async () => {

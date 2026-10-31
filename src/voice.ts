@@ -81,7 +81,7 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
     const input = startVoiceHelper(spec, (event) => runtime.handle(event));
     const runtime = new VoiceRuntime({ input, transcribe: openAITranscription, captureContext: adapter.captureContext,
       workContext, observeWindow: (observationSignal) => adapter.inspect(false, observationSignal),
-      captureFrame: adapter.captureFrame, reason, createTools: (request, referenceContext, conversation) => createDesktopTools(adapter, { request, referenceContext, conversation, authorize, activationHotkey }),
+      captureFrame: adapter.captureFrame, reason, createTools: (request, referenceContext, conversation, workContext) => createDesktopTools(adapter, { request, referenceContext, conversation, workContext, authorize, activationHotkey }),
       deadlines: { reasoning: reasoningLoopTimeoutMs(Boolean(adapter.input || adapter.keyboard)) + 5_000 },
       debug, apiKey, model: config.speech.model, emit: publish });
     let resolveStopped!: () => void;

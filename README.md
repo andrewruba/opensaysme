@@ -24,7 +24,10 @@ scrollable answers without taking focus. Responses stay open until you close the
 or start another request; they also remain in the terminal.
 
 Recent app and window names help it recognize your work across restarts and give
-speech recognition vocabulary hints. Spoken names can also be matched to observed
+speech recognition vocabulary hints. Discovery pairs these historical clues with
+current app availability, including apps without exposed windows. Targeting uses
+the whole request and keeps the original context separate from windows opened
+during navigation. Spoken names can also be matched to observed
 names by pronunciation and context, without fixed app or project aliases.
 
 For example, show an error and say **“Put this error and my explanation into the

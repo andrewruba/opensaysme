@@ -522,6 +522,47 @@ describe('desktop tool reasoning loop', () => {
     host.close();
   });
 
+  it('keeps activation references alongside conflicting window content and historical app clues', async () => {
+    const f = fixture();
+    f.input.transcript = 'Put these revisions into the conversation I was working in. Leave them unsent.';
+    f.input.workContext = [{ application: 'Workspace', title: 'Review revisions', observedAt: '2026-10-28T23:59:00Z' }];
+    const originalContext = structuredClone(f.input.history.contexts);
+    const candidate = { id: 'native-unrelated', application: 'Editor', title: 'Budget spreadsheet' };
+    const focus = vi.fn();
+    const host = createDesktopTools({
+      listWindows: async () => ({ windows: [candidate], applicationsWithoutWindows: ['Workspace'], warnings: [] }),
+      inspectWindow: async () => ({ status: 'ok', window: candidate, capturedAt: '2026-10-29T00:00:10Z',
+        nodes: [{ parent: null, role: 'AXButton', title: 'Open assistant' }], warnings: [] }),
+      focus, inspect: vi.fn(), captureContext: vi.fn(), captureFrame: vi.fn(),
+    }, { request: f.input.transcript, referenceContext: originalContext, workContext: f.input.workContext });
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(callResponse(callItem()))
+      .mockResolvedValueOnce(callResponse(callItem('inspect_window', { windowId: 'window-1' }, 'inspect-unrelated')))
+      .mockImplementationOnce(async (_url, init) => {
+        const wire = JSON.parse(String(init?.body));
+        const original = JSON.parse(wire.input[0].content[0].text);
+        expect(original.transcript).toBe(f.input.transcript);
+        expect(original.attention.phase).toBe('user-activation');
+        expect(original.attention.contexts).toEqual(originalContext);
+        expect(original.workContext).toEqual(f.input.workContext);
+        const outputs = wire.input.filter((item: { type: string }) => item.type === 'function_call_output');
+        const discovered = JSON.parse(outputs[0].output[1].text);
+        expect(discovered.applications).toContainEqual({ application: 'Workspace', windowIds: [],
+          inventoryStatus: 'running-without-listed-windows',
+          recentWindowNames: [{ title: 'Review revisions', observedAt: '2026-10-28T23:59:00Z' }] });
+        const inspected = JSON.parse(outputs[1].output[1].text);
+        expect(inspected.window).toEqual({ windowId: 'window-1', application: 'Editor', title: 'Budget spreadsheet' });
+        expect(inspected.nodes).toEqual([{ parent: null, role: 'AXButton', title: 'Open assistant' }]);
+        expect(discovered.windows[0]).not.toHaveProperty('recentWindowNames');
+        return response('The inspected window contains a budget. The earlier conversation is a separate candidate.');
+      });
+    f.input.tools = host;
+    try {
+      await openAIReasoning({ apiKey: 'fixture-secret-value', model: 'configured-model' }, fetcher)(f.input);
+      expect(focus).not.toHaveBeenCalled();
+    } finally { host.close(); }
+  });
+
   it('discovers two VSCode windows, focuses the matching evidence, and answers without names configured by the user', async () => {
     const thinking = { type: 'reasoning', id: 'reason-1', summary: [], encrypted_content: 'encrypted-fixture' };
     const commentary = assistantItem('I will check the open windows.');

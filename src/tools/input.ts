@@ -6,12 +6,14 @@ import { desktopToolError, toolError } from './registry.js';
 import { desktopIssue, desktopMessages } from '../desktop/errors.js';
 import type { ToolDefinition, ToolResult } from './types.js';
 import { conversationSchema, type ConversationTurn, type ConversationEvidence } from '../conversation.js';
+import type { WorkReference } from '../work-context.js';
 
 type Frame = Extract<WindowFrameCapture, { status: 'ok' }>;
 export interface RequestScope {
   activationHotkey?: string;
   request: string; authorize?: ActionAuthorizer; referenceContext?: ActionReview['referenceContext'];
   conversation?: ConversationTurn[];
+  workContext?: WorkReference[];
 }
 const position = { observationId: z.string().regex(/^observation-[1-9]\d{0,15}$/),
   x: z.number().finite().min(0).max(1600), y: z.number().finite().min(0).max(1600) };

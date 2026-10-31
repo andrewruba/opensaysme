@@ -10,7 +10,7 @@ import type { ToolHost } from '../src/tools/types.js';
 import { conversationLifetimeMs, RecentConversation, type ConversationEvidence, type ConversationTurn } from '../src/conversation.js';
 import type { VoiceRuntimeOptions } from '../src/runtime.js';
 import { DesktopError, desktopMessages } from '../src/desktop/errors.js';
-import { openWorkContext } from '../src/work-context.js';
+import { openWorkContext, type WorkReference } from '../src/work-context.js';
 
 const context: DesktopContext = { platform: 'test', capturedAt: '2026-10-28T00:00:00.000Z',
   activeWindow: { id: 'one', application: 'Editor' }, selectedText: 'original selection',
@@ -112,6 +112,26 @@ describe('recent work references', () => {
     f.runtime.close();
     await vi.advanceTimersByTimeAsync(6000);
     expect(observeWindow).toHaveBeenCalledOnce();
+    await store.close();
+  });
+
+  it('gives tools and reasoning the same work-history snapshot throughout a turn', async () => {
+    const store = await openWorkContext();
+    store.observe({ application: 'Workspace', title: 'Earlier conversation' });
+    let toolsContext: WorkReference[] | undefined;
+    const createTools: NonNullable<VoiceRuntimeOptions['createTools']> = (_request, _reference, _conversation, workContext) => {
+      toolsContext = structuredClone(workContext);
+      store.observe({ application: 'Another app', title: 'Observed after the snapshot' });
+      workContext[0]!.title = 'Mutated by the factory';
+      return { list: () => [], call: vi.fn(), close: vi.fn() };
+    };
+    const reason = vi.fn<ReasoningFactory>(async () => 'Found the conversation.');
+    const f = fixture(undefined, reason, undefined, undefined, createTools, { workContext: store });
+    await complete(f, 'Continue that conversation');
+    expect(reason.mock.calls[0]![0].workContext).toEqual(toolsContext);
+    expect(JSON.stringify(toolsContext)).toContain('Earlier conversation');
+    expect(JSON.stringify(reason.mock.calls[0]![0].workContext)).not.toMatch(/Observed after|Mutated/);
+    f.runtime.close();
     await store.close();
   });
 
@@ -336,9 +356,9 @@ describe('live voice turn lifecycle', () => {
         latency: { toolCalls: 1, toolMs: 12 } });
     }
     expect(createTools).toHaveBeenCalledTimes(2);
-    expect(createTools).toHaveBeenNthCalledWith(1, 'Switch to the frontend', expect.any(Array), []);
+    expect(createTools).toHaveBeenNthCalledWith(1, 'Switch to the frontend', expect.any(Array), [], []);
     expect(createTools).toHaveBeenNthCalledWith(2, 'Switch to the frontend', expect.any(Array),
-      [expect.objectContaining({ request: 'Switch to the frontend', response: 'Switched to the frontend.' })]);
+      [expect.objectContaining({ request: 'Switch to the frontend', response: 'Switched to the frontend.' })], []);
     expect(hosts[0]).not.toBe(hosts[1]);
     expect(f.outputs).toContainEqual(expect.objectContaining({ type: 'state', state: 'acting' }));
     expect(d.debug.request.mock.calls.map((call) => call[2])).toEqual([1, 2, 1, 2]);

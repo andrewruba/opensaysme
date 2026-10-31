@@ -5,7 +5,8 @@ import type { NativeVoiceEvent } from '../src/desktop/voice-types.js';
 
 const mocks = vi.hoisted(() => ({ adapter: vi.fn(), start: vi.fn(), debug: vi.fn(), feedback: vi.fn(),
   context: { recent: vi.fn(() => []), observe: vi.fn(), close: vi.fn(async () => {}) } }));
-vi.mock('../src/work-context.js', () => ({ workContextPath: () => '/fixture/work-context.json',
+vi.mock('../src/work-context.js', async (original) => ({ ...await original<typeof import('../src/work-context.js')>(),
+  workContextPath: () => '/fixture/work-context.json',
   openWorkContext: async () => mocks.context }));
 vi.mock('../src/desktop/index.js', () => ({ desktopAdapter: mocks.adapter }));
 vi.mock('../src/desktop/voice-process.js', () => ({ startVoiceHelper: mocks.start }));
