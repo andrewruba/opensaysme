@@ -3,8 +3,8 @@
 Read `README.md` for the product intent and current scope.
 Keep the README and affected documentation accurate as work lands. This repository
 contains a tap-to-talk runtime, visual attention history, an agent tool loop,
-an in-process tool host, and desktop probes. See
-`docs/development.md` for setup, validation commands, and platform limitations.
+an in-process tool host, and desktop probes. The README also covers setup,
+validation commands, and platform limitations.
 
 ## Project direction
 

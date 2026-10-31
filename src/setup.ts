@@ -14,7 +14,7 @@ function answer<T>(value: T): Exclude<T, symbol> {
 
 export async function setup(signal?: AbortSignal, replace = false): Promise<void> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    throw new Error('Setup needs an interactive terminal. See docs/development.md for the configuration format.');
+    throw new Error('Setup needs an interactive terminal. See the Configuration section in README.md for the configuration format.');
   }
   if (signal?.aborted) throw new Error('Setup cancelled. No configuration was written.');
   const existing = replace ? null : await readConfig();
