@@ -8,8 +8,9 @@ function fixture(activationHotkey?: string) {
   vi.useFakeTimers();
   const sink = { send: vi.fn(), close: vi.fn(async () => {}) };
   const feedback = createFeedback(sink, activationHotkey);
-  const state = (state: 'starting' | 'listening' | 'acting' | 'interpreting', turnId = 'one') => feedback.handle({ type: 'state', state, turnId });
-  const response = (text: string, turnId = 'one') => feedback.handle({ type: 'result', turnId, response: text } as VoiceOutput);
+  const state = (state: 'starting' | 'listening' | 'processing' | 'inspecting' | 'acting' | 'interpreting', turnId = 'one') => feedback.handle({ type: 'state', state, turnId });
+  const response = (text: string, turnId = 'one', toolResults?: Extract<VoiceOutput, { type: 'result' }>['toolResults']) =>
+    feedback.handle({ type: 'result', turnId, response: text, toolResults } as VoiceOutput);
   return { sink, feedback, state, response, last: () => sink.send.mock.lastCall?.[0] };
 }
 
@@ -94,14 +95,14 @@ it.each(['warning', 'error'] as const)('still expires transient %s feedback', as
   await f.feedback.close();
 });
 
-it('keeps local recovery evidence visible after actor output and clears it for a fresh turn', async () => {
+it('shows actionable warnings once, without carrying old diagnostics into progress or the answer', async () => {
   const f = fixture(); f.state('starting');
   f.feedback.handle({ type: 'warning', turnId: 'one', desktopIssue: 'helper-crashed', message: desktopMessages['helper-crashed'] });
+  expect(f.last()).toMatchObject({ title: 'Needs attention', message: desktopMessages['helper-crashed'], expression: 'concerned' });
   f.state('interpreting');
-  expect(f.last().detail).toBe(`Earlier warning: ${desktopMessages['helper-crashed']}`);
+  expect(f.last()).toMatchObject({ title: 'Thinking…', detail: 'Escape to cancel', expression: 'thinking' });
   f.response('I could not inspect that window.');
-  expect(f.last()).toMatchObject({ title: 'Response · Earlier desktop warning', persistent: true,
-    detail: `Ctrl+Shift+Space to reply · Earlier warning: ${desktopMessages['helper-crashed']}` });
+  expect(f.last()).toMatchObject({ title: 'Response', persistent: true, detail: 'Ctrl+Shift+Space to reply' });
   const calls = f.sink.send.mock.calls.length;
   await vi.advanceTimersByTimeAsync(60_000);
   expect(f.sink.send).toHaveBeenCalledTimes(calls);
@@ -109,12 +110,52 @@ it('keeps local recovery evidence visible after actor output and clears it for a
   expect(f.last().detail).not.toContain('crashed'); await f.feedback.close();
 });
 
-it('does not present an earlier transient failure as proof of current access failure', async () => {
-  const f = fixture(); f.state('starting');
-  f.feedback.handle({ type: 'warning', turnId: 'one', desktopIssue: 'focus-changed', message: desktopMessages['focus-changed'] });
+it.each(['focus-changed', 'window-capture-unavailable', 'window-capture-stale'] as const)('keeps recoverable %s diagnostics out of the overlay', async (desktopIssue) => {
+  const f = fixture(); f.state('starting'); f.state('interpreting');
+  const calls = f.sink.send.mock.calls.length;
+  f.feedback.handle({ type: 'warning', turnId: 'one', desktopIssue, message: desktopMessages[desktopIssue] });
+  expect(f.sink.send).toHaveBeenCalledTimes(calls);
   f.state('acting'); f.state('interpreting'); f.response('The requested window is now focused.');
-  expect(f.last()).toMatchObject({ title: 'Response · Earlier desktop warning',
-    message: 'The requested window is now focused.', detail: expect.stringContaining('Earlier warning:') });
+  expect(f.last()).toMatchObject({ title: 'Response', expression: 'happy',
+    message: 'The requested window is now focused.', detail: 'Ctrl+Shift+Space to reply' });
+  expect(JSON.stringify(f.sink.send.mock.calls)).not.toContain('Earlier');
+  await f.feedback.close();
+});
+
+it('uses actual runtime phases for expressions and keeps old-turn events from changing the face', async () => {
+  const f = fixture(); f.state('starting');
+  expect(f.last().expression).toBe('neutral');
+  for (const [state, expression] of [['listening', 'listening'], ['processing', 'thinking'], ['interpreting', 'thinking'],
+    ['inspecting', 'focused'], ['acting', 'focused']] as const) {
+    f.state(state); expect(f.last().expression).toBe(expression);
+  }
+  f.feedback.handle({ type: 'activity', turnId: 'one', name: 'activate_application', target: { application: 'Workspace' } });
+  expect(f.last()).toMatchObject({ title: 'Switching app…', expression: 'focused' });
+  f.state('starting', 'two'); f.state('listening', 'two');
+  f.feedback.handle({ type: 'warning', turnId: 'one', desktopIssue: 'permission-required', message: 'Old warning' });
+  expect(f.last().expression).toBe('listening');
+  f.feedback.handle({ type: 'error', turnId: 'two', message: 'Microphone unavailable.' });
+  expect(f.last()).toMatchObject({ expression: 'concerned', title: 'Couldn’t complete the request' });
+  await f.feedback.close();
+});
+
+it.each(['uncertain', 'failed', 'not-issued'] as const)('does not celebrate %s input merely because a later read succeeded', async (outcome) => {
+  const f = fixture(); f.state('starting');
+  f.response('Here is what happened.', 'one', [
+    { name: 'click', effect: 'input', outcome }, { name: 'capture_screen', effect: 'read', outcome: 'ok' },
+  ]);
+  expect(f.last()).toMatchObject({ title: 'Response', expression: 'concerned' });
+  await f.feedback.close();
+});
+
+it('allows the finishing smile after a rejected input was retried successfully', async () => {
+  const f = fixture(); f.state('starting');
+  f.response('Finished.', 'one', [
+    { name: 'click', effect: 'input', outcome: 'not-issued' },
+    { name: 'click', effect: 'input', outcome: 'issued' },
+    { name: 'capture_screen', effect: 'read', outcome: 'ok' },
+  ]);
+  expect(f.last()).toMatchObject({ expression: 'happy', persistent: true });
   await f.feedback.close();
 });
 

@@ -306,8 +306,19 @@ results do not establish current state or justify retries.
 The local feedback panel shows status, known target and responses without taking
 focus. It is not an agent tool. Helper-owned windows are excluded from desktop
 context by executable identity. Known failures preserve finite recovery codes;
-raw native errors and crash reports are not forwarded to the model. An earlier
-warning may remain visible after recovery.
+raw native errors and crash reports are not forwarded to the model. Recoverable
+capture and target warnings remain in terminal/debug output while the overlay
+continues showing progress. Permission/setup warnings appear as transient notices;
+new progress replaces them. Old warnings are never attached to later answers.
+
+A monochrome ASCII face follows the actual runtime phase: attentive while listening,
+thoughtful during reasoning, focused during desktop work, and smiling when a
+response is ready. An uncertain input or a final failed input keeps a concerned
+expression even if a subsequent read succeeds. Expressions do not classify the
+model's prose or establish task completion. Animation respects macOS Reduce Motion
+and stops when the panel is hidden; long answers retain their full reading width.
+The panel uses a white background and system typography. Thought bubbles travel
+outward from the face; a calm, level-brow expression accompanies desktop work.
 
 Normal CLI output names each completed tool and its outcome, and the final JSON
 includes the same `toolResults`. A partial result means some evidence was returned

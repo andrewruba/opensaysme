@@ -227,7 +227,8 @@ and the capture deadline release microphone and hotkeys. Pointer samples accompa
 recording and stop with it. No provider key or network access enters this process.
 
 `--feedback` accepts bounded JSONL `show`, `hide` and `shutdown` messages for a
-nonactivating panel. `show` includes `title`, `message`, `detail` and a required
+nonactivating panel. `show` includes `title`, `message`, `detail`, a required
+`expression` (`neutral`, `listening`, `thinking`, `focused`, `happy`, `concerned`) and a required
 boolean `persistent`. Messages allow 32,768 UTF-16 units inside a 256 KiB JSONL
 command. TextKit wraps the complete message in a scrollable reading area; the
 panel grows to a bounded portion of the pointer's display. Completed responses
@@ -235,6 +236,13 @@ are persistent and accept scrolling and close-button clicks without taking focus
 Transient progress remains click-through, with a native deadline for stale content.
 The panel clears text when hidden and closes on EOF, shutdown or signals. It emits
 only `ready`. Full responses also remain in the terminal.
+The monochrome ASCII portrait occupies the header's right side on a white panel
+with system typography, leaving the answer width intact. Small panels omit it.
+Blinking and outward-moving thought bubbles respect Reduce Motion;
+the finishing sparkle stops after a short sequence. Dismissal and hiding stop
+animation timers. After native tests, `native/macos/bin/feedback-tests --preview-dir
+/tmp/opensaysme-overlay-preview` renders the real AppKit states to PNGs without
+showing a panel or capturing the desktop.
 Discovery, targeting and display capture exclude windows belonging to the helper's
 exact executable identity, rather than filtering by panel title.
 

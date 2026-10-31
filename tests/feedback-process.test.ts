@@ -17,7 +17,7 @@ function fixture() {
   const sink = startFeedbackHelper({ file: '/fixture/helper', args: ['--feedback'] }, warning);
   return { child, written, warning, sink, ready: () => child.stdout.write('{"type":"ready"}\n') };
 }
-const show = { type: 'show' as const, title: 'OpenSaysMe', message: 'Which agent?', detail: 'Reply with the hotkey', persistent: true };
+const show = { type: 'show' as const, title: 'OpenSaysMe', message: 'Which agent?', detail: 'Reply with the hotkey', persistent: true, expression: 'thinking' as const };
 
 it('sends only the newest pending display over stdin, without putting private text in arguments', async () => {
   const f = fixture();
@@ -42,10 +42,12 @@ it('transports a long multiline persistent response as one complete JSON command
   const closing = f.sink.close(); await vi.advanceTimersByTimeAsync(200); await closing;
 });
 
-it('requires explicit persistence and keeps the title and detail bounds', () => {
+it('requires explicit persistence and a known expression, and keeps the title and detail bounds', () => {
   const missingPersistence = { ...show, persistent: undefined };
   expect(feedbackCommandSchema.safeParse(missingPersistence).success).toBe(false);
   expect(feedbackCommandSchema.safeParse({ ...show, persistent: 'true' }).success).toBe(false);
+  expect(feedbackCommandSchema.safeParse({ ...show, expression: undefined }).success).toBe(false);
+  expect(feedbackCommandSchema.safeParse({ ...show, expression: 'celebrate-anything' }).success).toBe(false);
   expect(feedbackCommandSchema.safeParse({ ...show, title: 'x'.repeat(161) }).success).toBe(false);
   expect(feedbackCommandSchema.safeParse({ ...show, detail: 'x'.repeat(513) }).success).toBe(false);
   expect(feedbackCommandSchema.safeParse({ ...show, persistent: false, message: '🌱'.repeat(16_384) }).success).toBe(true);

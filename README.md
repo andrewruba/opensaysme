@@ -76,7 +76,10 @@ new location.
 ## Using it
 
 Keep `osm` running and switch to your work. Show the relevant content while you
-speak. A small overlay shows progress and answers without taking focus.
+speak. A simple white overlay shows progress and answers without taking focus. Its
+ASCII face listens, thinks and concentrates along with the agent, then smiles when a
+response is ready. Recoverable desktop warnings stay in the terminal; the overlay
+only interrupts progress for notices that need attention.
 
 | Shortcut | Action |
 | --- | --- |
