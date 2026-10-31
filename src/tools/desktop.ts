@@ -93,7 +93,7 @@ export function createDesktopTools(adapter: Adapter, scope?: RequestScope): Tool
       },
     },
     { name: 'focus_window', effect: 'focus', input: windowInput,
-      description: 'Focus a window discovered by list_windows in this tool session. Use its windowId, never a native window ID from screen history. The target is rechecked and focus is verified. Prefer background inspection when useful, but focus a plausible host to investigate when background evidence is unavailable or inconclusive. Use the best supported match; exact project-name matching is not required. Confirm the relevant agent or work context before entering input. Focusing a host to explore does not establish its current conversation as the final destination.',
+      description: 'Focus a window discovered by list_windows in this tool session. Use its windowId, never a native window ID from screen history. The target is rechecked and focus is verified. Prefer background inspection when useful, but focus a plausible host to investigate when background evidence is unavailable or inconclusive. Keep the user’s original work context while exploring; navigation does not make newly encountered work the requested destination. Finding a capable interface alone is insufficient to choose its workspace for input. Use the strongest work-specific match without requiring exact names; focus verification establishes only that the window was reached.',
       run: async (args, signal) => {
         if (session.stopped) return toolError('input-stopped', 'Input has stopped; inspect and report before further navigation.');
         keyboard?.invalidate();

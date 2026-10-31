@@ -8,8 +8,12 @@ The prompt directs the model to choose the best supported agent, project or
 conversation using current contents and user references, without demanding an exact
 project-name match. Source material helps identify the work but is not automatically
 the destination. Prefer background inspection; when it is inconclusive, the model
-can focus or open a plausible host and look within it. It checks the actual input
-destination before writing and asks only when meaningful ambiguity remains.
+can focus or open a plausible host and look within it. It carries the user's
+original work context through that exploration. Finding a capable interface does
+not establish the intended project or recipient: when a candidate has only generic
+capability evidence or shows unrelated work, compare another plausible candidate.
+A strong match permits proceeding without surveying every app; ask only when
+meaningful ambiguity remains.
 Application-only navigation does not require inferring a project. These rules are
 general; there are no preferred applications or fixed routing sequences.
 
