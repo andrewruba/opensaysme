@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml/badge.svg?branch=main&event=push)](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml)
 [![Version 0.2.0](https://img.shields.io/badge/version-0.2.0-blue?style=flat-square)](package.json)
-[![Node.js 22.20.0 or newer](https://img.shields.io/badge/node-%3E%3D22.20.0-339933?style=flat-square)](package.json)
+[![Node.js 26.13.0 or newer](https://img.shields.io/badge/node-%3E%3D26.13.0-339933?style=flat-square)](package.json)
 [![macOS 14 or newer](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square)](#run-it)
 [![MIT license](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
@@ -30,9 +30,12 @@ not authority.
 
 ## Run it
 
-Requires macOS 14+, Node.js 22.20+, Xcode Command Line Tools, and your own OpenAI API
+Requires macOS 14+, Node.js 26.13+, Xcode Command Line Tools, and your own OpenAI API
 key in an environment variable. Reasoning defaults to GPT-6.1 Terra (`gpt-6.1-terra`)
 with low reasoning effort; speech uses `gpt-live-transcribe` independently.
+
+If you use nvm, run `nvm install` and `nvm use` in this folder first; `.nvmrc` selects
+the project's Node version.
 
 ```sh
 npm ci

@@ -26,7 +26,7 @@ jobs:
         include:
           - runner: macos-15
             arch: arm64
-            node: '22.20.0'
+            node: '26.13.0'
           - runner: macos-15-intel
             arch: x64
             node: '26'

@@ -76,6 +76,10 @@ and configuration.
 - Run `npm run check` for version consistency, typecheck, lint, unit tests, and the
   TypeScript build. For Swift changes, also run `sh native/macos/test.sh` and
   `npm run build:native`.
+- Use Node from `.nvmrc`. Build and typecheck use the TypeScript 7 compiler through
+  the `@typescript/native` npm alias; `typescript` aliases Microsoft's TypeScript 6
+  API package for ESLint. Keep these separate until the lint tooling supports the
+  new compiler API.
 - Run the existing checks relevant to the change. Once tooling exists, document
   its canonical install, development, typecheck, lint, and test commands.
 - Add meaningful tests for behavior and regressions, especially action routing,

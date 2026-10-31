@@ -13,14 +13,6 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    ignore:
-      # Match the minimum supported Node runtime; revisit when engines.node changes.
-      - dependency-name: '@types/node'
-        update-types: ['version-update:semver-major']
-      # TypeScript 7 lacks the compiler API required by typescript-eslint.
-      # Revisit when the lint tooling supports it; keep receiving 6.x updates.
-      - dependency-name: typescript
-        versions: ['>=7']
     groups:
       dependencies:
         patterns: ['*']
