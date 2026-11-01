@@ -3,6 +3,9 @@
 OpenSaysMe is MIT licensed; see `LICENSE`. The installer includes a private Node.js
 runtime and production npm dependencies, which retain their own licenses.
 
+Source checkouts store the two large notice files with `.gz` suffixes. Installer
+and source-companion builds restore their original filenames and contents.
+
 Node.js 26.13.0 includes its complete upstream license and component notices at
 `runtime/LICENSE`. Matching sources are available from
 <https://nodejs.org/dist/v26.13.0/> and
@@ -54,13 +57,13 @@ uses a source superset, including unused features and development dependencies.
 This software is based in part on the work of the FreeType Team.
 This software is based in part on the work of the Independent JPEG Group.
 
-[Native source notices](licenses/native-source-notices.txt) preserve the original
+The distributed `licenses/native-source-notices.txt` preserves the original
 copyright and license files from those inputs. These notices include components
 that are not linked into the shipped library.
 
 Both Mac binaries embed Rust commit `75a75c3e0a67d3fa3d03982775f5bb0356e7b510`,
 nightly 2026-09-27. The matching standard-library notices are preserved in
-[Rust-COPYRIGHT-library.html](licenses/Rust-COPYRIGHT-library.html), together with
+`licenses/Rust-COPYRIGHT-library.html`, together with
 the Rust copyright, MIT and Apache license files. They were extracted from the
 [official nightly compiler distribution](https://static.rust-lang.org/dist/2026-09-27/rustc-nightly-aarch64-apple-darwin.tar.xz),
 verified against its

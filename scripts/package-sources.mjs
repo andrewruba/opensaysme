@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFile, cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 import { run } from './package-process.mjs';
+import { copyPackageLicenses } from './package-licenses.mjs';
 
 const repository = fileURLToPath(new URL('..', import.meta.url));
 const packaging = join(repository, 'packaging/macos');
@@ -69,7 +70,7 @@ async function build() {
     await copyFile(join(packaging, 'native-sources.json'), join(bundle, 'manifest.json'));
     await copyFile(join(packaging, 'source-companion/README.md'), join(bundle, 'README.md'));
     await copyFile(join(packaging, 'source-companion/prepare.py'), join(bundle, 'prepare.py'));
-    await cp(join(packaging, 'licenses'), join(bundle, 'licenses'), { recursive: true });
+    await copyPackageLicenses(join(bundle, 'licenses'));
     await writeFile(join(bundle, 'SHA256SUMS'), manifest.inputs.map((input) => `${input.sha256}  ${input.path}\n`).join(''));
     const filename = 'OpenSaysMe-native-sources.tar.gz';
     const built = join(temporary, filename);

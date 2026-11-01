@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 import { run } from './package-process.mjs';
+import { copyPackageLicenses } from './package-licenses.mjs';
 import { smokePackage } from './smoke-package.mjs';
 
 const repository = fileURLToPath(new URL('..', import.meta.url));
@@ -58,7 +59,7 @@ async function build() {
       copyFile(join(repository, 'bin/opensaysme.mjs'), join(app, 'bin/opensaysme.mjs')),
       copyFile(node, join(app, 'runtime/bin/node')), copyFile(nodeLicense, join(app, 'runtime/LICENSE')),
       copyFile(join(repository, 'LICENSE'), join(app, 'LICENSE')),
-      cp(join(repository, 'packaging/macos/licenses'), join(app, 'licenses'), { recursive: true }),
+      copyPackageLicenses(join(app, 'licenses')),
       copyFile(join(repository, 'packaging/macos/THIRD_PARTY_NOTICES.md'), join(app, 'THIRD_PARTY_NOTICES.md')),
       copyFile(join(repository, 'packaging/macos/preinstall'), join(scripts, 'preinstall')),
       copyFile(join(repository, 'packaging/macos/postinstall'), join(scripts, 'postinstall')),

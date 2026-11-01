@@ -32,6 +32,10 @@ does not compile dependencies. The companion includes source provenance, license
 notices and a Python 3.12+ materializer for rebuilding native dependencies offline
 after installing the documented build tools.
 
+The two large files in `packaging/macos/licenses` are stored as `.gz` files.
+Both packaging commands unpack them into readable notices in their output. When
+refreshing these files, use `gzip -n -9` to omit timestamps and original filenames.
+
 The installed files live under `/Library/Application Support/OpenSaysMe`, with
 `osm` and `opensaysme` commands in `/usr/local/bin`. The application resources use
 a nonrelocatable bundle with replacement-on-upgrade semantics so obsolete files
