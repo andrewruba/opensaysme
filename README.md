@@ -1,4 +1,4 @@
-# OpenSaysMe — Human interface for AI agents
+# OpenSaysMe — Give AI agents tasks by talking and pointing
 
 [![CI](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml/badge.svg?branch=main&event=push)](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml)
 [![Version 0.5.0](https://img.shields.io/badge/version-0.5.0-blue?style=flat-square)](package.json)
