@@ -13,8 +13,8 @@ Siri *should* work.
 
 ## What works today
 
-Tap a hotkey and talk. Point at something on screen or select text to show what
-you mean. OpenSaysMe can read what's there, switch apps, click and type. You can
+Tap a hotkey and talk. Point at a UI bug or failing test's output to show
+what you mean. OpenSaysMe can read what's there, switch apps, click and type. You can
 make short follow-up requests without repeating the context. It can discover
 running apps even when their windows are not listed, inspect candidate destinations,
 and keep a clarification tied to the work you requested.
