@@ -319,6 +319,11 @@ model's prose or establish task completion. Animation respects macOS Reduce Moti
 and stops when the panel is hidden; long answers retain their full reading width.
 The panel uses a white background and system typography. Thought bubbles travel
 outward from the face; a calm, level-brow expression accompanies desktop work.
+Escape dismisses a completed response without focusing the overlay. Its passive
+key observers exist only while a persistent response is visible and leave the
+foreground app's Escape handling intact. Closing the panel preserves conversation
+context; the CLI terminal's separate idle Escape handler still clears that context.
+Active requests retain their global Escape cancellation shortcut.
 
 Normal CLI output names each completed tool and its outcome, and the final JSON
 includes the same `toolResults`. A partial result means some evidence was returned

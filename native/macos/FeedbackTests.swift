@@ -5,6 +5,7 @@ import CoreGraphics
 @main
 struct FeedbackTests {
     static func main() throws {
+        checkFeedbackEscape()
         func parse(_ object: [String: Any]) throws -> FeedbackCommand? {
             FeedbackCommand.parse(try JSONSerialization.data(withJSONObject: object))
         }
@@ -163,6 +164,7 @@ struct FeedbackTests {
             }
             view.clear()
         }
+        if CommandLine.arguments.contains("--escape-observer-smoke") { smokeFeedbackEscapeObservers() }
         print("Feedback checks passed (strict expressions, ASCII portraits, reduced motion, bounded animation, wrapping, scrolling and cleanup). No panel or desktop input issued.")
     }
 }

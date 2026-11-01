@@ -13,6 +13,7 @@ final class FeedbackSession {
     private var content: FeedbackView?
     private var visibleScreen: NSScreen?
     private var hideAt: TimeInterval?
+    private lazy var escapeMonitor = FeedbackEscapeMonitor { [weak self] in self?.hide() }
 
     func run() {
         let application = NSApplication.shared
@@ -112,12 +113,14 @@ final class FeedbackSession {
         panel.ignoresMouseEvents = !command.persistent
         panel.setFrame(frame, display: true)
         panel.orderFrontRegardless()
+        escapeMonitor.show(persistent: command.persistent)
         // Keep answers available for reading; EOF/shutdown and dismissal still
         // clear them. Transient progress retains a deadline if the parent stalls.
         hideAt = command.persistent ? nil : ProcessInfo.processInfo.systemUptime + 120
     }
 
     private func hide() {
+        escapeMonitor.stop()
         panel?.orderOut(nil)
         content?.clear()
         visibleScreen = nil

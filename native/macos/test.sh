@@ -54,6 +54,7 @@ xcrun swiftc -O \
 xcrun swiftc -O \
   -target "$(uname -m)-apple-macosx12.0" \
   -module-cache-path "$helper_dir/bin/module-cache" \
-  -framework AppKit \
-  "$helper_dir/FeedbackSupport.swift" "$helper_dir/FeedbackFace.swift" "$helper_dir/FeedbackView.swift" "$helper_dir/FeedbackTests.swift" -o "$helper_dir/bin/feedback-tests"
+  -framework AppKit -framework ApplicationServices -framework Carbon \
+  "$helper_dir/FeedbackSupport.swift" "$helper_dir/FeedbackFace.swift" "$helper_dir/FeedbackView.swift" \
+  "$helper_dir/FeedbackEscape.swift" "$helper_dir/FeedbackEscapeTests.swift" "$helper_dir/FeedbackTests.swift" -o "$helper_dir/bin/feedback-tests"
 "$helper_dir/bin/feedback-tests"

@@ -84,11 +84,12 @@ only interrupts progress for notices that need attention.
 | Shortcut | Action |
 | --- | --- |
 | **Ctrl+Shift+Space** (default) | Start recording. Wait for “Listening…” before speaking; tap again to finish. |
-| **Escape** | Cancel the current request and clear follow-up context. |
+| **Escape** | Dismiss a completed response; during a request, cancel and clear follow-up context. |
 | **Ctrl+C** | Quit. |
 
-While idle, press Escape in the CLI terminal. Cancelling stops further actions;
-it cannot undo anything already done.
+After a task, Escape closes its overlay without switching apps. The key still
+reaches the focused app; idle Escape in the CLI terminal also clears follow-up
+context. Cancelling stops further actions; it cannot undo anything already done.
 
 ### Change the shortcut
 

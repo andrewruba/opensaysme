@@ -234,6 +234,11 @@ command. TextKit wraps the complete message in a scrollable reading area; the
 panel grows to a bounded portion of the pointer's display. Completed responses
 are persistent and accept scrolling and close-button clicks without taking focus.
 Transient progress remains click-through, with a native deadline for stale content.
+Persistent responses observe unmodified Escape locally and in other apps, without
+consuming the key or competing with the voice helper's cancellation shortcut.
+Observers are removed on hide, new progress, EOF and shutdown; stale callbacks
+cannot dismiss a newer response. Global key observation requires Accessibility
+access. If unavailable, the close button remains usable.
 The panel clears text when hidden and closes on EOF, shutdown or signals. It emits
 only `ready`. Full responses also remain in the terminal.
 The monochrome ASCII portrait occupies the header's right side on a white panel
@@ -243,6 +248,10 @@ the finishing sparkle stops after a short sequence. Dismissal and hiding stop
 animation timers. After native tests, `native/macos/bin/feedback-tests --preview-dir
 /tmp/opensaysme-overlay-preview` renders the real AppKit states to PNGs without
 showing a panel or capturing the desktop.
+For an optional observer check, run `native/macos/bin/feedback-tests
+--escape-observer-smoke`. It registers real observers using existing Accessibility
+access and delivers Escape only inside the test app, without posting keyboard
+input to the desktop. Physical Escape delivery from another app is not exercised.
 Discovery, targeting and display capture exclude windows belonging to the helper's
 exact executable identity, rather than filtering by panel title.
 
