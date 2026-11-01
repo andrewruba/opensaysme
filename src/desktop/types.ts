@@ -42,17 +42,40 @@ export const desktopSnapshotSchema = z.object({
 });
 export type DesktopSnapshot = z.infer<typeof desktopSnapshotSchema>;
 
+export const runningApplicationSchema = z.object({
+  id: z.string().min(1).max(512), application: z.string().min(1).max(1024),
+  bundleIdentifier: z.string().min(1).max(1024).optional(),
+  hidden: z.boolean(), frontmost: z.boolean(),
+  windowStatus: z.enum(['available', 'empty', 'inaccessible', 'incomplete']),
+  windowIds: z.array(z.string().min(1).max(512)).max(128)
+    .refine((ids) => new Set(ids).size === ids.length, 'Application window IDs must be unique'),
+}).strict().refine(({ windowStatus, windowIds }) => windowStatus === 'incomplete'
+  || (windowStatus === 'available' ? windowIds.length > 0 : windowIds.length === 0),
+  'Application window status must agree with its listed windows');
+export type RunningApplication = z.infer<typeof runningApplicationSchema>;
+
+export const applicationActivationSchema = z.object({
+  activated: z.literal(true), application: runningApplicationSchema,
+}).strict().refine(({ application }) => application.frontmost && !application.hidden,
+  'Activated application must be visible and frontmost');
+export type ApplicationActivation = z.infer<typeof applicationActivationSchema>;
+
 export const windowInventorySchema = z.object({
   windows: z.array(z.object({
     id: z.string().min(1).max(512), application: z.string().min(1).max(1024),
     title: z.string().max(16_384).optional(),
   }).strict()).max(128),
   warnings: z.array(z.string().max(1024)).max(16),
-  applicationsWithoutWindows: z.array(z.string().min(1).max(256)
-    .refine((name) => name.length <= 256, 'Application name exceeds 256 UTF-16 code units.')).min(1).max(128)
-    .refine((names) => new Set(names).size === names.length, 'Application names must be unique').optional(),
+  applications: z.array(runningApplicationSchema).max(128),
 }).strict().refine((inventory) => new Set(inventory.windows.map(({ id }) => id)).size === inventory.windows.length,
-  'Window IDs must be unique');
+  'Window IDs must be unique')
+  .refine(({ applications }) => new Set(applications.map(({ id }) => id)).size === applications.length,
+    'Application IDs must be unique')
+  .refine(({ windows, applications }) => {
+    const linked = applications.flatMap(({ windowIds }) => windowIds);
+    return new Set(linked).size === linked.length && applications.every((application) => application.windowIds.every((id) =>
+      windows.some((window) => window.id === id && window.application === application.application)));
+  }, 'Application windows must refer to distinct matching inventory entries');
 export type WindowInventory = z.infer<typeof windowInventorySchema>;
 
 const contentText = z.string().max(2048);
@@ -92,6 +115,7 @@ export interface DesktopAdapter {
   keyboard?: KeyboardAdapter;
   probe(): Promise<DesktopReport>;
   listWindows(signal?: AbortSignal): Promise<WindowInventory>;
+  activateApplication?(targetId: string, signal?: AbortSignal): Promise<ApplicationActivation>;
   // Omitted when the platform has no implementation; do not advertise a phantom tool.
   inspectWindow?(targetId: string, signal?: AbortSignal): Promise<WindowInspection>;
   captureWindow?(targetId: string, signal?: AbortSignal): Promise<WindowFrameCapture>;

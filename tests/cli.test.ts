@@ -155,8 +155,8 @@ it('lists tool schemas without configuration, keys, or a graphical session', asy
     ...process.env, OPENSAYSME_CONFIG_DIR: directory, DISPLAY: '', WAYLAND_DISPLAY: '', OPENAI_API_KEY: '',
   } });
   expect(JSON.parse(stdout).map((tool: { name: string }) => tool.name)).toEqual([
-    'list_windows', 'inspect_desktop', 'capture_screen', 'focus_window',
-    ...(process.platform === 'darwin' ? ['inspect_window', 'capture_window', 'move_pointer', 'click', 'scroll', 'type_text', 'press_key', 'type_keyboard_text',
+    'resolve_target', 'list_windows', 'inspect_desktop', 'capture_screen', 'focus_window',
+    ...(process.platform === 'darwin' ? ['activate_application', 'inspect_window', 'capture_window', 'move_pointer', 'click', 'scroll', 'type_text', 'press_key', 'type_keyboard_text',
       'capture_text', 'read_text', 'transfer_text'] : []),
   ]);
   expect(stderr).toBe('');

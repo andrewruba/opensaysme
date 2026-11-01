@@ -11,11 +11,13 @@ struct KeyboardAction: Decodable {
 struct KeyboardCommand: Decodable { let action: KeyboardAction; let fingerprint: String }
 struct KeyboardEvidence: Encodable {
     let fingerprint: String
+    let applicationId: String; let windowId: String?
     let application: String; let role: String; let title: String; let description: String; let value: String
     let editable: Bool; let valueTruncated: Bool
 }
 struct KeyboardFingerprintState: Encodable {
     var pid: Int32; var started: UInt64
+    var windowTargetID: String?
     var role: String; var title: String; var description: String; var value: String; var identifier: String
     var windowTitle: String; var windowIdentifier: String; var windowBounds: [Double]
     var bounds: [Double]; var controlPath: [Int]?
@@ -145,7 +147,8 @@ func keyboardFingerprint(_ target: KeyboardFingerprintState) throws -> String {
             state.bounds = state.windowBounds
         }
     }
-    // A stable window identifier survives titles that follow the current process.
+    // The separate native target token binds discovery identity, including title
+    // changes. Avoid also hashing a redundant label when an AX identifier exists.
     if !state.windowIdentifier.isEmpty { state.windowTitle = "" }
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
     return SHA256.hash(data: try encoder.encode(state)).map { String(format: "%02x", $0) }.joined()

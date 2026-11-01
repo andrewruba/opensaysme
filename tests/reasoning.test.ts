@@ -404,14 +404,15 @@ describe('desktop tool reasoning loop', () => {
     const target = { fingerprint: 'a'.repeat(64), role: 'AXTextArea', title: 'Agent input', description: '', value: '',
       bounds: { x: 0, y: 0, width: 800, height: 600 }, focused: true, editable: true };
     const execute = vi.fn(async () => ({ status: 'verified' as const }));
-    const authorize = vi.fn(async () => ({ decision: 'allow' as const, effect: 'edit' as const,
+    const authorize = vi.fn<import('../src/tools/permissions.js').ActionAuthorizer>(async () => ({ decision: 'allow' as const, effect: 'edit' as const,
       requestQuote: request, reason: 'Scripted preparation decision.' }));
-    const host = createDesktopTools({ listWindows: async () => ({ windows: [window], warnings: [] }),
+    const host = createDesktopTools({ listWindows: async () => ({ windows: [window], applications: [], warnings: [] }),
       focus: async () => {}, inspect: async () => ({ platform: 'test', window }), captureContext: vi.fn(), captureFrame: vi.fn(),
       captureWindow: async () => ({ status: 'ok', window, capturedAt: '2026-10-30T12:00:00Z', bounds: target.bounds,
         image: { mimeType: 'image/jpeg', width: 800, height: 600, data: '/9j/AA==' }, warnings: [] }),
       input: { inspect: async () => target, execute },
     }, { request, authorize });
+    let destinationObservationId: string;
     const fetcher = vi.fn<typeof fetch>()
       .mockImplementationOnce(async (_url, init) => {
         const metadata = JSON.parse(JSON.parse(String(init?.body)).input[0].content[0].text);
@@ -425,8 +426,13 @@ describe('desktop tool reasoning loop', () => {
           .map((part: { text: string }) => JSON.parse(part.text)).find((part: { observationId?: string }) => part.observationId);
         expect(observation).toMatchObject({ source: 'window-screenshot', window: { windowId: 'window-1' } });
         expect(output.some((part: { type: string }) => part.type === 'input_image')).toBe(true);
-        return callResponse(callItem('type_text', { observationId: observation.observationId, x: 100, y: 100, text }, 'write'));
+        destinationObservationId = observation.observationId;
+        return callResponse(callItem('resolve_target', { requestQuote: request, source: null,
+          candidates: [{ targetId: 'window-1', status: 'selected', evidenceIds: [observation.evidenceId],
+            reason: 'The observed agent input is the requested destination.' }], question: null }, 'resolve'));
       })
+      .mockImplementationOnce(async () => callResponse(callItem('type_text', {
+        observationId: destinationObservationId, x: 100, y: 100, text }, 'write')))
       .mockResolvedValueOnce(response('Prepared the explanation and left it unsent.'));
     const f = fixture(fetcher); f.input.transcript = request; f.input.tools = host;
     f.input.history.contexts[0]!.context.selectedText = selected;
@@ -434,8 +440,9 @@ describe('desktop tool reasoning loop', () => {
       await f.reason(f.input);
       expect(execute).toHaveBeenCalledExactlyOnceWith({ windowId: window.id, bounds: target.bounds, point: { x: 100, y: 100 } },
         { kind: 'type_text', text }, target.fingerprint, expect.any(AbortSignal));
-      expect(authorize).not.toHaveBeenCalled();
-      expect(fetcher).toHaveBeenCalledTimes(4);
+      expect(authorize).toHaveBeenCalledOnce();
+      expect(authorize.mock.calls[0]![0]).toMatchObject({ action: { kind: 'type_text', text } });
+      expect(fetcher).toHaveBeenCalledTimes(5);
     } finally { host.close(); }
   });
 
@@ -446,7 +453,7 @@ describe('desktop tool reasoning loop', () => {
       bounds: { x: -1200, y: -100, width: 800, height: 600 }, image, warnings: ['Protected content may be blank.'] }));
     const focus = vi.fn(async () => {});
     const host = createDesktopTools({
-      listWindows: async () => ({ windows: [window], warnings: [] }),
+      listWindows: async () => ({ windows: [window], applications: [], warnings: [] }),
       inspectWindow: async () => ({ status: 'unavailable', reason: 'inaccessible' }),
       captureWindow: capture, focus, inspect: async () => ({ platform: 'test', window }),
       captureContext: vi.fn(), captureFrame: vi.fn(),
@@ -490,7 +497,7 @@ describe('desktop tool reasoning loop', () => {
     let focused = candidates[0]!;
     const focus = vi.fn(async (id: string) => { focused = candidates.find((window) => window.id === id)!; });
     const host = createDesktopTools({
-      listWindows: async () => ({ windows: candidates, warnings: [] }),
+      listWindows: async () => ({ windows: candidates, applications: [], warnings: [] }),
       inspectWindow: async (id) => ({ status: 'ok', capturedAt: '2026-10-29T12:00:00Z',
         window: candidates.find((window) => window.id === id)!,
         nodes: [{ parent: null, role: 'AXTextArea', value: id === 'native-web' ? 'frontend/src/App.tsx' : 'backend/server.ts' }],
@@ -530,7 +537,8 @@ describe('desktop tool reasoning loop', () => {
     const candidate = { id: 'native-unrelated', application: 'Editor', title: 'Budget spreadsheet' };
     const focus = vi.fn();
     const host = createDesktopTools({
-      listWindows: async () => ({ windows: [candidate], applicationsWithoutWindows: ['Workspace'], warnings: [] }),
+      listWindows: async () => ({ windows: [candidate], applications: [{ id: 'native-workspace', application: 'Workspace', hidden: false,
+        frontmost: false, windowStatus: 'empty', windowIds: [] }], warnings: [] }),
       inspectWindow: async () => ({ status: 'ok', window: candidate, capturedAt: '2026-10-29T00:00:10Z',
         nodes: [{ parent: null, role: 'AXButton', title: 'Open assistant' }], warnings: [] }),
       focus, inspect: vi.fn(), captureContext: vi.fn(), captureFrame: vi.fn(),
@@ -547,9 +555,9 @@ describe('desktop tool reasoning loop', () => {
         expect(original.workContext).toEqual(f.input.workContext);
         const outputs = wire.input.filter((item: { type: string }) => item.type === 'function_call_output');
         const discovered = JSON.parse(outputs[0].output[1].text);
-        expect(discovered.applications).toContainEqual({ application: 'Workspace', windowIds: [],
+        expect(discovered.applications).toContainEqual(expect.objectContaining({ application: 'Workspace', windowIds: [],
           inventoryStatus: 'running-without-listed-windows',
-          recentWindowNames: [{ title: 'Review revisions', observedAt: '2026-10-28T23:59:00Z' }] });
+          recentWindowNames: [{ title: 'Review revisions', observedAt: '2026-10-28T23:59:00Z' }] }));
         const inspected = JSON.parse(outputs[1].output[1].text);
         expect(inspected.window).toEqual({ windowId: 'window-1', application: 'Editor', title: 'Budget spreadsheet' });
         expect(inspected.nodes).toEqual([{ parent: null, role: 'AXButton', title: 'Open assistant' }]);

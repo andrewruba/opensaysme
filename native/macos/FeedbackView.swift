@@ -1,11 +1,10 @@
 import AppKit
 
-private enum ConservatoryPalette {
-    static let top = NSColor(srgbRed: 0.105, green: 0.175, blue: 0.145, alpha: 1)
-    static let bottom = NSColor(srgbRed: 0.055, green: 0.105, blue: 0.085, alpha: 1)
-    static let brass = NSColor(srgbRed: 0.70, green: 0.62, blue: 0.42, alpha: 1)
-    static let ivory = NSColor(srgbRed: 0.94, green: 0.92, blue: 0.85, alpha: 1)
-    static let muted = NSColor(srgbRed: 0.68, green: 0.73, blue: 0.66, alpha: 1)
+private enum FeedbackPalette {
+    static let background = NSColor.white
+    static let text = NSColor(white: 0.10, alpha: 1)
+    static let secondary = NSColor(white: 0.42, alpha: 1)
+    static let border = NSColor(white: 0, alpha: 0.12)
 }
 
 private final class FeedbackCloseButton: NSButton {
@@ -14,10 +13,10 @@ private final class FeedbackCloseButton: NSButton {
 
     override func draw(_ dirtyRect: NSRect) {
         if isHighlighted {
-            ConservatoryPalette.brass.withAlphaComponent(0.16).setFill()
+            NSColor.black.withAlphaComponent(0.06).setFill()
             NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 4, yRadius: 4).fill()
         }
-        ConservatoryPalette.brass.setStroke()
+        FeedbackPalette.secondary.setStroke()
         let path = NSBezierPath()
         path.lineWidth = 1
         path.move(to: NSPoint(x: bounds.midX - 4, y: bounds.midY - 4))
@@ -38,6 +37,7 @@ final class FeedbackView: NSView {
     private let closeButton = FeedbackCloseButton()
     let scrollView = NSScrollView()
     let messageView: NSTextView
+    let faceView = FeedbackFaceView(frame: .zero)
     var onDismiss: (() -> Void)?
     private var ruleY: CGFloat = 0
     private(set) var hasOverflow = false
@@ -51,19 +51,18 @@ final class FeedbackView: NSView {
         manager.addTextContainer(container)
         messageView = NSTextView(frame: .zero, textContainer: container)
         super.init(frame: frame)
-        appearance = NSAppearance(named: .darkAqua)
+        appearance = NSAppearance(named: .aqua)
         wantsLayer = true
         layer?.cornerRadius = 10
         layer?.masksToBounds = true
 
-        let brandFont = NSFont(name: "Baskerville", size: 12) ?? .systemFont(ofSize: 11, weight: .medium)
-        brand.attributedStringValue = NSAttributedString(string: "OPENSAYSME", attributes: [
-            .font: brandFont, .foregroundColor: ConservatoryPalette.brass, .kern: 2.3,
+        brand.attributedStringValue = NSAttributedString(string: "OpenSaysMe", attributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: FeedbackPalette.secondary,
         ])
-        heading.font = NSFont(name: "Baskerville", size: 24) ?? .systemFont(ofSize: 22, weight: .regular)
-        heading.textColor = ConservatoryPalette.ivory
+        heading.font = .systemFont(ofSize: 23, weight: .medium)
+        heading.textColor = FeedbackPalette.text
         detail.font = .systemFont(ofSize: 11.5)
-        detail.textColor = ConservatoryPalette.muted
+        detail.textColor = FeedbackPalette.secondary
         for label in [heading, detail] {
             label.maximumNumberOfLines = 0
             label.lineBreakMode = .byWordWrapping
@@ -74,7 +73,7 @@ final class FeedbackView: NSView {
             }
         }
         scrollHint.font = .systemFont(ofSize: 9, weight: .medium)
-        scrollHint.textColor = ConservatoryPalette.brass
+        scrollHint.textColor = FeedbackPalette.secondary
 
         closeButton.isBordered = false
         closeButton.title = ""
@@ -99,17 +98,17 @@ final class FeedbackView: NSView {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.scrollerStyle = .overlay
-        scrollView.scrollerKnobStyle = .light
+        scrollView.scrollerKnobStyle = .dark
         scrollView.verticalScrollElasticity = .none
         scrollView.horizontalScrollElasticity = .none
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.documentView = messageView
-        for view in [brand, heading, scrollView, detail, scrollHint, closeButton] { addSubview(view) }
+        for view in [brand, heading, scrollView, detail, scrollHint, faceView, closeButton] { addSubview(view) }
     }
 
     required init?(coder: NSCoder) { nil }
 
-    @objc private func dismiss() { onDismiss?() }
+    @objc private func dismiss() { faceView.clear(); onDismiss?() }
 
     private func labelHeight(_ label: NSTextField, text: String, width: CGFloat, spacing: CGFloat = 2) -> CGFloat {
         let paragraph = NSMutableParagraphStyle()
@@ -128,9 +127,15 @@ final class FeedbackView: NSView {
     func configure(_ command: FeedbackCommand, width: CGFloat, maximumHeight: CGFloat) -> CGFloat {
         let inset: CGFloat = 26
         let textWidth = max(1, width - inset * 2)
-        let titleHeight = labelHeight(heading, text: command.title, width: textWidth)
+        // Keep the portrait out of the answer column and the close button. On
+        // compact displays the words take priority over decorative feedback.
+        let showFace = width >= 400 && maximumHeight >= 260
+        let portraitSize = FeedbackFaceView.preferredSize
+        let titleWidth = showFace ? max(1, textWidth - portraitSize.width - 48) : textWidth
+        let titleHeight = labelHeight(heading, text: command.title, width: titleWidth)
         let detailHeight = labelHeight(detail, text: command.detail, width: textWidth)
-        let bodyTop = 52 + titleHeight + (command.message.isEmpty ? 0 : 16)
+        let headerBottom = max(52 + titleHeight, showFace ? 24 + portraitSize.height + 4 : 0)
+        let bodyTop = headerBottom + (command.message.isEmpty ? 0 : 16)
         let footerHeight = command.detail.isEmpty ? 26 : detailHeight + 38
 
         let paragraph = NSMutableParagraphStyle()
@@ -138,7 +143,7 @@ final class FeedbackView: NSView {
         paragraph.lineSpacing = 4
         paragraph.paragraphSpacing = 8
         messageView.textStorage?.setAttributedString(NSAttributedString(string: command.message, attributes: [
-            .font: NSFont.systemFont(ofSize: 14.5), .foregroundColor: ConservatoryPalette.ivory,
+            .font: NSFont.systemFont(ofSize: 14.5), .foregroundColor: FeedbackPalette.text,
             .paragraphStyle: paragraph,
         ]))
         // Reserve a little space for the overlay scroller, without covering text.
@@ -155,7 +160,10 @@ final class FeedbackView: NSView {
         brand.frame = NSRect(x: inset, y: 23, width: max(1, textWidth - 35), height: 18)
         closeButton.frame = NSRect(x: width - inset - 23, y: 17, width: 28, height: 28)
         closeButton.isHidden = !command.persistent
-        heading.frame = NSRect(x: inset - 2, y: 52, width: textWidth + 4, height: titleHeight)
+        heading.frame = NSRect(x: inset - 2, y: 52, width: titleWidth + 4, height: titleHeight)
+        faceView.frame = NSRect(x: width - inset - portraitSize.width - 28, y: 24,
+                               width: portraitSize.width, height: portraitSize.height)
+        faceView.configure(command.expression, active: showFace)
         scrollView.isHidden = command.message.isEmpty
         scrollView.frame = NSRect(x: inset, y: bodyTop, width: textWidth, height: viewportHeight)
         messageView.setFrameSize(NSSize(width: textWidth, height: max(documentHeight, viewportHeight)))
@@ -175,18 +183,16 @@ final class FeedbackView: NSView {
         detail.stringValue = ""
         messageView.string = ""
         hasOverflow = false
+        faceView.clear()
     }
 
     override func draw(_ dirtyRect: NSRect) {
         let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
-        NSGradient(starting: ConservatoryPalette.top, ending: ConservatoryPalette.bottom)?.draw(in: outline, angle: 90)
-        ConservatoryPalette.brass.withAlphaComponent(0.65).setStroke()
+        FeedbackPalette.background.setFill()
+        outline.fill()
+        FeedbackPalette.border.setStroke()
         outline.lineWidth = 0.75
         outline.stroke()
-        let inner = NSBezierPath(roundedRect: bounds.insetBy(dx: 6.5, dy: 6.5), xRadius: 5, yRadius: 5)
-        ConservatoryPalette.brass.withAlphaComponent(0.18).setStroke()
-        inner.lineWidth = 0.5
-        inner.stroke()
         if !detail.isHidden {
             let rule = NSBezierPath()
             rule.move(to: NSPoint(x: 26, y: ruleY))

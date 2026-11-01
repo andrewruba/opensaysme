@@ -24,6 +24,14 @@ export const conversationEvidenceSchema = z.object({
     target: keyboardEvidenceSchema.omit({ fingerprint: true }),
     effect: z.enum(['navigate', 'edit', 'submit']), status: inputResultSchema.shape.status,
   }).strict()).max(12).optional(),
+  // Model interpretations are retained separately from native action outcomes.
+  // These labels support corrections and pending questions, never live handles.
+  resolution: z.object({
+    requestQuote: z.string().min(1).max(4096), source: z.string().max(1024).nullable(),
+    question: z.string().max(512).nullable(),
+    candidates: z.array(z.object({ application: z.string().max(1024), title: z.string().max(16_384).nullable(),
+      status: z.enum(['possible', 'rejected', 'selected']), reason: z.string().max(512) }).strict()).max(8),
+  }).strict().optional(),
 }).strict();
 export type ConversationEvidence = z.infer<typeof conversationEvidenceSchema>;
 export const conversationTurnSchema = z.object({

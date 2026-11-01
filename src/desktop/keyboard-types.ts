@@ -23,6 +23,7 @@ export const keyboardActionSchema = z.discriminatedUnion('kind', [
 export type KeyboardAction = z.infer<typeof keyboardActionSchema>;
 export const keyboardEvidenceSchema = z.object({
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/), application: z.string().min(1).max(1024),
+  applicationId: z.string().min(1).max(512), windowId: z.string().min(1).max(512).optional(),
   role: z.string().min(1).max(128), title: z.string().max(1024), description: z.string().max(1024),
   value: z.string().max(4096), valueTruncated: z.boolean(), editable: z.boolean(),
 }).strict();

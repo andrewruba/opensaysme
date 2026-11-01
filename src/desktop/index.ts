@@ -5,6 +5,7 @@ export async function desktopAdapter(platform = process.platform): Promise<Deskt
     case 'darwin': {
       const m = await import('./platforms/macos.js');
       return { probe: m.probeMacOS, listWindows: m.listMacOSWindows, inspectWindow: m.inspectMacOSWindow,
+        activateApplication: m.activateMacOSApplication,
         captureWindow: m.captureMacOSWindow, input: m.macOSInput, keyboard: m.macOSKeyboard, inspect: m.inspectMacOS, focus: m.focusMacOS,
         voiceHelper: m.macOSVoiceHelper, feedbackHelper: m.macOSFeedbackHelper,
         recordHotkey: m.recordMacOSHotkey, readText: m.readMacOSText,

@@ -22,13 +22,21 @@ hotkey/microphone test and credential-storage commands have been removed.
 
 - `--inspect` returns the active window; `--inspect-selection` also reads selected
   text and rejects secure fields.
-- `--list-windows` discovers accessible windows without raising them. Results are
-  bounded and include warnings about inaccessible or ambiguous sources.
-  Apps can return an empty window list even while running; unenumerated windows
-  cannot currently be targeted safely with these window IDs. A successful empty
-  query adds the app name to `applicationsWithoutWindows` (up to 128 unique names
-  of 256 UTF-16 units). These are discovery clues, never synthetic window handles;
-  failed queries do not establish an empty inventory.
+- `--list-windows` discovers up to 128 windows and 128 running applications without
+  raising them. Application records carry process identity, name, bundle ID when
+  available, hidden/frontmost state, linked window IDs, and window-discovery status:
+  `available`, `empty`, `inaccessible` or `incomplete`. Empty AX lists do not prove
+  inactivity. Focused and main windows supplement AXWindows and are deduplicated
+  by native identity; colliding title/identifier tokens remain ambiguous. A
+  three-second discovery deadline reports omissions. Without Accessibility access,
+  running applications remain discoverable with inaccessible window status.
+  Focus/input resolution and capture-source validation reject known count/deadline
+  truncation because an unseen window could share a target token; focused/main
+  fallback remains available when AXWindows itself is empty or inaccessible.
+- `--activate-application <id>` activates an already-discovered running process
+  and verifies its foreground identity. This works without a listed window and
+  never launches an executable, opens a document or sends keyboard input. The
+  returned application metadata is fresh; discover current windows after activation.
 - `--focus <id>` raises a matched window and verifies focus.
 - `--context` reads current window, selection and pointer context without changing
   focus or using the clipboard.
@@ -37,6 +45,11 @@ Window IDs combine PID, validated kernel process start time and a hash of title/
 identifier. This supports directly launched apps that lack a LaunchServices launch
 date and rejects PID reuse. IDs are temporary: title changes and app restarts
 invalidate them; identical candidates remain ambiguous.
+Application IDs combine PID and the same process start identity, so recycled PIDs
+and restarted applications cannot reuse an activation target. Activation verifies
+foreground state for up to 1.5 seconds and reads bounded metadata for up to one
+additional second; failed verification reports `focus-unverified` without claiming
+that no focus change occurred.
 
 `--inspect-window <id>` reads a bounded AX tree without focusing the window. It
 rechecks source identity before and after. Limits are 128 elements, 16,384 UTF-16
@@ -122,8 +135,9 @@ does not establish focus when an accessory interface owns the keyboard.
 typed action and that focus fingerprint over stdin. It supports named keys with
 Cmd/Ctrl/Alt/Shift and literal single-line Unicode typing. Keys use physical US
 positions; text does not. The keyboard fingerprint includes process launch identity,
-focused control labels, identifiers, owning-window bounds and HID counters. A
-window title is used only when no window identifier is available. Editable controls
+focused control labels, identifiers, owning-window bounds and HID counters. The
+owning-window target token binds its discovered identity even when an AX identifier
+is available. Editable controls
 also bind their value, selection and control bounds. Noneditable text areas and web
 areas bind their index path within the owning window and use the window's bounds,
 so same-labeled panes stay distinct while output and scrollback can grow. Finding
@@ -139,6 +153,11 @@ a writable AX value or selected-text attribute, excluding terminal output.
 Literal typing inserts at the current selection, unlike AX value replacement.
 Escape, Ctrl+C, clipboard paste shortcuts and control characters in typed text are
 rejected. Key events go through the HID event stream so system shortcuts work.
+Keyboard evidence exposes the owning process-start `applicationId` and, when
+available, its native `windowId`, including system interfaces without an enumerated
+window. The application name is a label, not its identity. The owning-window token
+is also included in the fingerprint, so retitling or replacing a target while a
+permission check is pending rejects dispatch even when its AX identifier is stable.
 Shortcuts include explicit modifier presses and releases around the main key;
 each complete shortcut or text chunk defers termination until all keys are released.
 Longer typing checks cancellation and focus between chunks. After posting any
@@ -208,20 +227,38 @@ and the capture deadline release microphone and hotkeys. Pointer samples accompa
 recording and stop with it. No provider key or network access enters this process.
 
 `--feedback` accepts bounded JSONL `show`, `hide` and `shutdown` messages for a
-nonactivating panel. `show` includes `title`, `message`, `detail` and a required
+nonactivating panel. `show` includes `title`, `message`, `detail`, a required
+`expression` (`neutral`, `listening`, `thinking`, `focused`, `happy`, `concerned`) and a required
 boolean `persistent`. Messages allow 32,768 UTF-16 units inside a 256 KiB JSONL
 command. TextKit wraps the complete message in a scrollable reading area; the
 panel grows to a bounded portion of the pointer's display. Completed responses
 are persistent and accept scrolling and close-button clicks without taking focus.
 Transient progress remains click-through, with a native deadline for stale content.
+Persistent responses observe unmodified Escape locally and in other apps, without
+consuming the key or competing with the voice helper's cancellation shortcut.
+Observers are removed on hide, new progress, EOF and shutdown; stale callbacks
+cannot dismiss a newer response. Global key observation requires Accessibility
+access. If unavailable, the close button remains usable.
 The panel clears text when hidden and closes on EOF, shutdown or signals. It emits
 only `ready`. Full responses also remain in the terminal.
+The monochrome ASCII portrait occupies the header's right side on a white panel
+with system typography, leaving the answer width intact. Small panels omit it.
+Blinking and outward-moving thought bubbles respect Reduce Motion;
+the finishing sparkle stops after a short sequence. Dismissal and hiding stop
+animation timers. After native tests, `native/macos/bin/feedback-tests --preview-dir
+/tmp/opensaysme-overlay-preview` renders the real AppKit states to PNGs without
+showing a panel or capturing the desktop.
+For an optional observer check, run `native/macos/bin/feedback-tests
+--escape-observer-smoke`. It registers real observers using existing Accessibility
+access and delivers Escape only inside the test app, without posting keyboard
+input to the desktop. Physical Escape delivery from another app is not exercised.
 Discovery, targeting and display capture exclude windows belonging to the helper's
 exact executable identity, rather than filtering by panel title.
 
 ## Validation
 
-The synthetic native suites cover process identity, AX traversal/protected fields,
+The synthetic native suites cover process identity, application target parsing,
+focused/main-window fallback and deduplication, AX traversal/protected fields,
 source matching and geometry, target fingerprints, literal text constraints,
 capture initialization/main-thread behavior, activation shortcut validation,
 audio timing/encoding and panel protocol/layout, including offscreen text wrapping,

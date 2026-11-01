@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createInputTools } from '../src/tools/input.js';
+import { createInputTools, type InputSession } from '../src/tools/input.js';
 import { createDesktopTools } from '../src/tools/desktop.js';
 import { ToolRegistry } from '../src/tools/registry.js';
 import { permits, type ActionAuthorizer, type PermissionDecision } from '../src/tools/permissions.js';
@@ -36,6 +36,65 @@ function fixture(request = 'Fill this form', decision: Partial<PermissionDecisio
 afterEach(() => vi.useRealTimers());
 
 describe('request-scoped desktop input', () => {
+  it('returns unresolved literal input locally before the guard and permits a resolved retry', async () => {
+    const f = fixture();
+    const session: InputSession = { stopped: false, revision: 0 };
+    const checkTarget = vi.fn(async (): Promise<string | undefined> => 'Resolve the destination first.');
+    const inputs = createInputTools(f.adapter, { ...f.scope, reviewTarget: () => true, checkTarget }, session);
+    const host = new ToolRegistry(inputs.definitions);
+    const args = { observationId: inputs.observe(frame), x: 10, y: 10, text: 'Morgan' };
+    expect(value(await host.call('type_text', args, signal())).code).toBe('target-unresolved');
+    expect(f.authorize).not.toHaveBeenCalled();
+    expect(f.adapter.execute).not.toHaveBeenCalled();
+    expect(session.stopped).toBe(false);
+    checkTarget.mockResolvedValue(undefined);
+    expect(value(await host.call('type_text', args, signal()))).toMatchObject({ status: 'verified', permission: { mode: 'independent-check' } });
+    expect(f.authorize).toHaveBeenCalledOnce();
+    expect(f.adapter.execute).toHaveBeenCalledOnce();
+    host.close(); inputs.close(); f.host.close(); f.inputs.close();
+  });
+
+  it('stops before overflowing retained action evidence without discarding earlier outcomes', async () => {
+    const f = fixture('Fill these fields.');
+    f.adapter.inspect.mockResolvedValue({ ...evidence, value: 'x'.repeat(65_536) });
+    const session: InputSession = { stopped: false, revision: 0 };
+    const inputs = createInputTools(f.adapter, f.scope, session);
+    const host = new ToolRegistry(inputs.definitions);
+    let result;
+    for (let i = 0; i < 24; i++) {
+      result = value(await host.call('type_text', { observationId: inputs.observe(frame), x: 10, y: 10, text: `Field ${i}` }, signal()));
+      if (result.code === 'action-limit') break;
+    }
+    expect(result.code).toBe('action-limit');
+    expect(session).toMatchObject({ stopped: true, stopReason: 'limit' });
+    expect(session.progress!.actions.length).toBeLessThan(24);
+    expect(f.adapter.execute).toHaveBeenCalledTimes(session.progress!.actions.length);
+    expect(session.progress!.actions[0]).toMatchObject({ action: { kind: 'type_text', text: 'Field 0' }, status: 'verified' });
+    expect(Buffer.byteLength(JSON.stringify(session.progress))).toBeLessThanOrEqual(512 * 1024);
+    host.close(); inputs.close(); f.host.close(); f.inputs.close();
+  });
+
+  it('independently reviews the first edit at a selected destination and marks it reviewed only after dispatch succeeds', async () => {
+    const f = fixture();
+    let reviewed = false;
+    const targetReviewed = vi.fn(() => { reviewed = true; });
+    const resolution = { candidates: [{ status: 'selected', reason: 'Actor interpretation' }], evidence: ['Actual captured evidence'] };
+    const inputs = createInputTools(f.adapter, { ...f.scope, resolution: () => resolution,
+      reviewTarget: () => !reviewed, targetReviewed });
+    const host = new ToolRegistry(inputs.definitions);
+    const type = () => host.call('type_text', { observationId: inputs.observe(frame), x: 10, y: 10, text: 'Morgan' }, signal());
+    f.adapter.execute.mockResolvedValueOnce({ status: 'not-issued', reason: 'focus-changed' });
+    expect(value(await type())).toMatchObject({ status: 'not-issued', permission: { mode: 'independent-check' } });
+    expect(targetReviewed).not.toHaveBeenCalled();
+    expect(value(await type())).toMatchObject({ status: 'verified', permission: { mode: 'independent-check' } });
+    expect(f.authorize).toHaveBeenCalledTimes(2);
+    expect(f.authorize.mock.lastCall?.[0]).toMatchObject({ resolution, action: { kind: 'type_text', text: 'Morgan' } });
+    expect(targetReviewed).toHaveBeenCalledOnce();
+    expect(value(await type())).toMatchObject({ status: 'verified', permission: { mode: 'actor-request' } });
+    expect(f.authorize).toHaveBeenCalledTimes(2);
+    host.close(); inputs.close(); f.host.close(); f.inputs.close();
+  });
+
   it.each(['not-issued', 'uncertain'] as const)('returns the native reason for a %s click without changing retry boundaries', async (status) => {
     const f = fixture();
     f.adapter.execute.mockResolvedValue({ status, reason: 'focus-changed' });
@@ -347,7 +406,7 @@ describe('request-scoped desktop input', () => {
 
   it('binds action evidence to a real capture and invalidates it on focus', async () => {
     const f = fixture();
-    const desktop = { input: f.adapter, captureWindow: vi.fn(async () => frame), listWindows: vi.fn(async () => ({ windows: [frame.window], warnings: [] })),
+    const desktop = { input: f.adapter, captureWindow: vi.fn(async () => frame), listWindows: vi.fn(async () => ({ windows: [frame.window], warnings: [], applications: [] })),
       inspect: vi.fn(async () => ({ platform: 'darwin', window: frame.window })), focus: vi.fn(async () => {}), captureContext: vi.fn(), captureFrame: vi.fn() };
     const host = createDesktopTools(desktop, f.scope);
     await host.call('list_windows', {}, signal());
@@ -361,7 +420,7 @@ describe('request-scoped desktop input', () => {
   it('resolves input feedback only from a fresh unconsumed native observation', async () => {
     vi.useFakeTimers();
     const f = fixture();
-    const desktop = { input: f.adapter, captureWindow: vi.fn(async () => frame), listWindows: vi.fn(async () => ({ windows: [frame.window], warnings: [] })),
+    const desktop = { input: f.adapter, captureWindow: vi.fn(async () => frame), listWindows: vi.fn(async () => ({ windows: [frame.window], warnings: [], applications: [] })),
       inspect: vi.fn(), focus: vi.fn(), captureContext: vi.fn(), captureFrame: vi.fn() };
     const host = createDesktopTools(desktop, f.scope);
     await host.call('list_windows', {}, signal());
@@ -375,6 +434,8 @@ describe('request-scoped desktop input', () => {
     vi.advanceTimersByTime(30_001);
     expect(host.feedbackTarget!('click', f.args)).toBeUndefined();
     const capture = value(await host.call('capture_window', { windowId: 'window-1' }, signal()));
+    await host.call('resolve_target', { requestQuote: f.scope.request, source: null, question: null,
+      candidates: [{ targetId: 'window-1', status: 'selected', evidenceIds: [capture.evidenceId], reason: 'The requested form is visible.' }] }, signal());
     const current = { ...f.args, observationId: capture.observationId };
     expect(host.feedbackTarget!('click', current)?.application).toBe('Browser');
     await host.call('click', current, signal());

@@ -3,8 +3,11 @@ import { z } from 'zod';
 import type { VoiceHelperSpec } from './voice-types.js';
 
 const bounded = (limit: number) => z.string().max(limit).refine((value) => value.length <= limit);
+export const feedbackExpressionSchema = z.enum(['neutral', 'listening', 'thinking', 'focused', 'happy', 'concerned']);
+export type FeedbackExpression = z.infer<typeof feedbackExpressionSchema>;
 export const feedbackCommandSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('show'), title: bounded(160).min(1), message: bounded(32_768), detail: bounded(512), persistent: z.boolean() }).strict(),
+  z.object({ type: z.literal('show'), title: bounded(160).min(1), message: bounded(32_768), detail: bounded(512),
+    persistent: z.boolean(), expression: feedbackExpressionSchema }).strict(),
   z.object({ type: z.literal('hide') }).strict(),
   z.object({ type: z.literal('shutdown') }).strict(),
 ]);

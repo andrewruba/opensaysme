@@ -1,7 +1,7 @@
 # OpenSaysMe — Human interface for AI agents
 
 [![CI](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml/badge.svg?branch=main&event=push)](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml)
-[![Version 0.4.1](https://img.shields.io/badge/version-0.4.1-blue?style=flat-square)](package.json)
+[![Version 0.5.0](https://img.shields.io/badge/version-0.5.0-blue?style=flat-square)](package.json)
 [![Node.js 26.13.0 or newer](https://img.shields.io/badge/node-%3E%3D26.13.0-339933?style=flat-square)](package.json)
 [![macOS 14 or newer](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square)](#run-it)
 [![MIT license](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
@@ -14,7 +14,9 @@ using and can pass your request to the agent you're working with.
 
 Tap a hotkey and talk. Point at something on screen or select text to show what
 you mean. OpenSaysMe can read what's there, switch apps, click and type. You can
-make short follow-up requests without repeating the context.
+make short follow-up requests without repeating the context. It can discover
+running apps even when their windows are not listed, inspect candidate destinations,
+and keep a clarification tied to the work you requested.
 
 For example, while it's listening, point out a broken page in your browser,
 select the error in your terminal, and highlight the expected behavior in an issue.
@@ -27,7 +29,9 @@ coding agent, saving you from copying each piece between apps.
 
 Your request sets the boundary: **“fill this form” excludes submission;
 “fill this form and submit it” includes it.** Screen content supplies evidence,
-not authority.
+not authority. You can request several actions together; after sending or submitting,
+OpenSaysMe verifies the result before continuing to the next requested step. If
+the outcome is uncertain, it stops without repeating the action.
 
 ## Run it
 
@@ -72,16 +76,20 @@ new location.
 ## Using it
 
 Keep `osm` running and switch to your work. Show the relevant content while you
-speak. A small overlay shows progress and answers without taking focus.
+speak. A simple white overlay shows progress and answers without taking focus. Its
+ASCII face listens, thinks and concentrates along with the agent, then smiles when a
+response is ready. Recoverable desktop warnings stay in the terminal; the overlay
+only interrupts progress for notices that need attention.
 
 | Shortcut | Action |
 | --- | --- |
 | **Ctrl+Shift+Space** (default) | Start recording. Wait for “Listening…” before speaking; tap again to finish. |
-| **Escape** | Cancel the current request and clear follow-up context. |
+| **Escape** | Dismiss a completed response; during a request, cancel and clear follow-up context. |
 | **Ctrl+C** | Quit. |
 
-While idle, press Escape in the CLI terminal. Cancelling stops further actions;
-it cannot undo anything already done.
+After a task, Escape closes its overlay without switching apps. The key still
+reaches the focused app; idle Escape in the CLI terminal also clears follow-up
+context. Cancelling stops further actions; it cannot undo anything already done.
 
 ### Change the shortcut
 
@@ -135,6 +143,17 @@ low reasoning effort; speech uses `gpt-live-transcribe`.
 If you change the reasoning model, choose one that supports images and tool calls.
 Speech currently requires `gpt-live-transcribe`, and sharing screen context is
 required.
+
+## Development
+
+Use the Node version in `.nvmrc`, then `npm ci`. Run the CLI from source with
+`npm run dev -- --help`. `npm run check` checks versions, types, lint, tests and
+the TypeScript build; individual commands are `npm run typecheck`, `npm run lint`,
+`npm test` and `npm run build`.
+
+For native changes, also run `sh native/macos/test.sh` and `npm run build:native`.
+Restart a running `osm` process after rebuilding. See [agent tools](docs/tools.md)
+for discovery, destination resolution and execution behavior.
 
 ## Troubleshooting
 

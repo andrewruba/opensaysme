@@ -2,27 +2,34 @@ import Darwin
 import CoreGraphics
 import Foundation
 
+enum FeedbackExpression: String, CaseIterable {
+    case neutral, listening, thinking, focused, happy, concerned
+}
+
 struct FeedbackCommand {
     let type: String
     let title: String
     let message: String
     let detail: String
     let persistent: Bool
+    let expression: FeedbackExpression
 
     static func parse(_ data: Data) -> FeedbackCommand? {
         guard data.count <= 262_144,
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = object["type"] as? String else { return nil }
         if ["hide", "shutdown"].contains(type), Set(object.keys) == ["type"] {
-            return FeedbackCommand(type: type, title: "", message: "", detail: "", persistent: false)
+            return FeedbackCommand(type: type, title: "", message: "", detail: "", persistent: false, expression: .neutral)
         }
-        guard type == "show", Set(object.keys) == ["type", "title", "message", "detail", "persistent"],
+        guard type == "show", Set(object.keys) == ["type", "title", "message", "detail", "persistent", "expression"],
               let title = object["title"] as? String, !title.isEmpty, title.utf16.count <= 160,
               let message = object["message"] as? String, message.utf16.count <= 32_768,
               let detail = object["detail"] as? String, detail.utf16.count <= 512,
+              let rawExpression = object["expression"] as? String, let expression = FeedbackExpression(rawValue: rawExpression),
               let persistent = object["persistent"] as? NSNumber,
               CFGetTypeID(persistent) == CFBooleanGetTypeID() else { return nil }
-        return FeedbackCommand(type: type, title: title, message: message, detail: detail, persistent: persistent.boolValue)
+        return FeedbackCommand(type: type, title: title, message: message, detail: detail,
+                               persistent: persistent.boolValue, expression: expression)
     }
 }
 

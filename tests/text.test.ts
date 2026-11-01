@@ -31,18 +31,25 @@ function fixture(request = 'Copy this session into the agent input, leaving it u
   };
   const adapter = {
     readText, input,
-    listWindows: vi.fn<DesktopAdapter['listWindows']>(async () => ({ windows: [frame.window], warnings: [] })),
+    listWindows: vi.fn<DesktopAdapter['listWindows']>(async () => ({ windows: [frame.window], applications: [], warnings: [] })),
     captureWindow: vi.fn<NonNullable<DesktopAdapter['captureWindow']>>(async () => structuredClone(frame)),
     inspect: vi.fn<DesktopAdapter['inspect']>(async () => ({ platform: 'test', window: frame.window })),
     focus: vi.fn<DesktopAdapter['focus']>(async () => {}),
     captureContext: vi.fn<DesktopAdapter['captureContext']>(), captureFrame: vi.fn<DesktopAdapter['captureFrame']>(),
   };
-  const authorize = vi.fn(async () => { throw new Error('Literal text transfer must not call a guard.'); });
+  const authorize = vi.fn(async () => ({ decision: 'allow' as const, effect: 'edit' as const, requestQuote: request,
+    reason: 'The first content change targets the requested destination.' }));
   const host = createDesktopTools(adapter, { request, authorize });
   const call = (name: string, args: Record<string, unknown> = {}) => host.call(name, args, signal());
   const destination = async () => {
     await call('list_windows');
-    return value(await call('capture_window', { windowId: 'window-1' })).observationId as string;
+    const observed = value(await call('capture_window', { windowId: 'window-1' }));
+    if (!request.trim()) return observed.observationId as string;
+    const resolved = await call('resolve_target', { requestQuote: request, source: null,
+      candidates: [{ targetId: 'window-1', status: 'selected', evidenceIds: [observed.evidenceId],
+        reason: 'The fresh project input is the requested destination.' }], question: null });
+    expect(resolved.isError).not.toBe(true);
+    return observed.observationId as string;
   };
   return { host, adapter, input, readText, authorize, call, destination };
 }
@@ -161,7 +168,7 @@ describe('exact text transfer', () => {
     expect(f.input.execute.mock.calls[0]?.[1]).toEqual({ kind: 'type_text', text: source.text }); f.host.close();
   });
 
-  it('copies a large selected session exactly through native input without a model guard or text echo', async () => {
+  it('copies a large selected session exactly after destination review without echoing its contents', async () => {
     const selected = 'current session\r\n\t日本語 👋\n'.repeat(1800);
     const source = capture('earlier session\n' + selected, 200);
     const f = fixture(undefined, source);
@@ -173,7 +180,7 @@ describe('exact text transfer', () => {
     expect(value(result)).toMatchObject({ status: 'verified', effect: 'edit', inputStopped: false });
     expect(f.input.execute).toHaveBeenCalledWith({ windowId: frame.window.id, bounds: frame.bounds, point: { x: 200, y: 150 } },
       { kind: 'type_text', text: selected }, evidence.fingerprint, expect.any(AbortSignal));
-    expect(f.authorize).not.toHaveBeenCalled(); expect(JSON.stringify(result)).not.toContain('current session');
+    expect(f.authorize).toHaveBeenCalledOnce(); expect(JSON.stringify(result)).not.toContain('current session');
     expect(f.host.conversationEvidence!().actions[0]?.action).toEqual({ kind: 'type_text', text: selected });
     f.host.close();
   });
