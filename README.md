@@ -22,8 +22,15 @@ and keep a clarification tied to the work you requested.
 OpenSaysMe adapts its approach to development and general tasks. A selected command,
 build failure, configuration, code question or API response can guide development
 investigation. It uses available desktop tools to gather relevant context, keeps
-the tickets and selections you showed, and answers, acts or hands off according to
-your request.
+the tickets and selections you showed, and follows your requested outcome.
+
+For substantive work, such as fixing a build, researching options or creating a
+presentation, OpenSaysMe defaults to gathering enough context for a useful handoff
+to an appropriate agent. It handles simple explanations, short edits and desktop
+actions directly. Your explicit instructions take precedence. It inspects likely
+destinations and asks when important ambiguity remains. A verified handoff means
+the agent received the request; it does not establish that the underlying work is
+finished.
 
 For example, while it's listening, point out a broken page in your browser,
 select the error in your terminal, and highlight the expected behavior in an issue.

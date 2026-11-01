@@ -31,7 +31,7 @@ live evidence handles or reusable approval. Current speech overrides earlier
 interpretations. Transcribed names can be matched using pronunciation, spelling
 and task context while preserving verbatim request and permission quotes.
 
-## Development and general strategies
+## Strategy and execution
 
 The model chooses a `developer` or `general` strategy from the spoken request,
 selections, visual attention, relevant conversation and tool evidence. Development
@@ -45,8 +45,25 @@ The strategy guides which unanswered question to investigate. Explaining a selec
 command may need no tools; investigating its failure may require the relevant
 terminal output and project context. A general task can also need desktop
 investigation. Both strategies use the same offered tools and stop gathering when
-the requested answer or action is supported. There is no required checklist,
-browser-first sequence or automatic handoff to a coding agent.
+the next requested answer or action is supported. There is no required checklist
+or browser-first sequence.
+
+Separately, the model chooses `direct` or `delegate` execution. Substantive work
+defaults to delegation: open-ended investigation, code changes, research and
+artifact creation should go to an appropriate software agent. Simple explanations,
+short transformations, navigation and other small, well-defined desktop actions
+are handled directly. The user's explicit instructions override these defaults.
+Either development or general work can use either execution approach; there is no
+fixed list of apps or automatic preference for a coding agent.
+
+For delegation, gather enough evidence to make the handoff useful without solving
+the whole task first. Resolve a suitable destination from current content and
+relevant history, preserving the source material, requested outcome and
+restrictions. If no suitable destination is established, inspect plausible
+candidates and ask about material remaining ambiguity. An unavailable destination
+does not silently turn an open-ended request into work for OpenSaysMe to complete
+itself. Both execution choices remain revisable as evidence or user instructions
+change.
 
 Original activation context stays separate from later tool navigation. Explicitly
 shown tickets, selections and constraints remain relevant as the model adds
@@ -59,15 +76,16 @@ claim to have performed those checks from window names alone.
 
 Routing shares the first reasoning response with its next tool call or direct
 answer, without a separate classifier request. At the provider boundary, each tool
-call has the envelope `{ strategy: { kind, goal, question }, arguments }`, where
-`kind` is `developer` or `general`, `goal` is the interpreted outcome, and `question`
-is the next useful investigative question or `null`. The host receives only the
-original tool arguments after strict validation. Direct provider answers use
+call has the envelope `{ strategy: { kind, execution, goal, question }, arguments }`,
+where `kind` is `developer` or `general`, `execution` is `direct` or `delegate`,
+`goal` is the interpreted outcome, and `question` is the next useful investigative
+question or `null`. All four strategy fields are required. The host receives only
+the original tool arguments after strict validation. Final provider answers use
 `{ strategy, response }`; only the natural-language `response` is displayed.
 Malformed routing data fails validation before a tool can execute.
 
-The validated strategy kind selects static guidance for the next reasoning
-iteration. Goals and questions are bounded model interpretations, kept as
+The validated strategy and execution choices select static guidance for the next
+reasoning iteration. Goals and questions are bounded model interpretations, kept as
 untrusted data rather than instructions or permission. A question records what
 the model needs to learn; it does not require asking the user when tools can
 resolve it. Routing never changes the original request, available capabilities,
@@ -75,10 +93,18 @@ destination checks or action authorization. Selecting a command does not authori
 running it, and choosing `developer` cannot override an instruction to leave an
 agent request unsent.
 
-The `strategy-selected` diagnostic records only the kind and whether it changed.
-Opt-in debug request captures include the fuller provider format. Regression tests
-use scripted provider choices to verify routing, evidence preservation and tool
-dispatch; they do not establish semantic routing accuracy on arbitrary requests.
+The `strategy-selected` diagnostic records the kind, execution choice and whether
+either changed. Opt-in debug request captures include the fuller provider format.
+Regression tests use scripted provider choices to verify routing, evidence
+preservation and tool dispatch; they do not establish semantic routing accuracy on
+arbitrary requests.
+
+The actor is instructed to distinguish prepared input, a verified handoff and
+completed work; these descriptions remain model judgments.
+Preparing text does not prove it was sent, and an issued click or key does not
+prove the receiving agent got it. Verify receipt before reporting delegation;
+receipt alone does not prove the requested fix, research or artifact is complete.
+An uncertain handoff remains uncertain and must not be resent automatically.
 
 ## macOS capabilities
 
@@ -192,6 +218,17 @@ it” includes that commitment without a second confirmation when the target,
 information and consequences are clear. Preparing agent input and sending it are
 likewise separate outcomes. Screen text, screenshots and model plans never grant
 authority. Ask only about material ambiguity or needed additional authority.
+
+A substantive outcome request such as “fix this” or “research these options” can
+authorize sending a scoped task to a suitable software agent without requiring
+the word “send.” The actor and independent action checker use the same delegation
+policy. They must establish the destination's relevance and suitability, inspect
+the actual handoff content, and preserve the user's restrictions. “Leave it
+unsent,” preparation-only requests, “do it yourself,” and named destinations still
+apply. Strategy metadata never supplies authority. An outcome request does not
+grant blanket permission to contact people, share unrelated data, deploy, purchase
+or add other consequences beyond that request. Missing destination or content
+evidence calls for inspection; unresolved intent or authority calls for clarification.
 
 The acting model interprets every action against the current request and relevant
 prior user speech. Pointing, scrolling, literal text entry and unmodified

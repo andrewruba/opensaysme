@@ -28,7 +28,7 @@ function history(): AttentionHistory {
 function response(text = 'The indicated number is 42 (frame-1).', status = 'completed'): Response {
   return Response.json({ status, output: [{ type: 'reasoning', summary: [] }, {
     type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text',
-      text: JSON.stringify({ strategy: { kind: 'general', goal: 'Fulfill the current request.', question: null }, response: text }), annotations: [] }],
+      text: JSON.stringify({ strategy: { kind: 'general', execution: 'direct', goal: 'Fulfill the current request.', question: null }, response: text }), annotations: [] }],
   }] });
 }
 function fixture(fetcher = vi.fn<typeof fetch>().mockResolvedValue(response()), model = 'gpt-5.4-mini') {
@@ -390,7 +390,7 @@ function inputToolHost() {
 }
 function callItem(name = 'list_windows', args: unknown = {}, callId = 'call-1') {
   return { type: 'function_call', name, arguments: JSON.stringify({
-    strategy: { kind: 'general', goal: 'Fulfill the current request.', question: null }, arguments: args,
+    strategy: { kind: 'general', execution: 'direct', goal: 'Fulfill the current request.', question: null }, arguments: args,
   }), call_id: callId, status: 'completed' };
 }
 function assistantItem(text: string) {

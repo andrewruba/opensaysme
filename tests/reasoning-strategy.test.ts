@@ -9,7 +9,7 @@ import type { ActionAuthorizer } from '../src/tools/permissions.js';
 import { ToolRegistry } from '../src/tools/registry.js';
 import type { ToolDescriptor, ToolEvent, ToolHost } from '../src/tools/types.js';
 
-const route = (kind: RequestStrategy['kind'], goal: string, question: string | null = null): RequestStrategy => ({ kind, goal, question });
+const route = (kind: RequestStrategy['kind'], goal: string, question: string | null = null): RequestStrategy => ({ kind, execution: 'direct', goal, question });
 const developer = route('developer', 'Explain the selected command.');
 const general = route('general', 'Shorten the selected paragraph without sending it.');
 const result = (...output: unknown[]) => Response.json({ status: 'completed', output });
