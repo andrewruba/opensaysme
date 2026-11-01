@@ -6,9 +6,10 @@
 [![macOS 14 or newer](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square)](#run-it)
 [![MIT license](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
-OpenSaysMe is a command-line tool that lets you give AI agents instructions by
-speaking and showing them what you mean. It gathers context from the apps you're
-using and can pass your request to the agent you're working with.
+OpenSaysMe is a command-line tool that lets you give AI agents tasks by talking and
+pointing at your screen. It gathers the relevant context across apps and can act on
+the desktop or pass the request to your existing agent. Essentially, this is how
+Siri *should* work.
 
 ## What works today
 
