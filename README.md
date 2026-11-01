@@ -1,7 +1,7 @@
 # OpenSaysMe — Give AI agents tasks by talking and pointing
 
 [![CI](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml/badge.svg?branch=main&event=push)](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml)
-[![Version 0.5.0](https://img.shields.io/badge/version-0.5.0-blue?style=flat-square)](package.json)
+[![Version 0.6.0](https://img.shields.io/badge/version-0.6.0-blue?style=flat-square)](package.json)
 [![macOS 14 or newer](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square)](#run-it)
 [![MIT license](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
