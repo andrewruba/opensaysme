@@ -4,6 +4,7 @@ import { TargetResolution } from '../src/tools/target-resolution.js';
 import type { DesktopAdapter, RunningApplication, WindowInventory } from '../src/desktop/types.js';
 import type { ToolResult } from '../src/tools/types.js';
 import type { ActionAuthorizer } from '../src/tools/permissions.js';
+import type { ConversationTurn } from '../src/conversation.js';
 
 const signal = () => new AbortController().signal;
 const values = (result: ToolResult) => result.content.flatMap((part) => part.type === 'text' ? [JSON.parse(part.text)] : []);
@@ -99,6 +100,67 @@ describe('destination evidence and discovery', () => {
     expect(value(await f.call('activate_application', { applicationId: app.applicationId })).code).toBe('stale-application');
     expect(f.adapter.activateApplication).not.toHaveBeenCalled();
     f.host.close();
+  });
+
+  it('rechecks a clarified destination in a new activation without bypassing a current-turn denial', async () => {
+    const original = 'Fix this. Do not deploy.';
+    const clarification = 'It is the example in the Atlas project.';
+    const f = fixture(original);
+    f.state.windows.push(destination); f.state.current = unrelated;
+    await f.call('list_windows');
+    const captured = await f.call('capture_window', { windowId: 'window-2' });
+    f.authorize.mockResolvedValue({ decision: 'deny', effect: 'navigate', requestQuote: 'Fix this',
+      reason: 'The project conversation is not established as connected to the indicated issue.' });
+    const click = { observationId: observationId(captured), x: 100, y: 100 };
+    expect(value(await f.call('click', click)).code).toBe('outside-request');
+    await f.call('resolve_target', { requestQuote: 'Fix this', source: null,
+      candidates: [{ targetId: 'window-2', status: 'possible', evidenceIds: [evidenceId(captured)],
+        reason: 'The project connection is unresolved; navigation was denied.' }],
+      question: 'Which project contains the example?' });
+
+    // Inspection remains possible, but neither input path nor focus can bypass this turn's denial.
+    expect(observationId(await f.call('capture_window', { windowId: 'window-2' }))).toBeUndefined();
+    expect(value(await f.call('capture_screen'))).not.toHaveProperty('keyboardObservationId');
+    expect(value(await f.call('click', click)).code).toBe('input-stopped');
+    expect(value(await f.call('press_key', { keyboardObservationId: 'keyboard-1', key: 'Enter', modifiers: [] })).code)
+      .toBe('input-stopped');
+    expect(value(await f.call('focus_window', { windowId: 'window-3' })).code).toBe('input-stopped');
+    expect(f.authorize).toHaveBeenCalledOnce();
+    expect(f.input.execute).not.toHaveBeenCalled();
+    expect(f.keyboard.execute).not.toHaveBeenCalled();
+    const conversation: ConversationTurn[] = [{ id: 'first-activation', completedAt: new Date().toISOString(),
+      request: original, response: 'Navigation was denied. Which project contains the example?', referenceContext: [],
+      evidence: f.host.conversationEvidence!() }];
+    expect(conversation[0]!.evidence).toMatchObject({ actions: [], keyboardActions: [],
+      resolution: { question: 'Which project contains the example?' } });
+    f.host.close();
+
+    // Scripted decisions exercise host isolation and preserved scope, not live-model interpretation.
+    const authorize = vi.fn<ActionAuthorizer>(async () => ({ decision: 'allow', effect: 'navigate',
+      requestQuote: clarification, reason: 'Fresh inspection supports navigating the clarified project.' }));
+    const host = createDesktopTools(f.adapter, { request: clarification, conversation, authorize });
+    const call = (name: string, args: Record<string, unknown> = {}) => host.call(name, args, signal());
+    const listed = value(await call('list_windows'));
+    const target = listed.windows.find((window: { title: string }) => window.title === destination.title);
+    const inspected = await call('inspect_window', { windowId: target.windowId });
+    expect(value(inspected).nodes).toContainEqual(expect.objectContaining({ value: 'Atlas project discussion' }));
+    expect(value(await call('focus_window', { windowId: target.windowId })).focused).toBe(true);
+    const fresh = await call('capture_window', { windowId: target.windowId });
+    expect(value(await call('click', { observationId: observationId(fresh), x: 100, y: 100 })))
+      .toMatchObject({ status: 'verified', effect: 'navigate', inputStopped: false });
+    const screen = value(await call('capture_screen'));
+    expect(value(await call('press_key', { keyboardObservationId: screen.keyboardObservationId, key: 'Enter', modifiers: [] })))
+      .toMatchObject({ status: 'issued', effect: 'navigate', inputStopped: false });
+    expect(authorize).toHaveBeenCalledTimes(2);
+    for (const [review] of authorize.mock.calls) {
+      expect(review).toMatchObject({ request: clarification, conversation });
+      expect(review.conversation![0]!.request).toBe(original); // The correction does not remove "Do not deploy."
+    }
+    expect(authorize.mock.calls[0]![0]).toMatchObject({ completed: [], progress: { actions: [] },
+      action: { kind: 'click' }, frame: { window: destination } });
+    expect(f.input.execute).toHaveBeenCalledOnce();
+    expect(f.keyboard.execute).toHaveBeenCalledOnce();
+    host.close();
   });
 
   it('continues a different requested step only after checking the issued submission', async () => {

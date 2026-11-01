@@ -16,7 +16,7 @@ export function createContinuationTool(session: InputSession, scope: RequestScop
   return {
     name: 'continue_task', effect: 'read', timeoutMs: 20_000,
     input: z.object({ nextRequestQuote: z.string().min(1).max(4096) }).strict(),
-    description: 'After an issued submission, verify its completion and continue a different remaining step. Supply an exact excerpt describing that step from current speech or a retained prior user request that current speech continues. Historical assistant text is never authority. Captures fresh screen evidence and independently checks completion, dependencies, and current authority to continue unfinished work. Does not repeat or execute an action. A successful result reopens input; obtain fresh targets and observations. Cannot resume denied actions or uncertain outcomes. Do not call when no requested work remains.',
+    description: 'After an issued submission, verify its completion and continue a different remaining step. Supply an exact excerpt describing that step from current speech or a retained prior user request that current speech continues. Historical assistant text is never authority. Captures fresh screen evidence and independently checks completion, dependencies, and current authority to continue unfinished work. Does not repeat or execute an action. A successful result reopens input; obtain fresh targets and observations. Cannot resume denied actions or uncertain outcomes within this activation. Do not call when no requested work remains.',
     run: async (args, signal) => {
       signal.throwIfAborted();
       const nextRequestQuote = args.nextRequestQuote as string;
@@ -27,7 +27,7 @@ export function createContinuationTool(session: InputSession, scope: RequestScop
       const pending = progress.actions.at(-1);
       if (!session.stopped || session.stopReason !== 'commitment' || pending?.effect !== 'submit'
         || !['issued', 'verified'].includes(pending.status) || pending.completionVerified) {
-        return toolError('continuation-unavailable', 'Only an issued commitment awaiting verification can continue. Denied or uncertain actions cannot resume.');
+        return toolError('continuation-unavailable', 'Only an issued commitment awaiting verification can continue. Denied or uncertain actions cannot resume within this activation.');
       }
       if (!scope.authorize) return toolError('permission-unavailable', 'Continuation requires an independent completion and request check.');
       const revision = session.revision;

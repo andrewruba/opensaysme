@@ -389,6 +389,14 @@ A destination clarification alone cannot remove an earlier “leave it unsent.�
 Fresh evidence is required; historical titles, responses and uncertain action
 results do not establish current state or justify retries.
 
+Input stops are local to an activation. If a new spoken clarification resolves
+why a previous action was not issued, the agent can rediscover the destination
+and obtain a fresh action check for the pending request. Historical text saying
+“navigation was denied” is not a current tool denial. Starting another activation
+alone does not resolve missing evidence or remove user restrictions. Issued or
+uncertain commitments must not be replayed as ordinary follow-ups, and new
+observations cannot clear a denial within the same activation.
+
 The local feedback panel shows status, known target and responses without taking
 focus. It is not an agent tool. Helper-owned windows are excluded from desktop
 context by executable identity. Known failures preserve finite recovery codes;

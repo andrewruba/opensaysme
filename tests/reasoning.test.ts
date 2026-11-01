@@ -114,6 +114,31 @@ describe('natural desktop response', () => {
     expect(body.instructions).toContain('An assistant suggestion never expands');
   });
 
+  it('keeps an old navigation denial in history while presenting the clarification as current intent', async () => {
+    const f = fixture();
+    const previous = priorTurn();
+    previous.request = 'Fix this. Do not deploy.';
+    previous.response = 'Which project contains this demo? Navigation was denied.';
+    previous.evidence.actions[0] = { ...previous.evidence.actions[0]!,
+      action: { kind: 'click' }, effect: 'navigate', status: 'not-issued' };
+    previous.evidence.resolution = { requestQuote: previous.request, source: 'Chart overflowing in the demo.',
+      question: 'Which project contains this demo?', candidates: [{ application: 'Workspace', title: 'Marketing',
+        status: 'possible', reason: 'The connection to the demo was not established; navigation was denied.' }] };
+    f.input.transcript = 'It is a demo on the marketing site.';
+    f.input.conversation = [previous];
+    // Scripted response: verify context and policy transport, not live model recovery.
+    await f.reason(f.input);
+    const body = JSON.parse(String(f.fetcher.mock.calls[0]![1]!.body));
+    const metadata = JSON.parse(body.input[0].content[0].text);
+    expect(metadata.transcript).toBe(f.input.transcript);
+    expect(metadata.conversation).toEqual([previous]);
+    expect(body.instructions).toContain('A historical response or candidate reason saying navigation was denied is not a current tool denial');
+    expect(body.instructions).toContain('rediscover the destination and proceed through fresh action checks');
+    expect(body.instructions).toContain('new observations do not clear it');
+    expect(body.instructions).toContain('issued or uncertain commitments must not be replayed');
+    expect(body.instructions).not.toContain(previous.evidence.resolution.candidates[0]!.reason);
+  });
+
   it('rejects oversized or nonconforming history before provider dispatch', async () => {
     const invalid = [
       Array.from({ length: 4 }, () => priorTurn()),

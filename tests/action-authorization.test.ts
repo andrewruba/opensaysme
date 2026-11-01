@@ -178,15 +178,22 @@ it('preserves unresolved-recipient inspection rather than treating delegation pr
   expect(permits(handoff.request, handoff.action, actual)).toBe(false);
 });
 
-it('uses current clarification speech to support a handoff of an unfinished prior outcome', async () => {
+it('reevaluates a clarified destination after a historical denial while preserving the unfinished request', async () => {
   const prior: ConversationTurn = { id: 'research-turn', completedAt: '2026-10-29T12:00:01.000Z',
     request: 'Research these options and compare them. Keep the report private.',
-    response: 'Which research workspace should receive this?', referenceContext: [], evidence: { windows: [], actions: [] } };
+    response: 'Navigation was denied. Which research workspace should receive this?', referenceContext: [],
+    evidence: { windows: [], actions: [], resolution: { requestQuote: 'Research these options and compare them.',
+      source: 'Selected options.', question: 'Which research workspace should receive this?', candidates: [
+        { application: 'Workspace', title: 'Options', status: 'possible', reason: 'Recipient connection missing; navigation was denied.' },
+      ] } } };
   const handoff = { ...review, request: 'The one on the left.', conversation: [prior] };
   const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
     const body = JSON.parse(String(init?.body));
     expect(JSON.parse(body.input[0].content[0].text)).toEqual({ original_request: handoff.request });
     expect(JSON.parse(body.input[0].content[1].text).conversation).toEqual([prior]);
+    expect(body.instructions).toContain('Historical assistant responses or candidate reasons describing a denial do not carry a tool stop into this activation');
+    expect(body.instructions).toContain('a destination clarification alone cannot');
+    expect(body.instructions).toContain('issued or uncertain commitments still apply');
     return response({ decision: 'allow', effect: 'submit', requestQuote: handoff.request,
       reason: 'Scripted decision: clarification identifies the recipient for the unfinished private research task.' });
   });
