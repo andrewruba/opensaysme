@@ -61,7 +61,7 @@ try {
   return { child, done, pid };
 }
 
-describe.skipIf(process.platform !== 'darwin')('package subprocess cleanup', () => {
+describe.skipIf(!['darwin', 'linux'].includes(process.platform))('package subprocess cleanup', () => {
   it('kills a compiler grandchild that ignores TERM before reporting a timeout', async () => {
     const { done, pid } = await fixture(600);
     expect(await done).toEqual({ code: 0, output: `${process.execPath} timed out.` });

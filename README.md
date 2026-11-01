@@ -52,9 +52,8 @@ Requires **macOS 14+** and an **OpenAI API key**.
 
 ### Install from package
 
-Package downloads will be listed under [Releases](https://github.com/andrewruba/opensaysme/releases).
-Open the `.pkg` for your Mac and follow the installer.
-The runtime is included; Node and Xcode are not required.
+Download the `.pkg` for your Mac from [Releases](https://github.com/andrewruba/opensaysme/releases)
+and follow the installer. The runtime is included; Node and Xcode are not required.
 
 ### Install from source
 
