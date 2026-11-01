@@ -31,6 +31,55 @@ live evidence handles or reusable approval. Current speech overrides earlier
 interpretations. Transcribed names can be matched using pronunciation, spelling
 and task context while preserving verbatim request and permission quotes.
 
+## Development and general strategies
+
+The model chooses a `developer` or `general` strategy from the spoken request,
+selections, visual attention, relevant conversation and tool evidence. Development
+work includes terminal commands, code questions, builds, tests, configuration,
+APIs, performance and software behavior. An application's name alone does not
+determine the strategy. The model can revise its choice as new evidence arrives;
+strategy state resets on each activation, while relevant prior speech remains
+available through the normal conversation context.
+
+The strategy guides which unanswered question to investigate. Explaining a selected
+command may need no tools; investigating its failure may require the relevant
+terminal output and project context. A general task can also need desktop
+investigation. Both strategies use the same offered tools and stop gathering when
+the requested answer or action is supported. There is no required checklist,
+browser-first sequence or automatic handoff to a coding agent.
+
+Original activation context stays separate from later tool navigation. Explicitly
+shown tickets, selections and constraints remain relevant as the model adds
+evidence. Source material, the possible project and the eventual agent destination
+remain distinct. Observed facts and inferred relationships must be distinguished;
+missing or inaccessible context stays uncertain. Existing tools can read relevant
+windows, screenshots and terminal text. This version adds no structured browser
+console/network access, local listener/workspace probe or shell tool. It must not
+claim to have performed those checks from window names alone.
+
+Routing shares the first reasoning response with its next tool call or direct
+answer, without a separate classifier request. At the provider boundary, each tool
+call has the envelope `{ strategy: { kind, goal, question }, arguments }`, where
+`kind` is `developer` or `general`, `goal` is the interpreted outcome, and `question`
+is the next useful investigative question or `null`. The host receives only the
+original tool arguments after strict validation. Direct provider answers use
+`{ strategy, response }`; only the natural-language `response` is displayed.
+Malformed routing data fails validation before a tool can execute.
+
+The validated strategy kind selects static guidance for the next reasoning
+iteration. Goals and questions are bounded model interpretations, kept as
+untrusted data rather than instructions or permission. A question records what
+the model needs to learn; it does not require asking the user when tools can
+resolve it. Routing never changes the original request, available capabilities,
+destination checks or action authorization. Selecting a command does not authorize
+running it, and choosing `developer` cannot override an instruction to leave an
+agent request unsent.
+
+The `strategy-selected` diagnostic records only the kind and whether it changed.
+Opt-in debug request captures include the fuller provider format. Regression tests
+use scripted provider choices to verify routing, evidence preservation and tool
+dispatch; they do not establish semantic routing accuracy on arbitrary requests.
+
 ## macOS capabilities
 
 | Tool | Behavior |

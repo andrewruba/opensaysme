@@ -6,6 +6,8 @@ import type { ToolDescriptor, ToolEvent, ToolResult } from '../tools/types.js';
 import { validateToolResult } from '../tools/registry.js';
 import { conversationSchema } from '../conversation.js';
 import { workContextSchema } from '../work-context.js';
+import { routedCallSchema, strategyInstructions, strategyResponseFormat, strategyResponseSchema,
+  strategyToolParameters, type RequestStrategy } from './strategy.js';
 
 export const defaultReasoningModel = 'gpt-6.1-terra';
 
@@ -124,7 +126,8 @@ function prepareRequest(model: string, input: ReasoningInput): { request: Prepar
       imageFiles.push(`images/${frame.id}-trail.jpg`);
     }
   }
-  const request: PreparedReasoningRequest = { model, instructions, store: false,
+  const request: PreparedReasoningRequest = { model, instructions: `${instructions}\n\n${strategyInstructions()}`, store: false,
+    text: strategyResponseFormat(),
     input: [{ role: 'user', content }], ...modelRequestOptions(model, 2500),
   };
   return { request, imageFiles };
@@ -176,7 +179,7 @@ const envelopeSchema = z.object({
 const messageSchema = z.object({
   type: z.literal('message'), role: z.literal('assistant'), status: z.literal('completed'),
   content: z.array(z.union([
-    z.object({ type: z.literal('output_text'), text: z.string().max(65_536) }),
+    z.object({ type: z.literal('output_text'), text: z.string().max(responseLimit) }),
     z.object({ type: z.literal('refusal'), refusal: z.string() }),
   ])).min(1).max(4),
 });
@@ -216,18 +219,24 @@ function parseOutput(raw: unknown, tools: ToolDescriptor[], previousCalls: Set<s
       if (call) throw new Error('Multiple tool calls were returned.');
       call = functionCallSchema.parse(item);
       if (previousCalls.has(call.call_id) || !tools.some(({ name }) => name === call!.name)) throw new Error('Unexpected tool call.');
-      z.record(z.string(), z.unknown()).parse(JSON.parse(call.arguments));
     } else {
       const message = messageSchema.parse(item);
       if (message.content.some((part) => part.type === 'refusal')) throw new ReasoningFailure('Reasoning provider declined this request.');
       const text = message.content.filter((part) => part.type === 'output_text').map((part) => part.text).join('\n');
       if (!text.trim()) throw new Error('Empty assistant text.');
-      messages.push(text);
+      // Commentary can accompany a final structured answer; it is never the answer itself.
+      if (item.phase !== 'commentary') messages.push(text);
     }
   }
   const text = messages.join('\n\n');
-  if (text.length > 65_536 || (!call && !text.trim())) throw new Error('Expected a bounded response or tool call.');
-  return { output: envelope.output, call, text };
+  if (text.length > responseLimit || (!call && !text.trim())) throw new Error('Expected a bounded response or tool call.');
+  if (call) {
+    const routed = routedCallSchema.parse(JSON.parse(call.arguments));
+    return { output: envelope.output, call, strategy: routed.strategy, args: routed.arguments };
+  }
+  if (messages.length !== 1) throw new Error('Expected one structured final answer.');
+  const answer = strategyResponseSchema.parse(JSON.parse(text));
+  return { output: envelope.output, call: undefined, strategy: answer.strategy, text: answer.response };
 }
 
 function serializeRequest(request: PreparedReasoningRequest, imageFiles: string[], input: ReasoningInput, step: number): string {
@@ -281,7 +290,8 @@ export function openAIReasoning(
       tools = z.array(toolDescriptorSchema).max(32).parse(input.tools?.list() ?? []);
       if (new Set(tools.map(({ name }) => name)).size !== tools.length) throw new Error('Duplicate tools.');
       if (tools.length) {
-        request.tools = tools.map(({ name, description, inputSchema }) => ({ type: 'function', name, description, parameters: inputSchema, strict: true }));
+        request.tools = tools.map(({ name, description, inputSchema }) => ({ type: 'function', name, description,
+          parameters: strategyToolParameters(inputSchema), strict: true }));
         request.tool_choice = 'auto';
         request.parallel_tool_calls = false;
         request.include = ['reasoning.encrypted_content'];
@@ -294,6 +304,7 @@ export function openAIReasoning(
     const maxCalls = inputEnabled ? 24 : 5;
     const timer = setTimeout(() => deadline.abort(), options.loopTimeoutMs ?? reasoningLoopTimeoutMs(inputEnabled));
     const previousCalls = new Set<string>();
+    let strategy: RequestStrategy | undefined;
     let requestTimedOut = false;
     try {
       for (let step = 1; step <= maxCalls + 1; step++) {
@@ -333,13 +344,19 @@ export function openAIReasoning(
         // Validate every output item before any tool can affect the desktop.
         const parsed = parseOutput(raw, tools, previousCalls);
         report('request-completed', { durationMs: Math.round(performance.now() - requestStarted), attempt: step });
+        signal.throwIfAborted();
+        report('strategy-selected', { kind: parsed.strategy.kind, changed: strategy !== undefined && strategy.kind !== parsed.strategy.kind });
+        strategy = parsed.strategy;
+        signal.throwIfAborted();
+        // Only the validated enum selects trusted guidance. Model-written goals/questions remain data.
+        request.instructions = `${instructions}\n\n${strategyInstructions(strategy.kind)}`;
         if (!parsed.call) return parsed.text;
         if (step === maxCalls + 1 || previousCalls.size >= maxCalls) {
           report('tool-limit', { count: previousCalls.size });
           return "I reached this turn's tool limit and stopped without running further actions.";
         }
         const call = parsed.call;
-        const args = z.record(z.string(), z.unknown()).parse(JSON.parse(call.arguments));
+        const args = parsed.args;
         const tool = tools.find(({ name }) => name === call.name)!;
         const event = { callId: call.call_id, name: call.name, arguments: args, effect: tool.effect };
         previousCalls.add(call.call_id);

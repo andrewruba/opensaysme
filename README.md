@@ -19,6 +19,12 @@ make short follow-up requests without repeating the context. It can discover
 running apps even when their windows are not listed, inspect candidate destinations,
 and keep a clarification tied to the work you requested.
 
+OpenSaysMe adapts its approach to development and general tasks. A selected command,
+build failure, configuration, code question or API response can guide development
+investigation. It uses available desktop tools to gather relevant context, keeps
+the tickets and selections you showed, and answers, acts or hands off according to
+your request.
+
 For example, while it's listening, point out a broken page in your browser,
 select the error in your terminal, and highlight the expected behavior in an issue.
 Then say:
@@ -141,9 +147,9 @@ low reasoning effort; speech uses `gpt-live-transcribe`.
 }
 ```
 
-If you change the reasoning model, choose one that supports images and tool calls.
-Speech currently requires `gpt-live-transcribe`, and sharing screen context is
-required.
+If you change the reasoning model, choose one that supports images, tool calls and
+structured responses. Speech currently requires `gpt-live-transcribe`, and sharing
+screen context is required.
 
 ## Development
 

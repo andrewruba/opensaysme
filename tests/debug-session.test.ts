@@ -101,9 +101,11 @@ it('exports the full input-enabled actor loop, including late screenshots and th
   let calls = 0;
   const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
     const wire = JSON.parse(String(init!.body));
+    const strategy = { kind: 'general', goal: 'Inspect the requested desktop context.', question: null };
     return Response.json({ status: 'completed', output: wire.tool_choice === 'none' ? [{
-      type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Finished inspecting.' }],
-    }] : [{ type: 'function_call', call_id: `call-${++calls}`, name: 'capture_screen', arguments: '{}' }] });
+      type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text',
+        text: JSON.stringify({ strategy, response: 'Finished inspecting.' }) }],
+    }] : [{ type: 'function_call', call_id: `call-${++calls}`, name: 'capture_screen', arguments: JSON.stringify({ strategy, arguments: {} }) }] });
   });
   const host: ToolHost = {
     list: () => [

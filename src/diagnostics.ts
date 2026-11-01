@@ -21,6 +21,7 @@ export interface PreparedReasoningRequest {
   tool_choice?: 'auto' | 'none';
   parallel_tool_calls?: false;
   include?: string[];
+  text?: { format: { type: 'json_schema'; name: string; strict: true; schema: Record<string, unknown> } };
   input: Array<{ role: 'user'; content: Array<
     { type: 'input_text'; text: string } |
     { type: 'input_image'; image_url: string; detail: 'high' }

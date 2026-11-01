@@ -27,7 +27,8 @@ function history(): AttentionHistory {
 }
 function response(text = 'The indicated number is 42 (frame-1).', status = 'completed'): Response {
   return Response.json({ status, output: [{ type: 'reasoning', summary: [] }, {
-    type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text, annotations: [] }],
+    type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text',
+      text: JSON.stringify({ strategy: { kind: 'general', goal: 'Fulfill the current request.', question: null }, response: text }), annotations: [] }],
   }] });
 }
 function fixture(fetcher = vi.fn<typeof fetch>().mockResolvedValue(response()), model = 'gpt-5.4-mini') {
@@ -143,7 +144,7 @@ describe('natural desktop response', () => {
     expect(requests[0]).toEqual(wire);
     expect(JSON.stringify(requests)).not.toMatch(/fixture-secret-value|Authorization|data:image|base64|\/9j\//);
     const events = diagnostic.mock.calls.map(([entry]) => entry);
-    expect(events.map(({ event }) => event)).toEqual(['request-prepared', 'request-started', 'response-received', 'request-completed']);
+    expect(events.map(({ event }) => event)).toEqual(['request-prepared', 'request-started', 'response-received', 'request-completed', 'strategy-selected']);
     expect(events[2]).toMatchObject({ component: 'reasoning', data: { status: 200 } });
     expect(diagnostic.mock.invocationCallOrder[1]).toBeLessThan(f.fetcher.mock.invocationCallOrder[0]!);
   });
@@ -192,7 +193,7 @@ describe('natural desktop response', () => {
     const body = JSON.parse(String(options?.body));
     expect(body.store).toBe(false);
     expect(body.tools).toBeUndefined();
-    expect(body.text).toBeUndefined();
+    expect(body.text.format).toMatchObject({ type: 'json_schema', name: 'strategy_response', strict: true });
     const parts = body.input[0].content;
     expect(parts.map((part: { type: string }) => part.type)).toEqual(['input_text', 'input_text', 'input_image', 'input_text', 'input_image']);
     expect(parts[1].text).toContain('Clean historical full screen frame frame-1');
@@ -219,7 +220,7 @@ describe('natural desktop response', () => {
     expect(String(options?.body)).not.toContain('fixture-secret-value');
   });
 
-  it('allows free text without JSON and does not force a response category', async () => {
+  it('returns natural answer text without exposing the provider strategy envelope', async () => {
     for (const text of ['The number is 42.', 'I would switch to the Terminal window.', 'Which window do you mean?', '{not structured JSON}']) {
       const f = fixture(vi.fn<typeof fetch>().mockResolvedValue(response(text)));
       await expect(f.reason(f.input)).resolves.toBe(text);
@@ -388,7 +389,9 @@ function inputToolHost() {
   return host;
 }
 function callItem(name = 'list_windows', args: unknown = {}, callId = 'call-1') {
-  return { type: 'function_call', name, arguments: JSON.stringify(args), call_id: callId, status: 'completed' };
+  return { type: 'function_call', name, arguments: JSON.stringify({
+    strategy: { kind: 'general', goal: 'Fulfill the current request.', question: null }, arguments: args,
+  }), call_id: callId, status: 'completed' };
 }
 function assistantItem(text: string) {
   return { type: 'message', role: 'assistant', status: 'completed', phase: 'commentary', content: [{ type: 'output_text', text }] };
