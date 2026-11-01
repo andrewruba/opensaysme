@@ -7,7 +7,7 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
 OpenSaysMe is a command-line tool that lets you give AI agents tasks by talking and
-pointing at your screen. It gathers the relevant context across apps and can act on
+pointing on your screen. It gathers the relevant context across apps and can act on
 the desktop or pass the request to your existing agent. Essentially, this is how
 Siri *should* work.
 
