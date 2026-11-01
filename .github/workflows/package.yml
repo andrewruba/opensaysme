@@ -13,10 +13,38 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  sources:
+    name: Native dependency sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npx vitest run tests/package-process.test.ts
+      - run: npm run package:sources
+      - name: Upload corresponding sources for maintainer review
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: OpenSaysMe-native-sources
+          path: |
+            release/OpenSaysMe-native-sources.tar.gz
+            release/OpenSaysMe-native-sources.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+
   package:
     name: Unsigned macOS installer (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    env:
+      OPENSAYSME_BASELINE_VERSION: '0.5.0'
     strategy:
       fail-fast: false
       matrix:
@@ -39,7 +67,33 @@ jobs:
       - run: npm run check
       - run: sh native/macos/test.sh
       - run: npm run package:macos
-      - name: Verify install, runtime replacement and removal on this disposable runner
+      - name: Build an older-version fixture without changing release sources
+        run: |
+          node --input-type=module <<'NODE'
+          import pkg from './package.json' with { type: 'json' };
+          import { isNewerVersion } from './dist/update.js';
+          if (!isNewerVersion(pkg.version, process.env.OPENSAYSME_BASELINE_VERSION)) {
+            throw new Error('The release must be newer than the upgrade fixture.');
+          }
+          NODE
+          baseline_root="$RUNNER_TEMP/opensaysme-upgrade-baseline"
+          mkdir "$baseline_root"
+          git archive HEAD | tar -x -C "$baseline_root"
+          (
+            cd "$baseline_root"
+            npm version "$OPENSAYSME_BASELINE_VERSION" --no-git-tag-version --ignore-scripts
+            node --input-type=module <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises';
+          const version = process.env.OPENSAYSME_BASELINE_VERSION;
+          const badge = `[![Version ${version}](https://img.shields.io/badge/version-${version}-blue?style=flat-square)](package.json)`;
+          const readme = await readFile('README.md', 'utf8');
+          await writeFile('README.md', readme.replace(/^\[!\[Version [^\n]+$/m, badge));
+          NODE
+            npm ci --offline --no-audit --no-fund
+            env -u GITHUB_REF_TYPE -u GITHUB_REF_NAME npm run package:macos
+          )
+          git diff --exit-code
+      - name: Verify version upgrade, settings retention and removal on this disposable runner
         env:
           PACKAGE_ARCH: ${{ matrix.arch }}
           OPENSAYSME_CONFIG_DIR: ${{ runner.temp }}/opensaysme-package-config
@@ -53,22 +107,52 @@ jobs:
           done
           expected_version=$(node -p 'require("./package.json").version')
           mkdir -p "$OPENSAYSME_CONFIG_DIR"
+          node --input-type=module <<'NODE'
+          import { writeFile } from 'node:fs/promises';
+          import { join } from 'node:path';
+          import { writeConfig } from './dist/config.js';
+          await writeConfig({ version: 1, shareVisualContext: true,
+            speech: { provider: 'openai', model: 'gpt-live-transcribe', apiKeyEnv: 'OPENSAYSME_CI_KEY' },
+            reasoning: { provider: 'openai', model: 'fixture-model', apiKeyEnv: 'OPENSAYSME_CI_KEY' } });
+          await writeFile(join(process.env.OPENSAYSME_CONFIG_DIR, 'work-context.json'), '{"version":1,"references":[]}\n');
+          NODE
           printf '%s\n' 'keep user settings' > "$OPENSAYSME_CONFIG_DIR/keep.txt"
-          sudo /usr/sbin/installer -pkg "release/OpenSaysMe-$PACKAGE_ARCH.pkg" -target /
+          shasum -a 256 "$OPENSAYSME_CONFIG_DIR/config.json" "$OPENSAYSME_CONFIG_DIR/work-context.json" > "$RUNNER_TEMP/opensaysme-settings.sha256"
+          sudo /usr/sbin/installer -pkg "$RUNNER_TEMP/opensaysme-upgrade-baseline/release/OpenSaysMe-$PACKAGE_ARCH.pkg" -target /
           trap 'sudo "$install_root/manage.sh" uninstall' EXIT
-          test "$(env PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/local/bin/osm --version)" = "$expected_version"
+          test "$(env PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/local/bin/osm --version)" = "$OPENSAYSME_BASELINE_VERSION"
+          test "$(/usr/sbin/pkgutil --pkg-info-plist dev.opensaysme.cli | plutil -extract pkg-version raw -o - -)" = "$OPENSAYSME_BASELINE_VERSION"
           env PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/local/bin/opensaysme --help
-          env PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/local/bin/osm doctor --json
           sudo touch "$install_root/OpenSaysMe.bundle/Contents/Resources/obsolete-runtime-file"
           digest=$(cut -d ' ' -f 1 "release/OpenSaysMe-$PACKAGE_ARCH.pkg.sha256")
           sudo "$install_root/manage.sh" update "$PWD/release/OpenSaysMe-$PACKAGE_ARCH.pkg" "$digest"
           test ! -e "$install_root/OpenSaysMe.bundle/Contents/Resources/obsolete-runtime-file"
+          test ! -e "$install_root/.operation"
+          test ! -L "$install_root/.operation"
           test "$(env PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/local/bin/osm --version)" = "$expected_version"
+          test "$(/usr/sbin/pkgutil --pkg-info-plist dev.opensaysme.cli | plutil -extract pkg-version raw -o - -)" = "$expected_version"
+          for command in /usr/local/bin/osm /usr/local/bin/opensaysme; do
+            test "$(readlink "$command")" = "$install_root/bin/osm"
+          done
+          env PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/local/bin/osm doctor --json > "$RUNNER_TEMP/opensaysme-doctor.json"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFile } from 'node:fs/promises';
+          const report = JSON.parse(await readFile(`${process.env.RUNNER_TEMP}/opensaysme-doctor.json`, 'utf8'));
+          assert.equal(report.configuration.configured, true);
+          assert.equal(report.desktop.platform, 'darwin');
+          assert.notEqual(report.desktop.session, 'not assessed');
+          NODE
+          shasum -a 256 -c "$RUNNER_TEMP/opensaysme-settings.sha256"
           sudo env OPENSAYSME_CONFIG_DIR="$OPENSAYSME_CONFIG_DIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/local/bin/osm uninstall
           trap - EXIT
           test ! -e "$install_root"
+          test ! -L "$install_root"
           test ! -L /usr/local/bin/osm
           test ! -L /usr/local/bin/opensaysme
+          test ! -e /usr/local/bin/osm
+          test ! -e /usr/local/bin/opensaysme
+          shasum -a 256 -c "$RUNNER_TEMP/opensaysme-settings.sha256"
           test "$(cat "$OPENSAYSME_CONFIG_DIR/keep.txt")" = 'keep user settings'
           if /usr/sbin/pkgutil --pkg-info dev.opensaysme.cli; then exit 1; fi
       - name: Upload packages for maintainer review

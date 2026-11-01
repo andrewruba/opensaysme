@@ -15,7 +15,7 @@ for (const name of ['SIGINT', 'SIGTERM']) {
 export async function run(command, args, { cwd, env = process.env, capture = false, timeout = 180_000 } = {}) {
   cancellation.signal.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const grouped = process.platform === 'darwin';
+    const grouped = process.platform !== 'win32';
     const child = spawn(command, args, { cwd, env, detached: grouped,
       stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit' });
     let output = '', errors = '', failure, stopping;

@@ -1,6 +1,6 @@
 {
   "name": "opensaysme",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "description": "Reduce friction in AI-agent interactions with voice and desktop context.",
   "type": "module",
@@ -18,6 +18,7 @@
     "build:native": "node scripts/build-native.mjs",
     "install:cli": "npm run build && npm run build:native && npm link --offline --no-audit --no-fund",
     "package:macos": "node scripts/package-macos.mjs",
+    "package:sources": "node scripts/package-sources.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",

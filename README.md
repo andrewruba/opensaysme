@@ -1,7 +1,7 @@
 # OpenSaysMe — Give AI agents tasks by talking and pointing
 
 [![CI](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml/badge.svg?branch=main&event=push)](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml)
-[![Version 0.5.0](https://img.shields.io/badge/version-0.5.0-blue?style=flat-square)](package.json)
+[![Version 0.6.0](https://img.shields.io/badge/version-0.6.0-blue?style=flat-square)](package.json)
 [![macOS 14 or newer](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square)](#run-it)
 [![MIT license](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
@@ -52,9 +52,8 @@ Requires **macOS 14+** and an **OpenAI API key**.
 
 ### Install from package
 
-Package downloads will be listed under [Releases](https://github.com/andrewruba/opensaysme/releases).
-Open the `.pkg` for your Mac and follow the installer.
-The runtime is included; Node and Xcode are not required.
+Download the `.pkg` for your Mac from [Releases](https://github.com/andrewruba/opensaysme/releases)
+and follow the installer. The runtime is included; Node and Xcode are not required.
 
 ### Install from source
 

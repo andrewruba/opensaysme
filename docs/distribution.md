@@ -16,6 +16,7 @@ npm ci
 npm run check
 sh native/macos/test.sh
 npm run package:macos
+npm run package:sources
 ```
 
 Output is `release/OpenSaysMe-arm64.pkg` or `release/OpenSaysMe-x64.pkg`, with a
@@ -23,6 +24,13 @@ matching `.pkg.sha256`. Packaging installs locked production dependencies from t
 npm cache populated by `npm ci`, then tests the extracted runtime without a system
 Node on PATH. The Package macOS workflow builds both architectures and tests
 installation, bundle replacement and removal on disposable runners.
+
+`package:sources` downloads checksum-pinned upstream source inputs and produces
+`release/OpenSaysMe-native-sources.tar.gz` with its `.sha256` file. Its verified
+download cache is under `release/.source-cache`; it needs Node, curl and tar but
+does not compile dependencies. The companion includes source provenance, license
+notices and a Python 3.12+ materializer for rebuilding native dependencies offline
+after installing the documented build tools.
 
 The installed files live under `/Library/Application Support/OpenSaysMe`, with
 `osm` and `opensaysme` commands in `/usr/local/bin`. The application resources use
@@ -66,14 +74,16 @@ version aligned. The workflow produces reviewable artifacts, not a public releas
 Publish both architecture packages and their matching checksum files on the same
 GitHub Release with a `v<major>.<minor>.<patch>` tag. Keep the asset names above
 stable: the updater uses those names. Do not replace published assets in place.
+Attach the native source companion and its checksum to that release too.
 
 These builds are unsigned and not notarized. Downloaded previews may need
 **Privacy & Security → Open Anyway**. Add Developer ID signing and notarization
 before checksumming when signing is available. Checksums detect a mismatched
 download; they do not replace code signing.
 
-Preserve the bundled third-party notices and provide the corresponding sources
-required for redistributed native libraries. The current build includes license
-texts and pinned source/build references; a complete corresponding-source archive
-must be prepared before public distribution. See
-[third-party notices](../packaging/macos/THIRD_PARTY_NOTICES.md).
+Preserve the bundled third-party notices and publish the matching native source
+companion alongside the installers. The companion covers all native sources,
+patches and locked Rust dependencies; it preserves build instructions without
+claiming a bit-for-bit rebuild of upstream binaries. See
+[third-party notices](../packaging/macos/THIRD_PARTY_NOTICES.md) and the companion's
+[rebuild instructions](../packaging/macos/source-companion/README.md).
