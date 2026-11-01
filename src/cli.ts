@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Command, InvalidArgumentError } from 'commander';
 import { configPath, providerStatus, readConfig } from './config.js';
 import { defaultActivationHotkey, hotkeyHelp } from './hotkey.js';
@@ -10,6 +11,8 @@ import { capabilityNames, type DesktopReport } from './desktop/types.js';
 import { setup } from './setup.js';
 import { setupHotkey } from './setup-hotkey.js';
 import { uninstall } from './uninstall.js';
+import { update } from './update.js';
+import { prepareStartup } from './startup.js';
 import { runVoice } from './voice.js';
 import { createDesktopTools } from './tools/desktop.js';
 import { formatToolSummary } from './tool-summary.js';
@@ -23,17 +26,12 @@ process.once('SIGTERM', stopAll);
 
 const json = (value: unknown) => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 const safeText = (value: string) => JSON.stringify(value).slice(1, -1);
-const quickStart = `Quick start from the repository (macOS 14+, Node.js 26.13+, Xcode Command Line Tools):
-  npm ci
-  npm run install:cli
-  osm setup
+const quickStart = `Quick start (macOS 14+):
   export OPENAI_API_KEY='your-key'
-  osm doctor
   osm
 
-The install command builds the app and makes osm and opensaysme available in your terminal.
-Both commands run files from this repository folder, even from another directory.
-Keep the folder on your computer. If you move it, rerun npm run install:cli there.
+osm and opensaysme are the same command. First launch guides setup.
+Run osm setup --replace to change settings, or osm doctor to check access.
 Setup saves key environment-variable names, never keys. Export the names you chose
 in the same terminal used to launch voice mode; OPENAI_API_KEY is the default.
 Allow Microphone, Accessibility and Screen Recording for your terminal/helper in
@@ -80,11 +78,7 @@ Using voice:
 `)
   .showHelpAfterError()
   .action(async (options: { debug?: true | string }) => {
-    const config = await readConfig();
-    if (!config) {
-      process.stderr.write(`${quickStart}\n`);
-      throw new Error('Run osm setup first. See osm --help for shortcuts and examples.');
-    }
+    const config = await prepareStartup(stop.signal);
     process.stderr.write(`OpenSaysMe voice mode. ${config.activationHotkey ?? defaultActivationHotkey} starts/stops; Escape cancels; Ctrl+C quits.\n`);
     process.stderr.write(`Configuration: ${safeText(configPath())}\n`);
     process.stderr.write(`Models: reasoning ${safeText(config.reasoning.model)}; speech ${safeText(config.speech.model)}.\n`);
@@ -114,7 +108,7 @@ Using voice:
       else if (event.type === 'debug') process.stderr.write(`Debug files: ${safeText(event.directory)}\n`);
       else if (event.type === 'warning') process.stderr.write(`Warning: ${safeText(event.message)}\n`);
       else if (event.type === 'error') process.stderr.write(`Error: ${safeText(event.message)}\n`);
-    }, { debugDirectory });
+    }, { debugDirectory, installation: { root: fileURLToPath(new URL('..', import.meta.url)), stop: stopAll } });
     console.log('Stopped.');
   });
 
@@ -122,11 +116,17 @@ program.command('setup').description('Configure environment-key references and e
   .option('--replace', 'Replace existing configuration after interactive setup')
   .action((options: { replace?: boolean }) => setup(stop.signal, Boolean(options.replace)));
 program.command('uninstall').description('Remove the installed osm and opensaysme commands')
-  .addHelpText('after', '\nKeeps your repository folder, saved settings and debug captures.')
+  .option('--purge', 'Also remove saved settings and recent app/window history')
+  .addHelpText('after', '\nKeeps settings unless --purge is used. Source checkouts and exported debug captures are preserved.\nPackaged installations may request administrator authentication.')
+  .action(async (options: { purge?: boolean }) => {
+    const removed = await uninstall(stop.signal, { purge: options.purge });
+    console.log(removed.length ? 'OpenSaysMe uninstalled.' : 'No installed OpenSaysMe commands found.');
+    console.log(options.purge ? 'Saved settings and recent history removed.' : 'Settings retained for reinstall.');
+  });
+program.command('update').description('Update a packaged installation to the latest release')
   .action(async () => {
-    const removed = await uninstall(stop.signal);
-    console.log(removed.length ? 'OpenSaysMe commands uninstalled.' : 'No installed OpenSaysMe commands found.');
-    console.log('Your repository folder, saved settings and debug captures were kept.');
+    const result = await update(stop.signal);
+    console.log(result.status === 'current' ? `OpenSaysMe ${result.version} is up to date.` : `Updated OpenSaysMe to ${result.version}. Run osm to start.`);
   });
 program.command('hotkey').description('Record a pressed activation shortcut; Escape and Ctrl+C stay fixed')
   .option('--show', 'Show the saved shortcut without prompting or changing it')

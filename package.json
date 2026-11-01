@@ -17,6 +17,7 @@
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "build:native": "node scripts/build-native.mjs",
     "install:cli": "npm run build && npm run build:native && npm link --offline --no-audit --no-fund",
+    "package:macos": "node scripts/package-macos.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",

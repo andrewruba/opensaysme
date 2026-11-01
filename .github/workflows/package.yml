@@ -1,0 +1,82 @@
+name: Package macOS
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Unsigned macOS installer (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          architecture: ${{ matrix.arch }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - run: sh native/macos/test.sh
+      - run: npm run package:macos
+      - name: Verify install, runtime replacement and removal on this disposable runner
+        env:
+          PACKAGE_ARCH: ${{ matrix.arch }}
+          OPENSAYSME_CONFIG_DIR: ${{ runner.temp }}/opensaysme-package-config
+        run: |
+          install_root='/Library/Application Support/OpenSaysMe'
+          test ! -e "$install_root"
+          test ! -L "$install_root"
+          for command in /usr/local/bin/osm /usr/local/bin/opensaysme; do
+            test ! -e "$command"
+            test ! -L "$command"
+          done
+          expected_version=$(node -p 'require("./package.json").version')
+          mkdir -p "$OPENSAYSME_CONFIG_DIR"
+          printf '%s\n' 'keep user settings' > "$OPENSAYSME_CONFIG_DIR/keep.txt"
+          sudo /usr/sbin/installer -pkg "release/OpenSaysMe-$PACKAGE_ARCH.pkg" -target /
+          trap 'sudo "$install_root/manage.sh" uninstall' EXIT
+          test "$(env PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/local/bin/osm --version)" = "$expected_version"
+          env PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/local/bin/opensaysme --help
+          env PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/local/bin/osm doctor --json
+          sudo touch "$install_root/OpenSaysMe.bundle/Contents/Resources/obsolete-runtime-file"
+          digest=$(cut -d ' ' -f 1 "release/OpenSaysMe-$PACKAGE_ARCH.pkg.sha256")
+          sudo "$install_root/manage.sh" update "$PWD/release/OpenSaysMe-$PACKAGE_ARCH.pkg" "$digest"
+          test ! -e "$install_root/OpenSaysMe.bundle/Contents/Resources/obsolete-runtime-file"
+          test "$(env PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/local/bin/osm --version)" = "$expected_version"
+          sudo env OPENSAYSME_CONFIG_DIR="$OPENSAYSME_CONFIG_DIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin /usr/local/bin/osm uninstall
+          trap - EXIT
+          test ! -e "$install_root"
+          test ! -L /usr/local/bin/osm
+          test ! -L /usr/local/bin/opensaysme
+          test "$(cat "$OPENSAYSME_CONFIG_DIR/keep.txt")" = 'keep user settings'
+          if /usr/sbin/pkgutil --pkg-info dev.opensaysme.cli; then exit 1; fi
+      - name: Upload packages for maintainer review
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: OpenSaysMe-${{ matrix.arch }}-unsigned
+          path: |
+            release/OpenSaysMe-${{ matrix.arch }}.pkg
+            release/OpenSaysMe-${{ matrix.arch }}.pkg.sha256
+          if-no-files-found: error
+          retention-days: 30

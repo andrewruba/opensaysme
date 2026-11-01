@@ -1,6 +1,8 @@
 import { lstat, readlink, realpath, unlink } from 'node:fs/promises';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { administerPackage, purgeUserSettings, readInstallation } from './installation.js';
+import { withInstallationMaintenance } from './installation-runtime.js';
 
 type InstalledLink = { path: string; target: string; inode: number; device: number };
 const absent = (error: unknown) => ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '');
@@ -62,8 +64,35 @@ export async function uninstallLinks(repository: string, commandDirectories: str
   return removed;
 }
 
-export async function uninstall(signal?: AbortSignal): Promise<string[]> {
+export async function uninstall(signal?: AbortSignal, options: { purge?: boolean } = {}): Promise<string[]> {
+  signal?.throwIfAborted();
+  if (options.purge && process.getuid?.() === 0) {
+    throw new Error('Run osm uninstall --purge without sudo so settings are removed as your user.');
+  }
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const installation = await readInstallation(root);
+  return withInstallationMaintenance(installation?.appRoot ?? root, signal, async () => {
+    let removed: string[];
+    if (installation) {
+      process.stderr.write('Removing OpenSaysMe. macOS may ask for administrator authorization.\n');
+      await administerPackage(installation, 'uninstall', [], signal);
+      try {
+        await lstat(installation.root);
+        throw new Error('The installer files are still present. Removal could not be verified.');
+      } catch (error) { if (!absent(error)) throw error; }
+      removed = [installation.root];
+    } else {
+      removed = await uninstallSource(root, signal);
+    }
+    // Purge runs as the caller, outside the privileged helper. Never ask a root
+    // helper to recursively remove a configurable home-directory path.
+    if (options.purge) removed.push(...await purgeUserSettings(signal));
+    return removed;
+  });
+}
+
+async function uninstallSource(root: string, signal?: AbortSignal): Promise<string[]> {
   const directories = [dirname(process.execPath), ...(process.env.PATH ?? '').split(delimiter).filter(Boolean)];
   if (process.argv[1]) directories.unshift(dirname(resolve(process.argv[1])));
-  return uninstallLinks(fileURLToPath(new URL('..', import.meta.url)), directories, signal);
+  return uninstallLinks(root, directories, signal);
 }

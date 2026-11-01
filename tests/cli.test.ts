@@ -35,7 +35,7 @@ it('shows a runnable quick start without configuration, keys or desktop access',
   expect(stdout).toContain('hotkey');
   expect(stdout).toContain('--debug [directory]');
   expect(stdout).not.toContain('--hotkey');
-  expect(stdout).toContain('npm run install:cli');
+  expect(stdout).toContain('First launch guides setup');
   expect(stdout).toContain('osm and opensaysme');
   expect(stdout).toContain('osm setup');
   expect(stdout).toContain("export OPENAI_API_KEY='your-key'");
@@ -85,7 +85,8 @@ it('shows uninstall help without configuration, keys or desktop access', async (
   const env = { ...process.env, OPENSAYSME_CONFIG_DIR: directory, OPENAI_API_KEY: '' };
   const uninstallHelp = await execute(process.execPath, [...args, 'uninstall', '--help'], { env });
   expect(uninstallHelp.stdout).toContain('Remove the installed osm and opensaysme commands');
-  expect(uninstallHelp.stdout).toContain('Keeps your repository folder, saved settings and debug captures.');
+  expect(uninstallHelp.stdout).toContain('--purge');
+  expect(uninstallHelp.stdout).toContain('Source checkouts and exported debug captures are preserved.');
   expect(uninstallHelp.stderr).toBe('');
   expect(await readdir(directory)).toEqual([]);
 });
@@ -229,7 +230,7 @@ it('requires setup for voice mode', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'opensaysme-cli-'));
   directories.push(directory);
   await expect(execute(process.execPath, args, { env: { ...process.env, OPENSAYSME_CONFIG_DIR: directory } })).rejects.toMatchObject({
-    stderr: expect.stringMatching(/Quick start[\s\S]*osm setup first/),
+    stderr: expect.stringContaining('osm setup first'),
   });
   expect(await readdir(directory)).toEqual([]);
 });

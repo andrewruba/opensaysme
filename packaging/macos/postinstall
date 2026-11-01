@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+
+# Normal updates retain the maintenance marker until the invoking helper exits.
+# Reinstalling after an interrupted operation can clear its abandoned marker.
+operation='/Library/Application Support/OpenSaysMe/.operation'
+[ -e "$operation" ] || [ -L "$operation" ] || exit 0
+fail() { printf '%s\n' "OpenSaysMe: $*" >&2; exit 1; }
+[ -d "$operation" ] && [ ! -L "$operation" ] || fail 'Invalid maintenance marker.'
+for path in "$operation" "$operation/pid" "$operation/started" "$operation/action"; do
+  [ ! -L "$path" ] && [ "$(/usr/bin/stat -f %u "$path")" = 0 ] || fail 'Invalid maintenance marker owner.'
+  permissions=$(/usr/bin/stat -f %Lp "$path")
+  [ "$((0$permissions & 022))" = 0 ] || fail 'Invalid maintenance marker permissions.'
+done
+[ -f "$operation/pid" ] && [ -f "$operation/started" ] && [ -f "$operation/action" ] || fail 'Missing maintenance process identity.'
+action=$(/bin/cat "$operation/action")
+case "$action" in install|update|uninstall) ;; *) fail 'Invalid maintenance action.';; esac
+pid=$(/bin/cat "$operation/pid")
+case "$pid" in ''|*[!0-9]*) fail 'Invalid maintenance process identity.';; esac
+[ "$pid" -gt 1 ] || fail 'Invalid maintenance process identity.'
+recorded=$(/bin/cat "$operation/started")
+[ -n "$recorded" ] || fail 'Invalid maintenance process identity.'
+current=
+if kill -0 "$pid" 2>/dev/null; then
+  current=$(/usr/bin/env LC_ALL=C /bin/ps -p "$pid" -o lstart=) || fail 'Cannot check the maintenance process.'
+fi
+if [ "$current" != "$recorded" ]; then
+  /bin/rm "$operation/pid" "$operation/started" "$operation/action"
+  /bin/rmdir "$operation"
+fi

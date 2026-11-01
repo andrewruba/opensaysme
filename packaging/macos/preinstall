@@ -1,0 +1,108 @@
+#!/bin/sh
+set -eu
+umask 077
+
+install_root='/Library/Application Support/OpenSaysMe'
+command_directory=/usr/local/bin
+fail() { printf '%s\n' "OpenSaysMe: $*" >&2; exit 1; }
+
+[ "${3:-/}" = / ] || fail 'Install on the current startup disk.'
+
+# The Installer runs this as root. Reject redirects or conflicting files before
+# it writes any payload. Runtime replacement itself is an atomic bundle upgrade.
+for path in /usr /usr/local "$command_directory" /Library '/Library/Application Support' "$install_root" \
+  "$install_root/bin" "$install_root/OpenSaysMe.bundle" \
+  "$install_root/OpenSaysMe.bundle/Contents" "$install_root/OpenSaysMe.bundle/Contents/Resources"; do
+  [ ! -L "$path" ] || fail "Cannot install through a symbolic link: $path"
+  if [ -e "$path" ] && [ ! -d "$path" ]; then fail "Expected a directory: $path"; fi
+done
+
+for path in /Library '/Library/Application Support' "$install_root" "$install_root/bin" \
+  "$install_root/OpenSaysMe.bundle" "$install_root/OpenSaysMe.bundle/Contents" "$install_root/OpenSaysMe.bundle/Contents/Resources"; do
+  if [ -e "$path" ]; then
+    [ "$(/usr/bin/stat -f %u "$path")" = 0 ] || fail "Installation directory must be owned by root: $path"
+    permissions=$(/usr/bin/stat -f %Lp "$path")
+    [ "$((0$permissions & 022))" = 0 ] || fail "Installation directory must not be group/world writable: $path"
+  fi
+done
+
+if [ -d "$install_root" ]; then
+  marker="$install_root/.opensaysme-package"
+  [ -f "$marker" ] && [ ! -L "$marker" ] || fail "Existing directory is not an OpenSaysMe installation: $install_root"
+  printf 'dev.opensaysme.cli\n' | /usr/bin/cmp -s - "$marker" || fail 'Unrecognized installation.'
+fi
+
+for relative in .opensaysme-package manage.sh bin/osm; do
+  path="$install_root/$relative"
+  [ ! -L "$path" ] || fail "Cannot replace a symbolic link: $path"
+  if [ -e "$path" ] && [ ! -f "$path" ]; then fail "Expected a regular file: $path"; fi
+  if [ -f "$path" ]; then
+    [ "$(/usr/bin/stat -f %u "$path")" = 0 ] || fail "Installation file must be owned by root: $path"
+    permissions=$(/usr/bin/stat -f %Lp "$path")
+    [ "$((0$permissions & 022))" = 0 ] || fail "Installation file must not be group/world writable: $path"
+  fi
+done
+
+for name in osm opensaysme; do
+  command_path="$command_directory/$name"
+  if [ -e "$command_path" ] || [ -L "$command_path" ]; then
+    if [ ! -L "$command_path" ] || [ "$(/usr/bin/readlink "$command_path")" != "$install_root/bin/osm" ]; then
+      fail "$command_path already exists. Run osm uninstall for the previous installation before installing this package."
+    fi
+  fi
+done
+
+# Keep a direct Installer update from starting a new runtime while its payload is
+# changing. An osm update already owns this marker. Failed preflight removes only
+# a marker created here; once preflight succeeds, postinstall owns its recovery.
+operation="$install_root/.operation"
+operation_owned=0
+cleanup() {
+  if [ "$operation_owned" = 1 ]; then
+    /bin/rm -f "$operation/pid" "$operation/started" "$operation/action"
+    /bin/rmdir "$operation" || true
+  fi
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+if [ -d "$install_root" ]; then
+  if /bin/mkdir "$operation" 2>/dev/null; then
+    operation_owned=1
+    printf 'install\n' > "$operation/action"
+    printf '%s\n' "$$" > "$operation/pid"
+    started=$(/usr/bin/env LC_ALL=C /bin/ps -p "$$" -o lstart=) || fail 'Cannot identify the Installer process.'
+    [ -n "$started" ] || fail 'Cannot identify the Installer process.'
+    printf '%s\n' "$started" > "$operation/started"
+  else
+    [ -d "$operation" ] && [ ! -L "$operation" ] || fail 'Invalid maintenance marker.'
+    for path in "$operation" "$operation/pid" "$operation/started" "$operation/action"; do
+      [ ! -L "$path" ] && [ "$(/usr/bin/stat -f %u "$path")" = 0 ] || fail 'Invalid maintenance marker owner.'
+      permissions=$(/usr/bin/stat -f %Lp "$path")
+      [ "$((0$permissions & 022))" = 0 ] || fail 'Invalid maintenance marker permissions.'
+    done
+    [ -f "$operation/pid" ] && [ -f "$operation/started" ] && [ -f "$operation/action" ] || fail 'Missing maintenance process identity.'
+    action=$(/bin/cat "$operation/action")
+    case "$action" in install|update|uninstall) ;; *) fail 'Invalid maintenance action.';; esac
+    pid=$(/bin/cat "$operation/pid")
+    case "$pid" in ''|*[!0-9]*) fail 'Invalid maintenance process identity.';; esac
+    [ "$pid" -gt 1 ] || fail 'Invalid maintenance process identity.'
+    recorded=$(/bin/cat "$operation/started")
+    [ -n "$recorded" ] || fail 'Invalid maintenance process identity.'
+    if kill -0 "$pid" 2>/dev/null; then
+      current=$(/usr/bin/env LC_ALL=C /bin/ps -p "$pid" -o lstart=) || fail 'Cannot check the maintenance process.'
+      if [ "$current" = "$recorded" ] && [ "$action" != update ]; then
+        fail 'Another package operation is active. Wait for it to finish and retry.'
+      fi
+    fi
+  fi
+fi
+
+# A direct Installer launch must not replace resources used by a live desktop
+# helper. The updater's Node process is deliberately not part of this check.
+processes=$(/bin/ps -axo comm=) || fail 'Cannot check whether OpenSaysMe is running. Close it and retry.'
+helper="$install_root/OpenSaysMe.bundle/Contents/Resources/native/macos/bin/opensaysme-desktop"
+if printf '%s\n' "$processes" | /usr/bin/awk -v helper="$helper" \
+  '{ sub(/^[[:space:]]+/, ""); if ($0 == helper) found = 1 } END { exit !found }'; then
+  fail 'Close OpenSaysMe and retry the installation.'
+fi
+operation_owned=0

@@ -4,7 +4,10 @@ import type { DebugSession } from '../src/diagnostics.js';
 import type { NativeVoiceEvent } from '../src/desktop/voice-types.js';
 
 const mocks = vi.hoisted(() => ({ adapter: vi.fn(), start: vi.fn(), debug: vi.fn(), feedback: vi.fn(),
+  installation: vi.fn(), readInstallation: vi.fn(),
   context: { recent: vi.fn(() => []), observe: vi.fn(), close: vi.fn(async () => {}) } }));
+vi.mock('../src/installation-runtime.js', () => ({ startInstallationRuntime: mocks.installation }));
+vi.mock('../src/installation.js', () => ({ readInstallation: mocks.readInstallation }));
 vi.mock('../src/work-context.js', async (original) => ({ ...await original<typeof import('../src/work-context.js')>(),
   workContextPath: () => '/fixture/work-context.json',
   openWorkContext: async () => mocks.context }));
@@ -61,6 +64,49 @@ function debugSession() {
 const config = { version: 1 as const, shareVisualContext: true as const,
   reasoning: { provider: 'openai' as const, model: 'gpt-5.4-mini', apiKeyEnv: 'OPENSAYSME_TEST_KEY' },
   speech: { provider: 'openai' as const, model: 'gpt-live-transcribe', apiKeyEnv: 'OPENSAYSME_TEST_KEY' } };
+
+it('keeps installation maintenance waiting until the native helper and history are closed', async () => {
+  vi.stubEnv('OPENSAYSME_TEST_KEY', 'fixture-only');
+  const controller = new AbortController();
+  const releaseInstallation = vi.fn(async () => {});
+  mocks.installation.mockResolvedValue({ close: releaseInstallation });
+  mocks.readInstallation.mockResolvedValue(null);
+  let finishNativeCleanup!: () => void;
+  const nativeCleanup = new Promise<void>((resolve) => { finishNativeCleanup = resolve; });
+  let cleanupStarted!: () => void;
+  const stopping = new Promise<void>((resolve) => { cleanupStarted = resolve; });
+  const closeNative = vi.fn(() => { cleanupStarted(); return nativeCleanup; });
+  mocks.adapter.mockResolvedValue({ voiceHelper: async () => ({ file: 'fixture', args: [] }), captureContext: vi.fn(), captureFrame: vi.fn() });
+  mocks.start.mockImplementation((_spec: unknown, onEvent: (event: NativeVoiceEvent) => void) => {
+    queueMicrotask(() => onEvent({ type: 'ready' }));
+    return { ready: Promise.resolve(), done: new Promise(() => {}), send: vi.fn(), close: closeNative };
+  });
+  const stop = () => controller.abort();
+  const running = runVoice(config, controller.signal, (event) => {
+    if (event.type === 'state' && event.state === 'ready') mocks.installation.mock.calls[0]![1]();
+  }, { installation: { root: '/fixture/app', stop } });
+  await stopping;
+  expect(mocks.installation).toHaveBeenCalledWith('/fixture/app', stop, controller.signal);
+  expect(releaseInstallation).not.toHaveBeenCalled();
+  finishNativeCleanup();
+  await running;
+  expect(mocks.context.close).toHaveBeenCalledOnce();
+  expect(releaseInstallation).toHaveBeenCalledOnce();
+  expect(mocks.context.close.mock.invocationCallOrder[0]).toBeLessThan(releaseInstallation.mock.invocationCallOrder[0]!);
+});
+
+it('releases installation coordination when startup discovers unfinished maintenance', async () => {
+  vi.stubEnv('OPENSAYSME_TEST_KEY', 'fixture-only');
+  const close = vi.fn(async () => {});
+  mocks.installation.mockResolvedValue({ close });
+  mocks.readInstallation.mockRejectedValueOnce(new Error('Installation maintenance is still running.'));
+  await expect(runVoice(config, new AbortController().signal, vi.fn(), {
+    installation: { root: '/fixture/app', stop: vi.fn() },
+  })).rejects.toThrow('maintenance is still running');
+  expect(close).toHaveBeenCalledOnce();
+  expect(mocks.adapter).not.toHaveBeenCalled();
+  expect(mocks.start).not.toHaveBeenCalled();
+});
 
 it('records startup, capabilities, helper cleanup and closes diagnostics without capturing while idle', async () => {
   vi.stubEnv('OPENSAYSME_TEST_KEY', 'fixture-only');

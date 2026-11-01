@@ -9,9 +9,11 @@ and configuration.
 ## Project direction
 
 - Prove a useful macOS 14+ loop in a CLI-first tool that runs locally and complements
-  existing agents. Build from source with Xcode Command Line Tools. Keep setup in
-  the terminal and desktop feedback minimal. Do not maintain other-platform ports,
-  release packaging, signing, or credential-store workflows while proving the loop.
+  existing agents. Support self-contained macOS packages and source builds with
+  Xcode Command Line Tools. Keep setup in the terminal and desktop feedback minimal.
+  Package lifecycle operations use osm update and osm uninstall. Defer Homebrew
+  configuration, Developer ID signing, other-platform ports and credential-store
+  workflows while proving the loop. Keep README installation instructions brief.
 - Reduce friction between user intent and agent behavior. Context gathering,
   preparing input, navigation, answers, and actions are possible interactions.
   Let the user's request determine the flow; do not impose a universal

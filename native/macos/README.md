@@ -1,7 +1,7 @@
 # macOS desktop helper
 
-Build from source on the Mac where you run OpenSaysMe. The full interaction targets
-macOS 14+ and requires Xcode Command Line Tools.
+Source builds require Xcode Command Line Tools. The full interaction targets
+macOS 14+; self-contained installers include the prebuilt helper.
 
 ```sh
 sh native/macos/build.sh
@@ -12,7 +12,8 @@ sh native/macos/test.sh
 The helper uses AppKit, Accessibility, AVFoundation, Carbon and ScreenCaptureKit.
 Development builds are unsigned. Grants may belong to the launching terminal or
 helper; after changing Privacy & Security settings, restart the launcher if access
-still fails. Distribution/signing work is parked while the core loop is developed.
+still fails. Package builds are unsigned; Developer ID signing and notarization
+remain deferred. See [distribution](../../docs/distribution.md).
 
 `--probe` is passive: no prompts, selection reads, recording, screenshots or focus
 changes. The real voice run exercises access. Separate permission-verification,

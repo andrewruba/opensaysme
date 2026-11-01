@@ -61,7 +61,7 @@ export async function setup(signal?: AbortSignal, replace = false): Promise<void
   }, configPath(), replace);
   permissions();
   note(`Activation uses ${defaultActivationHotkey}. After granting Accessibility access, run osm hotkey to record a different shortcut.`, 'Activation shortcut');
-  outro(`Saved ${configPath()}. Set ${[...new Set([apiKeyEnv, reasoningKeyEnv])].join(' and ')} in your environment, then run opensaysme.`);
+  outro(`Saved ${configPath()}. Voice mode reads ${[...new Set([apiKeyEnv, reasoningKeyEnv])].join(' and ')} from your environment.`);
 }
 
 function permissions(): void {

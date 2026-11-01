@@ -15,9 +15,11 @@ import { createFeedback } from './feedback.js';
 import { defaultActivationHotkey } from './hotkey.js';
 import { openWorkContext, workContextPath, type WorkContextStore } from './work-context.js';
 import { feedbackUnavailable, startFeedbackHelper, type FeedbackCommand, type FeedbackSink } from './desktop/feedback-process.js';
+import { startInstallationRuntime } from './installation-runtime.js';
+import { readInstallation } from './installation.js';
 
 export async function runVoice(config: Config, signal: AbortSignal, emit: (output: VoiceOutput) => void,
-  options: { debugDirectory?: string } = {}): Promise<void> {
+  options: { debugDirectory?: string; installation?: { root: string; stop: () => void } } = {}): Promise<void> {
   const apiKey = process.env[config.speech.apiKeyEnv];
   const reasoningKey = process.env[config.reasoning.apiKeyEnv];
   const activationHotkey = config.activationHotkey ?? defaultActivationHotkey;
@@ -25,6 +27,7 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
   let workContext: WorkContextStore | undefined;
   let feedback: ReturnType<typeof createFeedback> | undefined;
   let feedbackClosed = false;
+  let installationRuntime: Awaited<ReturnType<typeof startInstallationRuntime>> | undefined;
   const publish = (event: VoiceOutput) => { feedback?.handle(event); emit(event); };
   if (options.debugDirectory !== undefined && !signal.aborted) {
     try {
@@ -45,6 +48,11 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
     if (config.speech.model !== streamingModel) throw new Error(`Set speech.model to "${streamingModel}" for live transcription.`);
     if (!config.shareVisualContext) throw new Error('Run opensaysme setup --replace to enable visual context sharing.');
     if (!reasoningKey?.trim()) throw new Error(`Set ${config.reasoning.apiKeyEnv} in your environment before starting reasoning.`);
+    if (signal.aborted) return;
+    if (options.installation) {
+      installationRuntime = await startInstallationRuntime(options.installation.root, options.installation.stop, signal);
+      await readInstallation(options.installation.root);
+    }
     if (signal.aborted) return;
     const reason = openAIReasoning({ apiKey: reasoningKey, model: config.reasoning.model });
     const authorize = openAIActionAuthorizer({ apiKey: reasoningKey, model: config.reasoning.model });
@@ -123,13 +131,15 @@ export async function runVoice(config: Config, signal: AbortSignal, emit: (outpu
     debug?.event({ component: 'session', event: 'failed', data: { code: 'voice-start-or-run-failed' } });
     throw error;
   } finally {
-    feedbackClosed = true;
-    await feedback?.close();
-    await workContext?.close();
-    if (debug) {
-      cancelDesktopCommands();
-      debug.event({ component: 'session', event: 'stopped' });
-      await debug.close();
-    }
+    try {
+      feedbackClosed = true;
+      await feedback?.close();
+      await workContext?.close();
+      if (debug) {
+        cancelDesktopCommands();
+        debug.event({ component: 'session', event: 'stopped' });
+        await debug.close();
+      }
+    } finally { await installationRuntime?.close(); }
   }
 }

@@ -2,7 +2,6 @@
 
 [![CI](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml/badge.svg?branch=main&event=push)](https://github.com/andrewruba/opensaysme/actions/workflows/check.yml)
 [![Version 0.5.0](https://img.shields.io/badge/version-0.5.0-blue?style=flat-square)](package.json)
-[![Node.js 26.13.0 or newer](https://img.shields.io/badge/node-%3E%3D26.13.0-339933?style=flat-square)](package.json)
 [![macOS 14 or newer](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square)](#run-it)
 [![MIT license](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
@@ -49,43 +48,37 @@ the outcome is uncertain, it stops without repeating the action.
 
 ## Run it
 
-You'll need **macOS 14+**, **Node.js 26.13+**, **Xcode Command Line Tools** and an
-**OpenAI API key**.
+Requires **macOS 14+** and an **OpenAI API key**.
 
-Clone the repository and open its folder:
+### Install from package
+
+Package downloads will be listed under [Releases](https://github.com/andrewruba/opensaysme/releases).
+Open the `.pkg` for your Mac and follow the installer.
+The runtime is included; Node and Xcode are not required.
+
+### Install from source
+
+Requires **Node.js 26.13+** and **Xcode Command Line Tools**.
 
 ```sh
 git clone https://github.com/andrewruba/opensaysme.git
 cd opensaysme
-```
-
-If you use nvm, run `nvm install` and `nvm use` here first. Then install and configure:
-
-```sh
 npm ci
 npm run install:cli
-osm setup
-export OPENAI_API_KEY='your-key'
 ```
 
-Replace `your-key` with your API key in the terminal where you'll run `osm`.
-Setup saves the name of the environment variable, not the key itself.
+Keep the source folder after installing. If using nvm, run `nvm install` and
+`nvm use` in it first.
 
-Grant **Microphone**, **Accessibility** and **Screen Recording** access to your
-terminal or the OpenSaysMe helper in **System Settings → Privacy & Security**.
-`osm doctor` checks access and whether your key is set; it doesn't test the key
-with OpenAI.
-
-Check your setup and start OpenSaysMe:
+Then, for either installation:
 
 ```sh
-osm doctor
+export OPENAI_API_KEY='your-key'
 osm
 ```
 
-`osm` and `opensaysme` are the same command. They run from this repository folder,
-so keep it on your computer. If you move it, rerun `npm run install:cli` from the
-new location.
+First launch guides setup. Grant Microphone, Accessibility and Screen Recording
+access in macOS settings; `osm doctor` checks access.
 
 ## Using it
 
@@ -169,6 +162,8 @@ For native changes, also run `sh native/macos/test.sh` and `npm run build:native
 Restart a running `osm` process after rebuilding. See [agent tools](docs/tools.md)
 for discovery, destination resolution and execution behavior.
 
+Build installers with `npm run package:macos`; see [distribution](docs/distribution.md).
+
 ## Troubleshooting
 
 For troubleshooting, opt in to saving context, screenshots, model inputs, responses
@@ -179,11 +174,10 @@ osm --debug                 # save under .opensaysme-debug/ in the current direc
 osm --debug ./my-captures    # choose a directory
 ```
 
-## Uninstall
+## Update or uninstall
 
 ```sh
-osm uninstall
+osm update                 # update a package installation
+osm uninstall              # remove OpenSaysMe, keeping settings
+osm uninstall --purge      # also remove settings and recent history
 ```
-
-Removes both `osm` and `opensaysme` commands. Your repository folder, saved settings
-and debug captures stay on disk.
