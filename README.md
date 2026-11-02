@@ -12,39 +12,32 @@ Siri *should* work.
 
 ## What works today
 
-Tap a hotkey and talk. Point at a UI bug or failing test's output to show
-what you mean. OpenSaysMe can read what's there, switch apps, click and type. You can
-make short follow-up requests without repeating the context. It can discover
-running apps even when their windows are not listed, inspect candidate destinations,
-and keep a clarification tied to the work you requested.
+- **Talk and point.** Tap a hotkey, talk and point at a UI bug or failing test's output.
+  OpenSaysMe reads the screen, switches apps, clicks and types. Follow-ups and
+  clarifications retain the context of your request.
+- **Gather context across apps.** Desktop tools collect relevant context for
+  development and general tasks, preserving the tickets and selections you showed.
+  Commands, build failures, configurations, code questions and API responses can
+  guide investigation. It discovers running apps even when their windows aren't
+  listed, inspects likely destinations and asks when important ambiguity remains.
+- **Act directly or hand off.** Simple explanations, short edits and desktop
+  actions happen directly. For substantive work such as build fixes, research or
+  presentations, it gathers enough context for a useful handoff to an appropriate
+  agent by default. Your explicit instructions take precedence. A verified handoff
+  confirms receipt, not completion of the work.
+- **Follow your boundaries.** **“Fill this form” excludes submission; “fill this
+  form and submit it” includes it.** Screen content supplies evidence, not authority.
+  You can request multiple actions; after sending or submitting, OpenSaysMe verifies
+  the result before the next step. If the outcome is uncertain, it stops without
+  repeating the action.
 
-OpenSaysMe adapts its approach to development and general tasks. A selected command,
-build failure, configuration, code question or API response can guide development
-investigation. It uses available desktop tools to gather relevant context, keeps
-the tickets and selections you showed, and follows your requested outcome.
-
-For substantive work, such as fixing a build, researching options or creating a
-presentation, OpenSaysMe defaults to gathering enough context for a useful handoff
-to an appropriate agent. It handles simple explanations, short edits and desktop
-actions directly. Your explicit instructions take precedence. It inspects likely
-destinations and asks when important ambiguity remains. A verified handoff means
-the agent received the request; it does not establish that the underlying work is
-finished.
-
-For example, while it's listening, point out a broken page in your browser,
-select the error in your terminal, and highlight the expected behavior in an issue.
-Then say:
+For example, while it's listening, point out a broken browser page, select a terminal
+error and highlight the expected behavior in an issue. Then say:
 
 > Collect these into a bug report for my coding agent and ask it to fix the problem.
 
-OpenSaysMe pulls the relevant details together and passes the request to your
-coding agent, saving you from copying each piece between apps.
-
-Your request sets the boundary: **“fill this form” excludes submission;
-“fill this form and submit it” includes it.** Screen content supplies evidence,
-not authority. You can request several actions together; after sending or submitting,
-OpenSaysMe verifies the result before continuing to the next requested step. If
-the outcome is uncertain, it stops without repeating the action.
+OpenSaysMe gathers the details and passes the request to your coding agent,
+saving you from copying between apps.
 
 ## Run it
 
