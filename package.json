@@ -26,10 +26,10 @@
     "check": "npm run check:version && npm run typecheck && npm run lint && npm test && npm run build"
   },
   "dependencies": {
-    "@clack/prompts": "^1.8.1",
-    "commander": "^15.0.0",
+    "@clack/prompts": "^1.9.0",
+    "commander": "^15.1.0",
     "sharp": "^0.35.5",
-    "ws": "^8.22.1",
+    "ws": "^8.22.2",
     "zod": "^4.6.7"
   },
   "devDependencies": {
@@ -40,7 +40,7 @@
     "eslint": "^10.14.0",
     "tsx": "^4.23.15",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
-    "typescript-eslint": "^8.72.1",
+    "typescript-eslint": "^8.72.2",
     "vitest": "^5.1.0"
   },
   "overrides": {
